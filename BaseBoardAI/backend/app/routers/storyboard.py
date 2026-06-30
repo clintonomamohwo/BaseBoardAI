@@ -15,7 +15,7 @@ DELETE /storyboard/{db_id}    Hard-delete a project and all its children
 
 from __future__ import annotations
 
-from typing import List
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
@@ -28,12 +28,17 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.schemas.storyboard import (
+    CharacterProfileBase,
+    FacialBlueprint,
     ScriptSceneBase,
+    StoryboardFrameBase,
     StoryboardProjectCreate,
     StoryboardProjectResponse,
 )
 
 router = APIRouter(prefix="/storyboard", tags=["storyboard"])
+
+DbSession = Annotated[Session, Depends(get_db)]
 
 
 # ---------------------------------------------------------------------------
@@ -101,36 +106,36 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
         project_title=project.project_title,
         global_aesthetic=project.global_aesthetic,
         characters=[
-            {
-                "id": c.char_id,
-                "name": c.name,
-                "wardrobe_defaults": c.wardrobe_defaults,
+            CharacterProfileBase(
+                id=c.char_id,
+                name=c.name,
+                wardrobe_defaults=c.wardrobe_defaults,
                 # facial_blueprint is already a dict from the JSON column
-                "facial_blueprint": c.facial_blueprint,
-            }
+                facial_blueprint=FacialBlueprint.model_validate(c.facial_blueprint),
+            )
             for c in project.characters
         ],
         scenes=[
-            {
-                "scene_number": s.scene_number,
-                "location_heading": s.location_heading,
-                "environmental_type": s.environmental_type,
-                "time_of_day": s.time_of_day,
-                "emotional_tone": s.emotional_tone,
-                "color_palette": s.color_palette,
-                "frames": [
-                    {
-                        "frame_number": f.frame_number,
-                        "shot_type": f.shot_type,
-                        "camera_angle": f.camera_angle,
-                        "duration_seconds": f.duration_seconds,
-                        "action_breakdown": f.action_breakdown,
-                        "lighting_notes": f.lighting_notes,
-                        "sound_cue": f.sound_cue,
-                    }
+            ScriptSceneBase(
+                scene_number=s.scene_number,
+                location_heading=s.location_heading,
+                environmental_type=s.environmental_type,
+                time_of_day=s.time_of_day,
+                emotional_tone=s.emotional_tone,
+                color_palette=s.color_palette,
+                frames=[
+                    StoryboardFrameBase(
+                        frame_number=f.frame_number,
+                        shot_type=f.shot_type,
+                        camera_angle=f.camera_angle,
+                        duration_seconds=f.duration_seconds,
+                        action_breakdown=f.action_breakdown,
+                        lighting_notes=f.lighting_notes,
+                        sound_cue=f.sound_cue,
+                    )
                     for f in s.frames
                 ],
-            }
+            )
             for s in project.scenes
         ],
     )
@@ -167,7 +172,7 @@ def _load_project_or_404(db_id: int, db: Session) -> StoryboardProjectORM:
 )
 def create_storyboard_project(
     payload: StoryboardProjectCreate,
-    db: Session = Depends(get_db),
+    db: DbSession,
 ) -> StoryboardProjectResponse:
     """
     Accepts the full storyboard project tree in a single request.
@@ -183,12 +188,12 @@ def create_storyboard_project(
 
 @router.get(
     "/",
-    response_model=List[StoryboardProjectResponse],
+    response_model=list[StoryboardProjectResponse],
     summary="List all StoryboardProjects",
 )
 def list_storyboard_projects(
-    db: Session = Depends(get_db),
-) -> List[StoryboardProjectResponse]:
+    db: DbSession,
+) -> list[StoryboardProjectResponse]:
     projects = (
         db.query(StoryboardProjectORM)
         .options(
@@ -207,7 +212,7 @@ def list_storyboard_projects(
 )
 def get_storyboard_project(
     db_id: int,
-    db: Session = Depends(get_db),
+    db: DbSession,
 ) -> StoryboardProjectResponse:
     return _orm_to_response(_load_project_or_404(db_id, db))
 
@@ -219,7 +224,7 @@ def get_storyboard_project(
 )
 def delete_storyboard_project(
     db_id: int,
-    db: Session = Depends(get_db),
+    db: DbSession,
 ) -> None:
     project = _load_project_or_404(db_id, db)
     db.delete(project)

@@ -1,0 +1,6 @@
+{
+  "venvPath": "BaseBoardAI/backend",
+  "venv": ".venv",
+  "pythonVersion": "3.13",
+  "include": ["BaseBoardAI/backend/app"]
+}

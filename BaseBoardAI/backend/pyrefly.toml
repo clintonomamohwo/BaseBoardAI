@@ -1,0 +1,4 @@
+# Pyrefly configuration
+# Tells Pyrefly to resolve third-party packages from the project's virtual environment.
+
+python_interpreter = ".venv/bin/python"
