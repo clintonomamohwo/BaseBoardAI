@@ -4,26 +4,18 @@ FastAPI router — /storyboard endpoints.
 Validation layer:  Pydantic schemas (app.schemas.storyboard)
 Persistence layer: SQLAlchemy ORM  (app.db.models)
 DB dependency:     app.db.session.get_db
-
-Endpoints
----------
-POST   /storyboard/           Create a new StoryboardProject (full tree)
-GET    /storyboard/            List all projects (summary rows only)
-GET    /storyboard/{db_id}    Retrieve a single project with all nested data
-DELETE /storyboard/{db_id}    Hard-delete a project and all its children
 """
 
 from __future__ import annotations
 
 from typing import Annotated
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
     CharacterProfileORM,
     ScriptSceneORM,
-    StoryboardFrameORM,
+    StoryboardFrameORM,  # used inside _build_scene_orm
     StoryboardProjectORM,
 )
 from app.db.session import get_db
@@ -34,7 +26,15 @@ from app.schemas.storyboard import (
     StoryboardFrameBase,
     StoryboardProjectCreate,
     StoryboardProjectResponse,
+    # --- New Pipeline Schemas ---
+    PipelineExecutionRequest,
+    SingleCharacterRequest,
+    SingleEnvironmentRequest,
+    EnvironmentProfileBase,
+    StandaloneStoryboardRequest
 )
+from app.core.llm import invoke_character_stage, invoke_world_stage, invoke_storyboard_stage
+from app.core.image import generate_frame_image
 
 router = APIRouter(prefix="/storyboard", tags=["storyboard"])
 
@@ -45,29 +45,23 @@ DbSession = Annotated[Session, Depends(get_db)]
 # Helpers — schema ➜ ORM and ORM ➜ schema
 # ---------------------------------------------------------------------------
 
-
 def _build_project_orm(payload: StoryboardProjectCreate) -> StoryboardProjectORM:
-    """Parse a validated Pydantic payload into the full ORM object tree."""
     project = StoryboardProjectORM(
         project_title=payload.project_title,
         global_aesthetic=payload.global_aesthetic,
     )
-
     for char in payload.characters:
         project.characters.append(
             CharacterProfileORM(
                 char_id=char.id,
                 name=char.name,
                 wardrobe_defaults=char.wardrobe_defaults,
-                # model_dump() serialises nested FacialBlueprint → dict for JSON column
                 facial_blueprint=char.facial_blueprint.model_dump(),
             )
         )
-
     for scene_data in payload.scenes:
         scene_orm = _build_scene_orm(scene_data)
         project.scenes.append(scene_orm)
-
     return project
 
 
@@ -90,17 +84,13 @@ def _build_scene_orm(scene_data: ScriptSceneBase) -> ScriptSceneORM:
                 action_breakdown=frame.action_breakdown,
                 lighting_notes=frame.lighting_notes,
                 sound_cue=frame.sound_cue,
+                generated_image_url=frame.generated_image_url,
             )
         )
     return scene
 
 
 def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse:
-    """
-    Parse the ORM row (with eagerly loaded relationships) back into the
-    response schema.  JSON columns are already dicts — we pass them straight
-    into the Pydantic constructors which re-validate them.
-    """
     return StoryboardProjectResponse(
         db_id=project.db_id,
         project_title=project.project_title,
@@ -110,7 +100,6 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
                 id=c.char_id,
                 name=c.name,
                 wardrobe_defaults=c.wardrobe_defaults,
-                # facial_blueprint is already a dict from the JSON column
                 facial_blueprint=FacialBlueprint.model_validate(c.facial_blueprint),
             )
             for c in project.characters
@@ -132,6 +121,7 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
                         action_breakdown=f.action_breakdown,
                         lighting_notes=f.lighting_notes,
                         sound_cue=f.sound_cue,
+                        generated_image_url=f.generated_image_url,
                     )
                     for f in s.frames
                 ],
@@ -146,7 +136,9 @@ def _load_project_or_404(db_id: int, db: Session) -> StoryboardProjectORM:
         db.query(StoryboardProjectORM)
         .options(
             joinedload(StoryboardProjectORM.characters),
-            joinedload(StoryboardProjectORM.scenes).joinedload(ScriptSceneORM.frames),
+            joinedload(StoryboardProjectORM.scenes).joinedload(ScriptSceneORM.frames).undefer(
+                StoryboardFrameORM.generated_image_url
+            ),
         )
         .filter(StoryboardProjectORM.db_id == db_id)
         .first()
@@ -160,72 +152,118 @@ def _load_project_or_404(db_id: int, db: Session) -> StoryboardProjectORM:
 
 
 # ---------------------------------------------------------------------------
-# Route handlers
+# Core AI Orchestration Pipelines (New Features)
 # ---------------------------------------------------------------------------
 
-
 @router.post(
-    "/",
+    "/forge-pipeline",
     response_model=StoryboardProjectResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a new StoryboardProject",
+    summary="Execute full 3-stage AI pipeline and save to DB",
 )
-def create_storyboard_project(
-    payload: StoryboardProjectCreate,
+def forge_storyboard_pipeline(
+    payload: PipelineExecutionRequest,
     db: DbSession,
 ) -> StoryboardProjectResponse:
     """
-    Accepts the full storyboard project tree in a single request.
-    Validates with Pydantic, persists with SQLAlchemy, returns the saved record.
+    Runs the sequential 3-stage wizard:
+      1. CHARACTER_PROMPT  → locked character bible
+      2. WORLD_PROMPT      → locked world bible
+      3. STORYBOARD_PROMPT → scene + frame breakdown using compiled context
+    Persists the result and returns HTTP 201.
     """
-    project = _build_project_orm(payload)
+    characters = invoke_character_stage(payload.raw_character_notes)
+    environments = invoke_world_stage(payload.raw_world_notes)
+    scenes = invoke_storyboard_stage(
+        characters, environments, payload.raw_script_text, payload.global_aesthetic
+    )
+    for scene in scenes:
+        for frame in scene.frames:
+            frame.generated_image_url = generate_frame_image(frame, scene)
+    project_data = StoryboardProjectCreate(
+        project_title=payload.project_title,
+        global_aesthetic=payload.global_aesthetic,
+        characters=characters,
+        scenes=scenes,
+    )
+    project = _build_project_orm(project_data)
     db.add(project)
     db.commit()
-    db.refresh(project)
-    # reload with relationships for the response
     return _orm_to_response(_load_project_or_404(project.db_id, db))
 
 
-@router.get(
-    "/",
-    response_model=list[StoryboardProjectResponse],
-    summary="List all StoryboardProjects",
+@router.post(
+    "/parse-single-character",
+    response_model=CharacterProfileBase,
+    summary="Isolate parsing for a singular character note override",
 )
-def list_storyboard_projects(
-    db: DbSession,
-) -> list[StoryboardProjectResponse]:
-    projects = (
-        db.query(StoryboardProjectORM)
-        .options(
-            joinedload(StoryboardProjectORM.characters),
-            joinedload(StoryboardProjectORM.scenes).joinedload(ScriptSceneORM.frames),
-        )
-        .all()
+def parse_single_character(payload: SingleCharacterRequest) -> CharacterProfileBase:
+    """Runs CHARACTER_PROMPT on a single raw character note and returns the parsed profile."""
+    characters = invoke_character_stage(payload.raw_notes)
+    return characters[0]
+
+
+@router.post(
+    "/parse-single-environment",
+    response_model=EnvironmentProfileBase,
+    summary="Isolate parsing for a singular environment location override",
+)
+def parse_single_environment(payload: SingleEnvironmentRequest) -> EnvironmentProfileBase:
+    """Runs WORLD_PROMPT on a single raw location note and returns the parsed environment profile."""
+    environments = invoke_world_stage(payload.raw_notes)
+    return environments[0]
+
+
+@router.post(
+    "/forge-standalone-storyboard",
+    response_model=StoryboardProjectResponse,
+    summary="Generate storyboard frames leveraging pre-parsed assets directly",
+)
+def forge_standalone_storyboard(payload: StandaloneStoryboardRequest) -> StoryboardProjectResponse:
+    """
+    Skips character/world generation — feeds pre-parsed characters directly into
+    STORYBOARD_PROMPT. Returns an unsaved project (db_id=None); no DB write.
+    """
+    scenes = invoke_storyboard_stage(
+        payload.characters, [], payload.raw_script_text, payload.global_aesthetic
     )
+    for scene in scenes:
+        for frame in scene.frames:
+            frame.generated_image_url = generate_frame_image(frame, scene)
+    return StoryboardProjectResponse(
+        project_title=payload.project_title,
+        global_aesthetic=payload.global_aesthetic,
+        characters=payload.characters,
+        scenes=scenes,
+        db_id=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Direct CRUD REST Route Handlers
+# ---------------------------------------------------------------------------
+
+@router.post("/", response_model=StoryboardProjectResponse, status_code=status.HTTP_201_CREATED)
+def create_storyboard_project(payload: StoryboardProjectCreate, db: DbSession) -> StoryboardProjectResponse:
+    project = _build_project_orm(payload)
+    db.add(project)
+    db.commit()
+    return _orm_to_response(_load_project_or_404(project.db_id, db))
+
+@router.get("/", response_model=list[StoryboardProjectResponse])
+def list_storyboard_projects(db: DbSession) -> list[StoryboardProjectResponse]:
+    projects = db.query(StoryboardProjectORM).options(
+        joinedload(StoryboardProjectORM.characters),
+        joinedload(StoryboardProjectORM.scenes).joinedload(ScriptSceneORM.frames),
+    ).all()
     return [_orm_to_response(p) for p in projects]
 
-
-@router.get(
-    "/{db_id}",
-    response_model=StoryboardProjectResponse,
-    summary="Retrieve a StoryboardProject by ID",
-)
-def get_storyboard_project(
-    db_id: int,
-    db: DbSession,
-) -> StoryboardProjectResponse:
+@router.get("/{db_id}", response_model=StoryboardProjectResponse)
+def get_storyboard_project(db_id: int, db: DbSession) -> StoryboardProjectResponse:
     return _orm_to_response(_load_project_or_404(db_id, db))
 
-
-@router.delete(
-    "/{db_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a StoryboardProject and all its children",
-)
-def delete_storyboard_project(
-    db_id: int,
-    db: DbSession,
-) -> None:
+@router.delete("/{db_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+def delete_storyboard_project(db_id: int, db: DbSession) -> None:
     project = _load_project_or_404(db_id, db)
     db.delete(project)
     db.commit()

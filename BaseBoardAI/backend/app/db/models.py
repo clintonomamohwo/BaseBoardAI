@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlalchemy import ForeignKey, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import ForeignKey, JSON, Text, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, deferred, undefer
 
 
 class Base(DeclarativeBase):
@@ -55,15 +55,18 @@ class StoryboardProjectORM(Base):
 
 class CharacterProfileORM(Base):
     __tablename__ = "character_profiles"
+    __table_args__ = (
+        UniqueConstraint("char_id", "project_id", name="uq_char_id_per_project"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    char_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True, index=True)
+    char_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     wardrobe_defaults: Mapped[str] = mapped_column(Text, nullable=False)
 
     # FacialBlueprint stored as a JSON column — preserves optional fields
     # and avoids a separate table for a tightly coupled value object.
-    facial_blueprint: Mapped[dict[str, Any]] = mapped_column(nullable=False)
+    facial_blueprint: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
     project_id: Mapped[int] = mapped_column(
         ForeignKey("storyboard_projects.db_id"), nullable=False
@@ -87,7 +90,7 @@ class ScriptSceneORM(Base):
     environmental_type: Mapped[str] = mapped_column(Text, nullable=False)
     time_of_day: Mapped[str] = mapped_column(Text, nullable=False)
     emotional_tone: Mapped[str] = mapped_column(Text, nullable=False)
-    color_palette: Mapped[list[str]] = mapped_column(nullable=False)  # List[str] of hex codes
+    color_palette: Mapped[list[str]] = mapped_column(JSON, nullable=False)  # List[str] of hex codes
 
     project_id: Mapped[int] = mapped_column(
         ForeignKey("storyboard_projects.db_id"), nullable=False
@@ -120,6 +123,8 @@ class StoryboardFrameORM(Base):
     action_breakdown: Mapped[str] = mapped_column(Text, nullable=False)
     lighting_notes: Mapped[str] = mapped_column(Text, nullable=False)
     sound_cue: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Deferred: excluded from SELECT on list queries; loaded only on individual project fetch
+    generated_image_url: Mapped[Optional[str]] = deferred(mapped_column(Text, nullable=True))
 
     scene_id: Mapped[int] = mapped_column(
         ForeignKey("script_scenes.id"), nullable=False
