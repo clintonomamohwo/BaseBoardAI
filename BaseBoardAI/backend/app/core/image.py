@@ -39,6 +39,28 @@ def _convert_bytes_to_data_url(content: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(content).decode("utf-8")
 
 
+def _strip_data_url_header(data_url: str) -> str:
+    """Strip the `data:...;base64,` header from a data URL, returning the raw base64 string."""
+    return data_url.split(',', 1)[1]
+
+
+# ---------------------------------------------------------------------------
+# BW sketch negative constraints (load-bearing — do not inline)
+# ---------------------------------------------------------------------------
+
+_BW_SKETCH_NEGATIVE_CONSTRAINTS = (
+    " Negative: color, color fills, gradients, tones, shading, texture, paint, "
+    "watercolor, photograph, render. "
+    "Positive: fine-tip fineliner ink pen, cross-hatching, "
+    "pure black linework, pure white background only."
+)
+
+
+def _inject_sketch_constraints(prompt: str) -> str:
+    """Append bw_sketch negative/positive constraints and cap at 400 chars."""
+    return (prompt + _BW_SKETCH_NEGATIVE_CONSTRAINTS)[:400]
+
+
 # ---------------------------------------------------------------------------
 # Prompt builder
 # ---------------------------------------------------------------------------
@@ -62,7 +84,7 @@ def _build_image_prompt(
 
 
 # ---------------------------------------------------------------------------
-# Provider: Pollinations.ai
+# Provider: Pollinations.ai (text-to-image)
 # ---------------------------------------------------------------------------
 
 def _generate_pollinations(prompt: str) -> str | None:
@@ -85,7 +107,32 @@ def _generate_pollinations(prompt: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Provider: Hugging Face Inference API
+# Provider: Pollinations.ai (img2img)
+# ---------------------------------------------------------------------------
+
+def _generate_pollinations_img2img(prompt: str, reference_base64: str) -> str | None:
+    """
+    Img2img via Pollinations: include the reference image as a query parameter.
+    Falls back to text-only on non-200.
+    """
+    encoded_prompt = urllib.parse.quote(prompt)
+    encoded_ref = urllib.parse.quote(reference_base64)
+    url = (
+        f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+        f"?image={encoded_ref}"
+        f"&width={settings.POLLINATIONS_WIDTH}"
+        f"&height={settings.POLLINATIONS_HEIGHT}"
+        f"&nologo=true"
+    )
+    response = httpx.get(url, timeout=30, follow_redirects=True)
+    if response.status_code == 200:
+        return _convert_bytes_to_data_url(response.content)
+    logger.warning("Pollinations img2img returned %s, falling back to text-only", response.status_code)
+    return _generate_pollinations(prompt)
+
+
+# ---------------------------------------------------------------------------
+# Provider: Hugging Face Inference API (text-to-image)
 # ---------------------------------------------------------------------------
 
 def _generate_huggingface(prompt: str) -> str | None:
@@ -107,22 +154,67 @@ def _generate_huggingface(prompt: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Provider: Hugging Face Inference API (img2img)
+# ---------------------------------------------------------------------------
+
+def _generate_huggingface_img2img(prompt: str, reference_base64: str, strength: float = 0.55) -> str | None:
+    """
+    Img2img via HF Inference API. `strength` controls how much the reference steers output.
+    Falls back to text-only on non-200.
+    """
+    url = f"https://api-inference.huggingface.co/models/{settings.HF_IMG2IMG_MODEL}"
+    headers = {"Authorization": f"Bearer {settings.HF_API_TOKEN}"}
+    payload = {"inputs": prompt, "image": reference_base64, "parameters": {"strength": strength}}
+    response = httpx.post(url, headers=headers, json=payload, timeout=90)
+    if response.status_code == 200:
+        return _convert_bytes_to_data_url(response.content)
+    logger.warning(
+        "HuggingFace img2img returned %s, falling back to text-only: %s",
+        response.status_code,
+        prompt[:60],
+    )
+    return _generate_huggingface(prompt)
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 def generate_frame_image(
     frame: "StoryboardFrameBase",
     scene: "ScriptSceneBase",
+    reference_style_image: str | None = None,
+    render_style: str = 'bw_sketch',
 ) -> str | None:
     """
     Generate a thumbnail image for a storyboard frame.
 
-    Routes to the configured provider via settings.IMAGE_PROVIDER.
+    Three dispatch branches (resolved in order):
+      1. bw_sketch + reference → sketch-intersection path (sketch constraints injected, strength=0.78)
+      2. reference present, other style → standard img2img (strength=0.55)
+      3. No reference → existing text-to-image path
+
     Returns a base64 data URL string on success, or None on any failure.
     Never raises — image generation is non-fatal to the pipeline.
     """
     try:
         prompt = _build_image_prompt(frame, scene)
+        ref_b64 = _strip_data_url_header(reference_style_image) if reference_style_image else None
+
+        # Branch 1: bw_sketch + reference → sketch-intersection path
+        if ref_b64 and render_style == 'bw_sketch':
+            sketch_prompt = _inject_sketch_constraints(prompt)
+            if settings.IMAGE_PROVIDER == "huggingface":
+                return _generate_huggingface_img2img(sketch_prompt, ref_b64, strength=0.78)
+            return _generate_pollinations_img2img(sketch_prompt, ref_b64)
+
+        # Branch 2: reference present, other render style → standard img2img
+        if ref_b64:
+            if settings.IMAGE_PROVIDER == "huggingface":
+                return _generate_huggingface_img2img(prompt, ref_b64, strength=0.55)
+            return _generate_pollinations_img2img(prompt, ref_b64)
+
+        # Branch 3: no reference → text-to-image
         if settings.IMAGE_PROVIDER == "huggingface":
             return _generate_huggingface(prompt)
         return _generate_pollinations(prompt)

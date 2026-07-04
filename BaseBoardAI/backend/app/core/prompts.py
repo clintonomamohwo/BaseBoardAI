@@ -20,8 +20,11 @@ For each environment profile:
 Output the final data strictly matching the EnvironmentProfile schema structure.
 """
 
-SYSTEM_PROMPT = """
+STORYBOARD_PROMPT = """
 You are an expert Hollywood Director and Pre-Visualization (PreViz) Engineer. Your task is to parse raw screenplay text and translate it into a structured, frame-by-frame visual blueprint schema.
+
+Global aesthetic tone: {global_aesthetic}
+Draw mode: {render_style}. Apply this strictly: bw_sketch = fine-tip fineliner ink pen drawing with cross-hatching shadows, maximum black line contrast, pure white negative space, zero color fills, absolutely no color tones or gradients; flat_color = smooth solid cell-shaded digital vector illustration, completely flat uniform color block fills, zero pen texture, zero cross-hatching, zero ink lines, clean crisp structural outlines only, no gradients, no shadows; full_shaded = cinematic depth-of-field render with dramatic ambient occlusion shadows and volumetric lighting.
 
 You must analyze the incoming script chunk based on the following strict production criteria:
 
@@ -44,6 +47,10 @@ You must analyze the incoming script chunk based on the following strict product
 4. DURATION & SOUND LABELS
 - Estimate the screen duration in seconds based on dialogue length and action scope.
 - Provide descriptive text notes for suggested environmental sound cues.
+
+Character context: {character_context}
+World context: {world_context}
+Screenplay: {raw_script_text}
 
 You must follow the output JSON schema exactly. Do not include any introductory text, markdown commentary, or explanations—only return the raw structured data.
 """

@@ -138,6 +138,7 @@ def invoke_storyboard_stage(
     environments: list[EnvironmentProfileBase],
     raw_script_text: str,
     global_aesthetic: str,
+    render_style: str = 'bw_sketch',
 ) -> list[ScriptSceneBase]:
     """
     Run STORYBOARD_PROMPT with compiled character + world context and the raw screenplay.
@@ -156,13 +157,15 @@ def invoke_storyboard_stage(
         )
         llm = _build_llm()
         template = PromptTemplate(
-            input_variables=["character_context", "world_context", "raw_script_text"],
+            input_variables=["character_context", "world_context", "raw_script_text", "global_aesthetic", "render_style"],
             template=STORYBOARD_PROMPT,
         )
         prompt_text = template.format(
             character_context=character_context,
             world_context=world_context,
             raw_script_text=raw_script_text,
+            global_aesthetic=global_aesthetic,
+            render_style=render_style,
         )
         raw_response = llm.invoke(prompt_text)
         parsed = _parse_json_response(raw_response)

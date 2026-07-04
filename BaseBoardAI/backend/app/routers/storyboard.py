@@ -49,6 +49,7 @@ def _build_project_orm(payload: StoryboardProjectCreate) -> StoryboardProjectORM
     project = StoryboardProjectORM(
         project_title=payload.project_title,
         global_aesthetic=payload.global_aesthetic,
+        render_style=payload.render_style,
     )
     for char in payload.characters:
         project.characters.append(
@@ -95,6 +96,7 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
         db_id=project.db_id,
         project_title=project.project_title,
         global_aesthetic=project.global_aesthetic,
+        render_style=project.render_style,
         characters=[
             CharacterProfileBase(
                 id=c.char_id,
@@ -175,14 +177,20 @@ def forge_storyboard_pipeline(
     characters = invoke_character_stage(payload.raw_character_notes)
     environments = invoke_world_stage(payload.raw_world_notes)
     scenes = invoke_storyboard_stage(
-        characters, environments, payload.raw_script_text, payload.global_aesthetic
+        characters, environments, payload.raw_script_text, payload.global_aesthetic,
+        payload.render_style,
     )
     for scene in scenes:
         for frame in scene.frames:
-            frame.generated_image_url = generate_frame_image(frame, scene)
+            frame.generated_image_url = generate_frame_image(
+                frame, scene,
+                reference_style_image=payload.reference_style_image,
+                render_style=payload.render_style,
+            )
     project_data = StoryboardProjectCreate(
         project_title=payload.project_title,
         global_aesthetic=payload.global_aesthetic,
+        render_style=payload.render_style,
         characters=characters,
         scenes=scenes,
     )
@@ -225,14 +233,20 @@ def forge_standalone_storyboard(payload: StandaloneStoryboardRequest) -> Storybo
     STORYBOARD_PROMPT. Returns an unsaved project (db_id=None); no DB write.
     """
     scenes = invoke_storyboard_stage(
-        payload.characters, [], payload.raw_script_text, payload.global_aesthetic
+        payload.characters, [], payload.raw_script_text, payload.global_aesthetic,
+        'bw_sketch',
     )
     for scene in scenes:
         for frame in scene.frames:
-            frame.generated_image_url = generate_frame_image(frame, scene)
+            frame.generated_image_url = generate_frame_image(
+                frame, scene,
+                reference_style_image=None,
+                render_style='bw_sketch',
+            )
     return StoryboardProjectResponse(
         project_title=payload.project_title,
         global_aesthetic=payload.global_aesthetic,
+        render_style='bw_sketch',
         characters=payload.characters,
         scenes=scenes,
         db_id=None,
