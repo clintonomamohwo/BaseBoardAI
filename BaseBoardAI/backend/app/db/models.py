@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlalchemy import ForeignKey, JSON, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, deferred, undefer
 
 
@@ -33,6 +33,7 @@ class StoryboardProjectORM(Base):
     db_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     project_title: Mapped[str] = mapped_column(Text, nullable=False)
     global_aesthetic: Mapped[str] = mapped_column(Text, nullable=False)
+    render_style: Mapped[str] = mapped_column(String, nullable=False, default='bw_sketch')
 
     # relationships
     characters: Mapped[list[CharacterProfileORM]] = relationship(

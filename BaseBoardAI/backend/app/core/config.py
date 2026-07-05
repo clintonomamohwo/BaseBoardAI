@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     WATSONX_API_KEY: str
     WATSONX_PROJECT_ID: str
     WATSONX_URL: str
-    WATSONX_MODEL_ID: str = "ibm/granite-13b-chat-v2"
+    WATSONX_MODEL_ID: str = "meta-llama/llama-3-3-70b-instruct"
 
     # -----------------------------------------------------------------------
     # Image Generation
@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     # Hugging Face — only required when IMAGE_PROVIDER=huggingface
     HF_API_TOKEN: str = ""
     HF_IMAGE_MODEL: str = "stabilityai/stable-diffusion-xl-base-1.0"
+    HF_IMG2IMG_MODEL: str = "stabilityai/stable-diffusion-xl-refiner-1.0"
 
     # Pollinations dimensions (also used as target canvas size for HF)
     POLLINATIONS_WIDTH: int = 768

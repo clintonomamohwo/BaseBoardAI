@@ -5,6 +5,8 @@ These are the canonical validation contracts used by the FastAPI router layer.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
@@ -95,6 +97,12 @@ class PipelineExecutionRequest(BaseModel):
     """
     project_title: str = Field(default="Untitled PreViz Project")
     global_aesthetic: str = Field(description="e.g., Cinematic High-Contrast, Neon Cyberpunk")
+    render_style: Literal['bw_sketch', 'flat_color', 'full_shaded'] = Field(
+        'bw_sketch', description="Visual rendering pipeline mode"
+    )
+    reference_style_image: str | None = Field(
+        None, description="Optional user-uploaded reference style image encoded as a Base64 data URL string."
+    )
     raw_character_notes: str = Field(description="Raw text entered in Step 1 Character Builder")
     raw_world_notes: str = Field(description="Raw text entered in Step 2 World Builder")
     raw_script_text: str = Field(description="The complete raw screenplay pasted in Step 3")
@@ -106,6 +114,9 @@ class StoryboardProjectCreate(BaseModel):
     """
     project_title: str = Field(default="Untitled PreViz Project")
     global_aesthetic: str = Field(description="e.g., Cinematic High-Contrast, Neon Cyberpunk")
+    render_style: Literal['bw_sketch', 'flat_color', 'full_shaded'] = Field(
+        'bw_sketch', description="Visual rendering pipeline mode"
+    )
     characters: list[CharacterProfileBase] = Field(default_factory=list)
     scenes: list[ScriptSceneBase] = Field(default_factory=list)
 
@@ -119,6 +130,7 @@ class StoryboardProjectResponse(BaseModel):
 
     project_title: str
     global_aesthetic: str
+    render_style: str
     characters: list[CharacterProfileBase] = Field(description="The standardized, locked-in character bible")
     scenes: list[ScriptSceneBase] = Field(description="The final parsed, continuity-checked scenes and frames")
 

@@ -1,49 +1,117 @@
 
-CHARACTER_PROMPT = """
-You are an expert Character Concept Artist and Profile Designer. Your task is to take raw, user-submitted character notes and standardize them into a structured, immutable visual blueprint.
+CHARACTER_PROMPT = """You are an expert Character Concept Artist. Convert the raw character notes below into a JSON array.
 
-You must isolate permanent structural characteristics from temporary variables:
-1. ANATOMICAL ANCHORS: Formulate an unyielding description of facial bone structure, eye shape, age appearance, and distinct markers (scars, hair texture).
-2. WARDROBE DEFAULTS: Note signature clothing silhouettes or accessories that define this character's look.
+RULES:
+- Output ONLY a valid JSON array. No prose, no markdown, no explanation — raw JSON only.
+- Each element must match this exact structure:
+{{
+  "id": "CHAR_<UPPERCASED_FIRSTNAME>",
+  "name": "<full name>",
+  "facial_blueprint": {{
+    "base_ethnicity_or_type": "<visual heritage or type, e.g. East Asian, Afro-Caribbean>",
+    "estimated_age": <integer>,
+    "bone_structure": "<e.g. high defined cheekbones, square jawline>",
+    "distinct_markers": "<scars, tattoos, or null>",
+    "fixed_seed_reference": null
+  }},
+  "wardrobe_defaults": "<signature clothing and accessories as a single sentence>"
+}}
 
-Output the final result strictly matching the CharacterProfile schema structure. Do not alter the core identity; refine the descriptive precision to prevent visual drift.
-"""
+Raw character notes:
+{raw_character_notes}
 
-WORLD_PROMPT = """
-You are a Cinematic Production Designer and Art Director. Your task is to take raw environment descriptions and translate them into a technical design bible for production settings.
+Return only the JSON array starting with [ and ending with ]. Nothing else."""
 
-For each environment profile:
-1. SPATIAL TEXTURES: Define the physical parameters of the space (e.g., industrial concrete, polished hardwood, gritty brick).
-2. LIGHTING KEYS: Establish the default light sources and shadow behaviors based on the location type.
-3. EXPLICIT SLUGLINE MATCHING: Map these rules directly to standard screenplay scene headings (e.g., 'INT. GYM', 'EXT. ALLEYWAY').
+WORLD_PROMPT = """You are a Cinematic Production Designer. Convert the raw environment notes below into a JSON array.
 
-Output the final data strictly matching the EnvironmentProfile schema structure.
-"""
+RULES:
+- Output ONLY a valid JSON array. No prose, no markdown, no explanation — raw JSON only.
+- Each element must match this exact structure:
+{{
+  "location_name": "<short uppercase slug, e.g. SERVER_ROOM>",
+  "spatial_textures": "<physical material properties, e.g. damp concrete, exposed brick>",
+  "lighting_keys": "<default light source direction and mood, e.g. dim LED rack glow, deep shadows>"
+}}
 
-SYSTEM_PROMPT = """
-You are an expert Hollywood Director and Pre-Visualization (PreViz) Engineer. Your task is to parse raw screenplay text and translate it into a structured, frame-by-frame visual blueprint schema.
+Raw environment notes:
+{raw_world_notes}
 
-You must analyze the incoming script chunk based on the following strict production criteria:
+Return only the JSON array starting with [ and ending with ]. Nothing else."""
 
-1. SCENE EXTRACTION
-- Look for scene headings (sluglines) starting with 'INT.' or 'EXT.' to establish the scene boundary, location, and environment type.
-- Extract the trailing time of day parameter (e.g., DAY, NIGHT, GOLDEN HOUR).
+STORYBOARD_PROMPT = """You are an expert Hollywood Director and Pre-Visualization engineer. Parse the screenplay below into a JSON array of scenes.
 
-2. EMOTIONAL VALENCE & PALETTE MAPPING
-- Evaluate the dialogue sentiment and action pacing to determine the dominant 'emotional_tone' (e.g., Tense, Melancholic, Energetic, Triumphant).
-- Output an array of exactly three Hexadecimal color codes ('color_palette') that a production lighting designer should use to establish the atmosphere for that specific emotional tone.
+RULES:
+- Output ONLY a valid JSON array. No prose, no markdown, no explanation — raw JSON only.
+- Each scene element must match this EXACT structure (use these exact key names):
+{{
+  "scene_number": <integer, starting at 1>,
+  "location_heading": "<full slugline, e.g. INT. SERVER ROOM - NIGHT>",
+  "environmental_type": "<Interior or Exterior>",
+  "time_of_day": "<e.g. NIGHT, DAY, GOLDEN HOUR>",
+  "emotional_tone": "<e.g. Tense, Melancholic, Energetic>",
+  "color_palette": ["#rrggbb", "#rrggbb", "#rrggbb"],
+  "frames": [
+    {{
+      "frame_number": <integer, starting at 1>,
+      "shot_type": "<e.g. Establishing Wide Shot, Close-up, Over-the-shoulder>",
+      "camera_angle": "<e.g. Eye-level, Low-angle, Dutch tilt>",
+      "duration_seconds": <float, estimated screen time>,
+      "action_breakdown": "<detailed description of what is happening in this frame>",
+      "lighting_notes": "<color temperature, direction, shadow mood>",
+      "sound_cue": "<ambient sound or null>"
+    }}
+  ]
+}}
 
-3. CINEMATOGRAPHY RULES FOR FRAMING
-- Automatically divide the actions into separate key visual frames.
-- Apply strict cinematography principles:
-  * Dialogue exchanges default to 'Over-the-shoulder' or 'Shot/Reverse-Shot'.
-  * Character scene entrances default to an 'Establishing Wide Shot'.
-  * Crucial dramatic beats or monologues default to a 'Close-up'.
-- For each frame, explicitly separate the fixed character descriptions from their changing facial expressions to maintain absolute structural visual continuity.
+CINEMATOGRAPHY GUIDELINES:
+- Global aesthetic: {global_aesthetic}
+- Draw mode: {render_style} (bw_sketch = fineliner ink cross-hatching, no color; flat_color = solid cell-shaded vector, no gradients; full_shaded = cinematic volumetric lighting)
+- Dialogue exchanges → Over-the-shoulder or Shot/Reverse-Shot
+- Character entrances → Establishing Wide Shot
+- Dramatic beats / monologues → Close-up
+- color_palette must be exactly 3 hex codes reflecting the emotional tone
 
-4. DURATION & SOUND LABELS
-- Estimate the screen duration in seconds based on dialogue length and action scope.
-- Provide descriptive text notes for suggested environmental sound cues.
+Character context:
+{character_context}
 
-You must follow the output JSON schema exactly. Do not include any introductory text, markdown commentary, or explanations—only return the raw structured data.
-"""
+World context:
+{world_context}
+
+Screenplay:
+{raw_script_text}
+
+Return only the JSON array starting with [ and ending with ]. Nothing else."""
+
+
+CHARACTER_OVERVIEW_PROMPT = """You are a professional story development consultant and character designer. \
+Given the character details below, produce a rich character overview as a single JSON object.
+
+RULES:
+- Output ONLY a single valid JSON object. No prose, no markdown — raw JSON only.
+- Use the exact keys shown below:
+{{
+  "name": "{name}",
+  "role": "<one of: Protagonist | Antagonist | Supporting | Mentor | Comic Relief | Love Interest | Villain | Anti-Hero>",
+  "age": "{age}",
+  "gender": "<inferred from name/description or 'Unspecified'>",
+  "occupation": "<likely profession or role in the story world>",
+  "species": "<Human unless otherwise apparent>",
+  "nationality": "<inferred from heritage or 'Unknown'>",
+  "height": "<estimated height range, e.g. 5'10\" – 6'0\">",
+  "biography": "<2–3 sentence backstory grounded in the character's physical and wardrobe cues>",
+  "personality": "<3–5 dominant personality traits as a flowing sentence>",
+  "goals": "<primary motivation or goal driving this character>",
+  "fears": "<primary fear or internal conflict>",
+  "strengths": "<2–3 key strengths>",
+  "weaknesses": "<2–3 key weaknesses or flaws>"
+}}
+
+Character details:
+  Name: {name}
+  Heritage / type: {ethnicity}
+  Estimated age: {age}
+  Bone structure: {bone_structure}
+  Distinct markers: {distinct_markers}
+  Wardrobe: {wardrobe}
+
+Return only the JSON object starting with {{ and ending with }}. Nothing else."""
