@@ -496,12 +496,28 @@ interface Props {
   onAutoInitComplete?: (charId: string) => void
 }
 
+// Detail level only applies when the base render style is a B&W variant.
+type DetailLevel = 'simple' | 'detailed'
+
+function resolveRenderStyle(base: string, detail: DetailLevel): string {
+  if (base === 'bw_sketch' || base === 'bw_detailed') {
+    return detail === 'detailed' ? 'bw_detailed' : 'bw_sketch'
+  }
+  return base // flat_color / full_shaded — detail level has no effect
+}
+
 export default function CharacterPackagePage({
   character, allCharacters = [], scenes, renderStyle = 'bw_sketch', onBack, onAutoInitComplete,
 }: Props) {
+  // Detect if the base style is B&W so the toggle is shown
+  const isBW = renderStyle === 'bw_sketch' || renderStyle === 'bw_detailed'
+  const [detailLevel, setDetailLevel] = useState<DetailLevel>(
+    renderStyle === 'bw_detailed' ? 'detailed' : 'simple'
+  )
+
   const [activeTab, setActiveTab] = useState<PackageTab>('Overview')
   const [pkg, setPkg] = useState<CharacterPackage>(() => {
-    const p = buildEmptyPackage(character, renderStyle)
+    const p = buildEmptyPackage(character, resolveRenderStyle(renderStyle, renderStyle === 'bw_detailed' ? 'detailed' : 'simple'))
     p.overview = buildOverview(character)
     p.sceneAppearances = scenes
       .filter(s => s.frames.some(f => f.action_breakdown?.toLowerCase().includes(character.name.split(' ')[0].toLowerCase())))
@@ -523,7 +539,8 @@ export default function CharacterPackagePage({
     autoInit()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function autoInit() {
+  async function autoInit(style?: string) {
+    const effectiveStyle = style ?? pkg.renderStyle
     // Mark all default sections as loading
     setPkg(p => ({
       ...p,
@@ -531,7 +548,7 @@ export default function CharacterPackagePage({
     }))
 
     try {
-      const result = await generateCharacterPackage(character, AUTO_INIT_SECTIONS, renderStyle)
+      const result = await generateCharacterPackage(character, AUTO_INIT_SECTIONS, effectiveStyle)
       setPkg(p => ({
         ...p,
         portrait:    (result['portrait'] as string | null) ?? p.portrait,
@@ -554,6 +571,33 @@ export default function CharacterPackagePage({
     }
 
     onAutoInitComplete?.(character.id)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Detail level toggle — switches pkg.renderStyle and regens all loaded sections
+  // ---------------------------------------------------------------------------
+
+  async function handleDetailToggle(next: DetailLevel) {
+    if (next === detailLevel) return
+    setDetailLevel(next)
+    const newStyle = resolveRenderStyle(renderStyle, next)
+    // Update pkg render style so every future regen uses the new value
+    setPkg(p => ({
+      ...p,
+      renderStyle: newStyle,
+      // Clear existing images so sections show loading state cleanly
+      portrait:    null,
+      turnaround:  Object.fromEntries(TURNAROUND_KEYS.map(k => [k, null])),
+      expressions: Object.fromEntries(EXPRESSION_KEYS.map(k => [k, null])),
+      poses:       Object.fromEntries(POSE_KEYS.map(k => [k, null])),
+      outfits:     Object.fromEntries(OUTFIT_KEYS.map(k => [k, null])),
+      autoInitDone: false,
+    }))
+    // Reset loaded-tabs tracking so lazy load works fresh
+    loadedTabs.current = new Set(['Overview', 'Scenes', 'Relationships'])
+    autoInitRef.current = false
+    // Kick off regeneration for the new style
+    await autoInit(newStyle)
   }
 
   // ---------------------------------------------------------------------------
@@ -808,6 +852,39 @@ export default function CharacterPackagePage({
         )}
         {pkg.autoInitDone && (
           <span style={{ fontSize:8, letterSpacing:'0.15em', color:'#4ade80', opacity:0.7, textTransform:'uppercase' }}>✓ Package Ready</span>
+        )}
+
+        {/* Detail level toggle — only shown for B&W styles */}
+        {isBW && (
+          <div style={{ display:'flex', alignItems:'center', gap:0, border:'1px solid var(--border)', borderRadius:4, overflow:'hidden', flexShrink:0 }}>
+            {(['simple', 'detailed'] as DetailLevel[]).map((level, i) => {
+              const active = detailLevel === level
+              const label  = level === 'simple' ? 'Simple' : 'Detailed'
+              const tooltip = level === 'simple'
+                ? 'Clean outlines only — download and add your own shading'
+                : 'Fully inked with crosshatch shading — studio-ready reference'
+              return (
+                <button
+                  key={level}
+                  title={tooltip}
+                  onClick={() => handleDetailToggle(level)}
+                  disabled={autoInitInProgress}
+                  style={{
+                    padding:'5px 12px', fontSize:8, letterSpacing:'0.15em', textTransform:'uppercase',
+                    cursor: autoInitInProgress ? 'wait' : 'pointer',
+                    background: active ? 'var(--gold)' : 'transparent',
+                    color: active ? 'var(--bg-base)' : 'var(--text-muted)',
+                    border:'none',
+                    borderLeft: i > 0 ? '1px solid var(--border)' : 'none',
+                    fontWeight: active ? 700 : 400,
+                    opacity: autoInitInProgress && !active ? 0.4 : 1,
+                    transition:'background 150ms ease, color 150ms ease',
+                  }}>
+                  {label}
+                </button>
+              )
+            })}
+          </div>
         )}
       </div>
 
@@ -1129,6 +1206,38 @@ export default function CharacterPackagePage({
             <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:16, lineHeight:1.6 }}>
               This prompt drives all generated images in this package. Edit it to control appearance, then click Save. The next regeneration of any section will use the updated prompt.
             </p>
+
+            {/* Detail level inline control */}
+            {isBW && (
+              <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20, padding:'10px 14px', background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:6 }}>
+                <div style={{ flex:1 }}>
+                  <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.6, marginBottom:3 }}>Detail Level</p>
+                  <p style={{ fontSize:10, color:'var(--text-base)', opacity:0.6, lineHeight:1.5 }}>
+                    {detailLevel === 'simple'
+                      ? 'Clean outlines only — lightweight reference for artists to shade themselves.'
+                      : 'Fully inked with crosshatch shading — studio-ready reference.'}
+                  </p>
+                </div>
+                <div style={{ display:'flex', gap:0, border:'1px solid var(--border)', borderRadius:4, overflow:'hidden', flexShrink:0 }}>
+                  {(['simple', 'detailed'] as DetailLevel[]).map((level, i) => (
+                    <button key={level}
+                      onClick={() => handleDetailToggle(level)}
+                      disabled={autoInitInProgress}
+                      style={{
+                        padding:'6px 14px', fontSize:8, letterSpacing:'0.15em', textTransform:'uppercase',
+                        cursor: autoInitInProgress ? 'wait' : 'pointer',
+                        background: detailLevel === level ? 'var(--gold)' : 'transparent',
+                        color: detailLevel === level ? 'var(--bg-base)' : 'var(--text-muted)',
+                        border:'none', borderLeft: i > 0 ? '1px solid var(--border)' : 'none',
+                        fontWeight: detailLevel === level ? 700 : 400,
+                        transition:'background 150ms ease, color 150ms ease',
+                      }}>
+                      {level === 'simple' ? 'Simple' : 'Detailed'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <textarea
               value={promptDraft}
               onChange={e => setPromptDraft(e.target.value)}

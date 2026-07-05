@@ -52,14 +52,21 @@ def _strip_data_url_header(data_url: str) -> str:
 # Style prefix injected at the start of every prompt so the image model
 # produces the correct visual register regardless of action content.
 _STYLE_PREFIXES: dict[str, str] = {
-    "bw_sketch":   "2D animation storyboard panel, black and white fineliner ink sketch, cross-hatching shadows, no color, no gradients, clean linework, cartoon. ",
+    # Sparse construction lines — artist adds their own shading on top
+    "bw_sketch":   "clean minimal black and white line art, simple outline only, no shading, no cross-hatching, no fill, no texture, loose gestural sketch, artist rough, white background. ",
+    # Fully inked with rendered shading — ready to study as a finished reference
+    "bw_detailed": "black and white ink illustration, bold clean outlines, detailed crosshatch shading, high contrast shadows, no color, professional comic book art, white background. ",
     "flat_color":  "2D animation cel, cartoon illustration, flat solid color fills, clean vector outlines, no gradients, no photo realism, Studio Ghibli style. ",
     "full_shaded": "2D animated film frame, cinematic cartoon, volumetric lighting, expressive character art, no photo realism. ",
 }
 _DEFAULT_STYLE_PREFIX = _STYLE_PREFIXES["bw_sketch"]
 
 _BW_SKETCH_NEGATIVE_CONSTRAINTS = (
-    ", black and white only, ink lines, cross-hatching, no color, no photo"
+    ", simple outlines only, no shading, no crosshatch, no texture, no color, no photo"
+)
+
+_BW_DETAILED_NEGATIVE_CONSTRAINTS = (
+    ", black and white only, no color, no photo realism, no gradients"
 )
 
 

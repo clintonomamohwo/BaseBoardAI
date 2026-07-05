@@ -149,7 +149,13 @@ def _char_base_desc(char_data: dict) -> str:
 def _pkg_prompt(base: str, view_desc: str, render_style: str) -> str:
     from app.core.image import _STYLE_PREFIXES
     prefix = _STYLE_PREFIXES.get(render_style, _STYLE_PREFIXES["bw_sketch"])
-    return (prefix + f"{base}, {view_desc}, full body, white background, character reference sheet")[:450]
+    if render_style == "bw_sketch":
+        suffix = f"{base}, {view_desc}, full body, white background, minimal outline drawing, no detail"
+    elif render_style == "bw_detailed":
+        suffix = f"{base}, {view_desc}, full body, white background, detailed ink drawing, character reference sheet"
+    else:
+        suffix = f"{base}, {view_desc}, full body, white background, character reference sheet"
+    return (prefix + suffix)[:450]
 
 
 @router.post("/character-package/generate", summary="Generate all image sheets for a character")
@@ -172,7 +178,7 @@ def generate_character_package(
     result: dict = {}
 
     if "portrait" in sections:
-        prompt = _pkg_prompt(base, "hero portrait, neutral pose, looking at camera, cinematic lighting, bust shot", render_style)
+        prompt = _pkg_prompt(base, "hero portrait, neutral pose, looking at camera, bust shot", render_style)
         result["portrait"] = _generate_pollinations(prompt)
 
     if "turnaround" in sections:
@@ -206,8 +212,12 @@ def generate_character_package(
         prop_items = prop_words[:5] or ["prop", "accessory", "tool", "object", "item"]
         result["props"] = {}
         for prop in prop_items:
-            prompt = (_STYLE_PREFIXES.get(render_style, _STYLE_PREFIXES["bw_sketch"]) +
-                      f"close-up illustration of {prop}, isolated on white background, clean design")[:450]
+            bw_prop_suffix = (
+                f"minimal outline drawing of {prop}, isolated on white background, no shading, no detail"
+                if render_style == "bw_sketch"
+                else f"close-up illustration of {prop}, isolated on white background, clean design"
+            )
+            prompt = (_STYLE_PREFIXES.get(render_style, _STYLE_PREFIXES["bw_sketch"]) + bw_prop_suffix)[:450]
             result["props"][prop] = _generate_pollinations(prompt)
 
     return result
@@ -228,7 +238,7 @@ def regenerate_character_image(
     base = _char_base_desc(char_data)
 
     if section == "portrait":
-        prompt = _pkg_prompt(base, "hero portrait, neutral pose, looking at camera, cinematic lighting, bust shot", render_style)
+        prompt = _pkg_prompt(base, "hero portrait, neutral pose, looking at camera, bust shot", render_style)
     elif section.startswith("turnaround/"):
         key = section.split("/", 1)[1]
         view_desc = dict(_TURNAROUND_ANGLES).get(key, key.replace("_", " "))
