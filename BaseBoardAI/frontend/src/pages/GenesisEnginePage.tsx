@@ -54,8 +54,9 @@ export default function GenesisEnginePage({
   const [taskProgress, setTaskProgress] = useState<Record<string, number>>(
     Object.fromEntries(TASKS.map(t => [t.id, 0]))
   )
-  const [error,   setError]   = useState<string | null>(null)
-  const [started, setStarted] = useState(false)
+  const [error,     setError]     = useState<string | null>(null)
+  const [started,   setStarted]   = useState(false)
+  const [countdown, setCountdown] = useState<number | null>(null)
   const ran = useRef(false)
 
   useEffect(() => {
@@ -100,7 +101,7 @@ export default function GenesisEnginePage({
     onNotify?.('Genesis Engine initialising…', 'info')
     try {
       const project = await forgePipeline({
-        project_title:         projectTitle || 'Genesis Project',
+        project_title:         projectTitle || (file ? file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Genesis Project'),
         global_aesthetic:      'Cinematic High-Contrast',
         render_style:          'bw_sketch',
         reference_style_image: null,
@@ -114,7 +115,21 @@ export default function GenesisEnginePage({
       setTaskProgress(Object.fromEntries(TASKS.map(t => [t.id, 1])))
       timers.forEach(clearInterval)
       onNotify?.('Genesis Engine complete ✓')
-      setTimeout(() => onComplete(project), 900)
+
+      // Countdown before report
+      const SECS = 5
+      setCountdown(SECS)
+      let remaining = SECS
+      const tick = setInterval(() => {
+        remaining -= 1
+        if (remaining <= 0) {
+          clearInterval(tick)
+          setCountdown(null)
+          onComplete(project)
+        } else {
+          setCountdown(remaining)
+        }
+      }, 1000)
     } catch (err) {
       timers.forEach(clearInterval)
       let msg = err instanceof Error ? err.message : 'Pipeline failed'
@@ -126,8 +141,9 @@ export default function GenesisEnginePage({
     }
   }
 
-  const totalDone    = Object.values(taskStatus).filter(s => s === 'done').length
-  const overallPct   = Math.round((totalDone / TASKS.length) * 100)
+  const totalDone  = Object.values(taskStatus).filter(s => s === 'done').length
+  const overallPct = Math.round((totalDone / TASKS.length) * 100)
+  const allDone    = totalDone === TASKS.length
 
   return (
     <div
@@ -304,12 +320,46 @@ export default function GenesisEnginePage({
               })}
             </div>
 
-            {/* Status line */}
-            <div className="text-center" style={{ opacity: 0.5 }}>
-              <span style={{ fontSize: 10, letterSpacing: '0.25em', color: 'var(--gold)', textTransform: 'uppercase' }}>
-                {overallPct < 100 ? 'Genesis Engine is analysing your story…' : 'Analysis complete. Preparing report…'}
-              </span>
-            </div>
+            {/* Status line / countdown */}
+            {countdown !== null ? (
+              <div className="text-center anim-slide-up">
+                <p style={{ fontSize: 11, letterSpacing: '0.2em', color: 'var(--gold)', textTransform: 'uppercase', marginBottom: 12, opacity: 0.7 }}>
+                  Analysis Complete — Preparing Report
+                </p>
+                {/* Countdown ring */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                  <div style={{
+                    width: 56, height: 56, borderRadius: '50%',
+                    border: '2px solid rgba(201,168,76,0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    position: 'relative',
+                    boxShadow: '0 0 16px var(--gold-dim)',
+                  }}>
+                    <svg width="56" height="56" style={{ position: 'absolute', top: 0, left: 0, transform: 'rotate(-90deg)' }}>
+                      <circle cx="28" cy="28" r="26"
+                        fill="none" stroke="var(--gold)" strokeWidth="2"
+                        strokeDasharray={`${2 * Math.PI * 26}`}
+                        strokeDashoffset={`${2 * Math.PI * 26 * (1 - countdown / 5)}`}
+                        strokeLinecap="round"
+                        style={{ transition: 'stroke-dashoffset 0.9s linear' }}
+                      />
+                    </svg>
+                    <span style={{ fontFamily: 'Georgia,serif', fontSize: 20, color: 'var(--gold)', fontWeight: 'bold', position: 'relative', zIndex: 1 }}>
+                      {countdown}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 9, letterSpacing: '0.3em', color: 'var(--text-muted)', textTransform: 'uppercase', opacity: 0.5 }}>
+                    seconds until report
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center" style={{ opacity: 0.5 }}>
+                <span style={{ fontSize: 10, letterSpacing: '0.25em', color: 'var(--gold)', textTransform: 'uppercase' }}>
+                  {overallPct < 100 ? 'Genesis Engine is analysing your story…' : 'Preparing report…'}
+                </span>
+              </div>
+            )}
           </>
         )}
       </div>

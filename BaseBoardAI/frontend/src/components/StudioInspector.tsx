@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { StoryboardScene } from '../types/storyboard'
 import StyleReferenceUploader from './StyleReferenceUploader'
+import ShotPlanner from './ShotPlanner'
 
 const LIGHTING_OPTIONS = ['Golden Hour / Sunrise', 'Chiaroscuro / Cyber', 'Natural Daylight', 'Neon Noir', 'Moonlit']
 const VALENCE_OPTIONS   = ['High-Contrast', 'Muted', 'Saturated', 'Monochrome']
@@ -17,6 +18,7 @@ export default function StudioInspector({ scene, onReferenceChange }: Props) {
   const [sunAngle, setSunAngle]               = useState(45)
   const [exposure, setExposure]               = useState(0.75)
   const [lens, setLens]                       = useState(24)
+  const [shotPlannerOpen, setShotPlannerOpen] = useState(false)
 
   const palette = scene?.color_palette ?? ['#2D1B69', '#00D4FF', '#D4A853']
 
@@ -116,6 +118,26 @@ export default function StudioInspector({ scene, onReferenceChange }: Props) {
         {/* Style Reference */}
         <section className="border-t border-[var(--border)] pt-4">
           <StyleReferenceUploader onReferenceChange={onReferenceChange} />
+        </section>
+
+        {/* Shot Planner */}
+        <section className="border-t border-[var(--border)] pt-4">
+          <button
+            type="button"
+            onClick={() => setShotPlannerOpen(o => !o)}
+            className="w-full flex items-center justify-between btn-tactile"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginBottom: shotPlannerOpen ? 14 : 0 }}
+          >
+            <span style={{ fontSize: 9, letterSpacing: '0.3em', color: 'var(--gold)', opacity: 0.5, textTransform: 'uppercase' }}>
+              Shot Planner
+            </span>
+            <span style={{
+              fontSize: 9, color: 'var(--gold)', opacity: 0.5,
+              display: 'inline-block', transition: 'transform 150ms ease',
+              transform: shotPlannerOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+            }}>›</span>
+          </button>
+          {shotPlannerOpen && <ShotPlanner scene={scene} renderStyle="bw_sketch" />}
         </section>
       </div>
     </div>

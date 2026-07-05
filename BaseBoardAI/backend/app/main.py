@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.config import settings
 from app.db.session import init_db
 from app.routers.storyboard import router as storyboard_router
 
@@ -56,4 +57,8 @@ app.include_router(storyboard_router)
 
 @app.get("/health", tags=["meta"])
 def health() -> dict:
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "model": settings.WATSONX_MODEL_ID,
+        "image_provider": settings.IMAGE_PROVIDER,
+    }

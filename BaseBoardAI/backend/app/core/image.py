@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 import urllib.parse
 from typing import TYPE_CHECKING
 
@@ -48,17 +49,23 @@ def _strip_data_url_header(data_url: str) -> str:
 # BW sketch negative constraints (load-bearing — do not inline)
 # ---------------------------------------------------------------------------
 
+# Style prefix injected at the start of every prompt so the image model
+# produces the correct visual register regardless of action content.
+_STYLE_PREFIXES: dict[str, str] = {
+    "bw_sketch":   "2D animation storyboard panel, black and white fineliner ink sketch, cross-hatching shadows, no color, no gradients, clean linework, cartoon. ",
+    "flat_color":  "2D animation cel, cartoon illustration, flat solid color fills, clean vector outlines, no gradients, no photo realism, Studio Ghibli style. ",
+    "full_shaded": "2D animated film frame, cinematic cartoon, volumetric lighting, expressive character art, no photo realism. ",
+}
+_DEFAULT_STYLE_PREFIX = _STYLE_PREFIXES["bw_sketch"]
+
 _BW_SKETCH_NEGATIVE_CONSTRAINTS = (
-    " Negative: color, color fills, gradients, tones, shading, texture, paint, "
-    "watercolor, photograph, render. "
-    "Positive: fine-tip fineliner ink pen, cross-hatching, "
-    "pure black linework, pure white background only."
+    ", black and white only, ink lines, cross-hatching, no color, no photo"
 )
 
 
 def _inject_sketch_constraints(prompt: str) -> str:
-    """Append bw_sketch negative/positive constraints and cap at 400 chars."""
-    return (prompt + _BW_SKETCH_NEGATIVE_CONSTRAINTS)[:400]
+    """Append bw_sketch constraints and cap at 500 chars."""
+    return (prompt + _BW_SKETCH_NEGATIVE_CONSTRAINTS)[:500]
 
 
 # ---------------------------------------------------------------------------
@@ -68,41 +75,56 @@ def _inject_sketch_constraints(prompt: str) -> str:
 def _build_image_prompt(
     frame: "StoryboardFrameBase",
     scene: "ScriptSceneBase",
+    render_style: str = "bw_sketch",
 ) -> str:
     """
-    Assemble a cinematic image generation prompt from frame and scene fields.
-    Capped at 200 characters to stay within model prompt limits.
+    Assemble an image generation prompt from frame and scene fields.
+    Prefixes a render-style directive so the model outputs the correct
+    visual register (cartoon/animation, not photorealism).
+    Capped at 450 characters.
     """
-    palette_str = ", ".join(scene.color_palette) if scene.color_palette else ""
+    style_prefix = _STYLE_PREFIXES.get(render_style, _DEFAULT_STYLE_PREFIX)
     prompt = (
         f"{frame.shot_type}, {frame.camera_angle}. "
         f"{frame.action_breakdown}. "
-        f"{frame.lighting_notes}. "
-        f"Color palette: {palette_str}."
+        f"{frame.lighting_notes}."
     )
-    return prompt[:200]
+    return (style_prefix + prompt)[:450]
 
 
 # ---------------------------------------------------------------------------
 # Provider: Pollinations.ai (text-to-image)
 # ---------------------------------------------------------------------------
 
+_RETRY_DELAYS = (0, 5, 15)  # seconds before each attempt (0 = immediate first try)
+
 def _generate_pollinations(prompt: str) -> str | None:
     """
     Download image bytes from Pollinations.ai and return as a base64 data URL.
-    Makes a real HTTP GET — does not return the URL string directly.
+    Uses model=flux for better stylistic instruction-following.
+    Retries up to 3 times with exponential backoff on non-200 responses.
     """
     encoded = urllib.parse.quote(prompt)
     url = (
         f"https://image.pollinations.ai/prompt/{encoded}"
         f"?width={settings.POLLINATIONS_WIDTH}"
         f"&height={settings.POLLINATIONS_HEIGHT}"
+        f"&model=flux"
         f"&nologo=true"
     )
-    response = httpx.get(url, timeout=30, follow_redirects=True)
-    if response.status_code == 200:
-        return _convert_bytes_to_data_url(response.content)
-    logger.warning("Pollinations returned %s for prompt: %s", response.status_code, prompt[:60])
+    for attempt, delay in enumerate(_RETRY_DELAYS, start=1):
+        if delay:
+            time.sleep(delay)
+        try:
+            response = httpx.get(url, timeout=60, follow_redirects=True)
+            if response.status_code == 200:
+                return _convert_bytes_to_data_url(response.content)
+            logger.warning(
+                "Pollinations attempt %d/%d returned %s for prompt: %s",
+                attempt, len(_RETRY_DELAYS), response.status_code, prompt[:60],
+            )
+        except httpx.TimeoutException:
+            logger.warning("Pollinations attempt %d/%d timed out for prompt: %s", attempt, len(_RETRY_DELAYS), prompt[:60])
     return None
 
 
@@ -113,7 +135,7 @@ def _generate_pollinations(prompt: str) -> str | None:
 def _generate_pollinations_img2img(prompt: str, reference_base64: str) -> str | None:
     """
     Img2img via Pollinations: include the reference image as a query parameter.
-    Falls back to text-only on non-200.
+    Falls back to text-only (with retries) on non-200.
     """
     encoded_prompt = urllib.parse.quote(prompt)
     encoded_ref = urllib.parse.quote(reference_base64)
@@ -124,10 +146,13 @@ def _generate_pollinations_img2img(prompt: str, reference_base64: str) -> str | 
         f"&height={settings.POLLINATIONS_HEIGHT}"
         f"&nologo=true"
     )
-    response = httpx.get(url, timeout=30, follow_redirects=True)
-    if response.status_code == 200:
-        return _convert_bytes_to_data_url(response.content)
-    logger.warning("Pollinations img2img returned %s, falling back to text-only", response.status_code)
+    try:
+        response = httpx.get(url, timeout=60, follow_redirects=True)
+        if response.status_code == 200:
+            return _convert_bytes_to_data_url(response.content)
+        logger.warning("Pollinations img2img returned %s, falling back to text-only", response.status_code)
+    except httpx.TimeoutException:
+        logger.warning("Pollinations img2img timed out, falling back to text-only")
     return _generate_pollinations(prompt)
 
 
@@ -198,7 +223,7 @@ def generate_frame_image(
     Never raises — image generation is non-fatal to the pipeline.
     """
     try:
-        prompt = _build_image_prompt(frame, scene)
+        prompt = _build_image_prompt(frame, scene, render_style)
         ref_b64 = _strip_data_url_header(reference_style_image) if reference_style_image else None
 
         # Branch 1: bw_sketch + reference → sketch-intersection path

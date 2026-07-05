@@ -104,6 +104,7 @@ export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }:
   const [hovering,  setHovering]  = useState(false)
   const [error,     setError]     = useState<string | null>(null)
   const [hovered,   setHovered]   = useState<'upload' | 'template' | 'blank' | null>(null)
+  const [confirmed, setConfirmed] = useState<{ file: File; title: string } | null>(null)
 
   function validateAndAccept(file: File) {
     setError(null)
@@ -112,7 +113,7 @@ export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }:
       setError(`"${file.name}" is not a supported format. Use PDF, DOCX, TXT, FDX, or Markdown.`)
       return
     }
-    onFileReady(file, titleFromFilename(file.name))
+    setConfirmed({ file, title: titleFromFilename(file.name) })
   }
 
   function onDragOver(e: DragEvent<HTMLDivElement>) { e.preventDefault(); setDragging(true) }
@@ -138,9 +139,86 @@ export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }:
     URL.revokeObjectURL(url)
   }
 
-  const isUpHov = hovered === 'upload'
+  const isUpHov  = hovered === 'upload'
   const isTplHov = hovered === 'template'
   const isBlkHov = hovered === 'blank'
+
+  // ── Confirmation card (same as GenesisUploadPage) ──────────────────────
+  if (confirmed) {
+    const fmt = detectFormat(confirmed.file)
+    const sizeKb = Math.round(confirmed.file.size / 1024)
+    const sizeLabel = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`
+
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-8 relative overflow-hidden"
+        style={{ background: 'var(--bg-base)' }}>
+        <div className="absolute inset-0 pointer-events-none"
+          style={{ background: 'radial-gradient(ellipse at 50% 40%, var(--gold-dim) 0%, transparent 60%)', opacity: 0.25 }} />
+        <div className="absolute inset-0 pointer-events-none grain-overlay" aria-hidden="true" />
+        <div className="absolute top-6 left-8 right-8 flex items-center justify-between z-10">
+          <button onClick={onLanding} className="btn-tactile flex items-center gap-2"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+            <img src={logoSrc} alt="Baseboard AI" style={{ width: 22, height: 22, objectFit: 'contain', filter: 'drop-shadow(0 0 2px rgba(201,168,76,0.5))' }} />
+            <span style={{ fontSize: 10, letterSpacing: '0.3em', color: 'var(--gold)', opacity: 0.7, textTransform: 'uppercase' }}>BASEBOARD AI</span>
+          </button>
+        </div>
+        <div className="relative z-10 anim-studio-unfold" style={{ width: '100%', maxWidth: 480 }}>
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <div className="w-8 h-8 rounded flex items-center justify-center"
+              style={{ background: 'var(--bg-raised)', border: '1px solid var(--gold)', opacity: 0.85 }}>
+              <span style={{ color: 'var(--gold)', fontFamily: 'Georgia,serif', fontWeight: 'bold', fontSize: 15 }}>G</span>
+            </div>
+            <span style={{ fontSize: 10, letterSpacing: '0.35em', color: 'var(--gold)', textTransform: 'uppercase', opacity: 0.7 }}>Genesis Engine</span>
+          </div>
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid rgba(201,168,76,0.4)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 0 40px var(--gold-dim)' }}>
+            <div style={{ padding: '20px 28px 16px', borderBottom: '1px solid var(--border)', textAlign: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <div style={{ flex: 1, height: 1, background: 'var(--gold)', opacity: 0.3 }} />
+                <span style={{ fontSize: 9, letterSpacing: '0.5em', color: 'var(--gold)', opacity: 0.7, textTransform: 'uppercase' }}>Ready to Analyse</span>
+                <div style={{ flex: 1, height: 1, background: 'var(--gold)', opacity: 0.3 }} />
+              </div>
+              <h2 style={{ fontFamily: 'Georgia,serif', fontSize: 22, fontWeight: 'bold', color: 'var(--gold)', margin: '0 0 4px', letterSpacing: '0.06em' }}>{confirmed.title}</h2>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', opacity: 0.55, letterSpacing: '0.1em' }}>Genesis Engine · Document Loaded</p>
+            </div>
+            <div style={{ padding: '12px 28px 20px' }}>
+              <div style={{ height: 1, background: 'var(--border)', margin: '10px 0 16px', opacity: 0.6 }} />
+              {[
+                { label: 'File Name', value: confirmed.file.name },
+                { label: 'Format',    value: fmt.toUpperCase() },
+                { label: 'File Size', value: sizeLabel },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '7px 0' }}>
+                  <span style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--text-muted)', textTransform: 'uppercase', opacity: 0.7 }}>{label}</span>
+                  <span style={{ fontSize: 13, color: 'var(--text-base)', fontWeight: 500, maxWidth: '60%', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+                </div>
+              ))}
+              <div style={{ height: 1, background: 'var(--border)', margin: '16px 0', opacity: 0.6 }} />
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, opacity: 0.7, textAlign: 'center' }}>
+                Genesis Engine will extract characters, build the world bible, and generate your storyboard automatically.
+              </p>
+              <div style={{ height: 1, background: 'var(--border)', margin: '16px 0', opacity: 0.6 }} />
+            </div>
+            <div style={{ padding: '0 28px 28px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <button className="btn-tactile gold-glow"
+                onClick={() => onFileReady(confirmed.file, confirmed.title)}
+                style={{ padding: '14px 24px', borderRadius: 4, border: '1px solid var(--gold)', background: 'var(--gold)', color: 'var(--bg-base)', fontSize: 12, letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 700, cursor: 'pointer', transition: 'background 150ms ease, color 150ms ease' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--gold)' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'var(--gold)'; e.currentTarget.style.color = 'var(--bg-base)' }}>
+                Analyse Script →
+              </button>
+              <button className="btn-tactile"
+                onClick={() => setConfirmed(null)}
+                style={{ padding: '10px 24px', borderRadius: 4, fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', transition: 'border-color 150ms ease, color 150ms ease' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--gold)'; e.currentTarget.style.color = 'var(--gold)' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' }}>
+                ← Change Document
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div

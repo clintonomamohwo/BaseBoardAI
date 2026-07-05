@@ -1,0 +1,1198 @@
+/**
+ * CharacterPackagePage — full studio character reference package.
+ *
+ * Sections (lazy-loaded per tab):
+ *   Overview · Portrait · Turnaround · Expressions · Poses · Outfits
+ *   Palette · Props · Relationships · Scenes · AI Prompt · Versions
+ *
+ * Auto-generates default sections (portrait, turnaround, expressions,
+ * poses, outfits) on first mount.
+ *
+ * Premium action "Generate Full Character Reference Pack" adds:
+ *   360° turntable (8 angles) · T-pose / A-pose + extended poses
+ *   Close-up material references
+ */
+
+import { useState, useCallback, useRef, useEffect } from 'react'
+import { saveAs } from 'file-saver'
+import type {
+  CharacterProfile,
+  CharacterPackage,
+  CharacterOverview,
+  CharacterRelationship,
+  StoryboardScene,
+} from '../types/storyboard'
+import {
+  generateCharacterPackage,
+  regenerateCharacterImage,
+  generateCharacterOverview,
+  generateFullCharacterPack,
+} from '../api/storyboard'
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const TURNAROUND_KEYS = ['front', 'three_q_front', 'side', 'three_q_back', 'back'] as const
+const TURNAROUND_LABELS: Record<string, string> = {
+  front: 'Front', three_q_front: '¾ Front', side: 'Side', three_q_back: '¾ Back', back: 'Back',
+}
+
+const EXPRESSION_KEYS = ['neutral','happy','laughing','angry','sad','surprised','fearful','thinking','crying'] as const
+const EXPRESSION_EMOJIS: Record<string, string> = {
+  neutral:'🙂', happy:'😊', laughing:'😂', angry:'😡', sad:'😢',
+  surprised:'😲', fearful:'😨', thinking:'🤔', crying:'😭',
+}
+
+const POSE_KEYS = ['standing','walking','running','sitting','pointing','holding_object','hero_pose'] as const
+const POSE_LABELS: Record<string, string> = {
+  standing:'Standing', walking:'Walking', running:'Running', sitting:'Sitting',
+  pointing:'Pointing', holding_object:'Holding Object', hero_pose:'Hero Pose',
+}
+
+const OUTFIT_KEYS = ['default','casual','formal','travel','combat','winter','summer'] as const
+const OUTFIT_LABELS: Record<string, string> = {
+  default:'Default', casual:'Casual', formal:'Formal', travel:'Travel',
+  combat:'Combat', winter:'Winter', summer:'Summer',
+}
+
+const TURNAROUND_360_KEYS = ['deg_000','deg_045','deg_090','deg_135','deg_180','deg_225','deg_270','deg_315'] as const
+const TURNAROUND_360_LABELS: Record<string, string> = {
+  deg_000:'0°', deg_045:'45°', deg_090:'90°', deg_135:'135°',
+  deg_180:'180°', deg_225:'225°', deg_270:'270°', deg_315:'315°',
+}
+
+const PREMIUM_POSE_KEYS = ['t_pose','a_pose','crouching','climbing','fighting_stance','falling','celebrating','kneeling'] as const
+const PREMIUM_POSE_LABELS: Record<string, string> = {
+  t_pose:'T-Pose', a_pose:'A-Pose', crouching:'Crouching', climbing:'Climbing',
+  fighting_stance:'Fighting Stance', falling:'Falling', celebrating:'Celebrating', kneeling:'Kneeling',
+}
+
+const MATERIAL_KEYS = ['face_closeup','hair_closeup','fabric_closeup','hand_closeup','eye_closeup'] as const
+const MATERIAL_LABELS: Record<string, string> = {
+  face_closeup:'Face', hair_closeup:'Hair', fabric_closeup:'Fabric',
+  hand_closeup:'Hands', eye_closeup:'Eyes',
+}
+
+const RELATIONSHIP_COLORS: Record<string, string> = {
+  ally:'#4ade80', enemy:'#f87171', romantic:'#f472b6', mentor:'#60a5fa',
+  family:'#a78bfa', neutral:'#94a3b8', rival:'#fb923c',
+}
+
+const PACKAGE_TABS = [
+  'Overview', 'Portrait', 'Turnaround', 'Expressions', 'Poses',
+  'Outfits', 'Palette', 'Props', 'Relationships', 'Scenes', 'AI Prompt', 'Versions',
+] as const
+type PackageTab = typeof PACKAGE_TABS[number]
+
+// Default sections that auto-generate on mount
+const AUTO_INIT_SECTIONS = ['portrait', 'turnaround', 'expressions', 'poses', 'outfits']
+
+// ---------------------------------------------------------------------------
+// Helper — build empty package state
+// ---------------------------------------------------------------------------
+
+function buildEmptyPackage(char: CharacterProfile, renderStyle: string): CharacterPackage {
+  const fb = char.facial_blueprint
+  const basePrompt = [
+    char.name,
+    fb?.base_ethnicity_or_type,
+    fb?.estimated_age ? `age ${fb.estimated_age}` : '',
+    fb?.bone_structure,
+    fb?.distinct_markers ?? '',
+    char.wardrobe_defaults,
+  ].filter(Boolean).join(', ')
+
+  return {
+    charId: char.id,
+    overview: null,
+    prompt: basePrompt,
+    renderStyle,
+    portrait: null,
+    turnaround: Object.fromEntries(TURNAROUND_KEYS.map(k => [k, null])),
+    expressions: Object.fromEntries(EXPRESSION_KEYS.map(k => [k, null])),
+    poses: Object.fromEntries(POSE_KEYS.map(k => [k, null])),
+    outfits: Object.fromEntries(OUTFIT_KEYS.map(k => [k, null])),
+    props: {},
+    turnaround360: null,
+    premiumPoses: null,
+    materialCloseups: null,
+    fullPackLoading: false,
+    fullPackGenerated: false,
+    relationships: [],
+    loading: {},
+    versions: [],
+    sceneAppearances: [],
+    autoInitDone: false,
+  }
+}
+
+function buildOverview(char: CharacterProfile): CharacterOverview {
+  return {
+    name: char.name,
+    role: 'Supporting',
+    age: char.facial_blueprint?.estimated_age ? String(char.facial_blueprint.estimated_age) : '',
+    gender: '',
+    occupation: '',
+    species: 'Human',
+    nationality: '',
+    height: '',
+    biography: char.wardrobe_defaults ?? '',
+    personality: char.facial_blueprint?.distinct_markers ?? '',
+    goals: '',
+    fears: '',
+    strengths: char.facial_blueprint?.bone_structure ?? '',
+    weaknesses: '',
+  }
+}
+
+/** Infer relationships from shared scene appearances */
+function buildRelationships(
+  char: CharacterProfile,
+  allChars: CharacterProfile[],
+  scenes: StoryboardScene[],
+): CharacterRelationship[] {
+  const firstName = char.name.split(' ')[0].toLowerCase()
+  return allChars
+    .filter(c => c.id !== char.id)
+    .map(other => {
+      const otherFirst = other.name.split(' ')[0].toLowerCase()
+      const shared = scenes
+        .filter(s => s.frames.some(f => {
+          const ab = f.action_breakdown?.toLowerCase() ?? ''
+          return ab.includes(firstName) && ab.includes(otherFirst)
+        }))
+        .map(s => s.scene_number)
+      if (shared.length === 0) return null
+      return {
+        targetCharId: other.id,
+        targetName: other.name,
+        type: 'neutral' as const,
+        strength: Math.min(shared.length, 5),
+        sharedScenes: shared,
+        description: `Appears together in ${shared.length} scene${shared.length !== 1 ? 's' : ''}.`,
+      }
+    })
+    .filter((r): r is CharacterRelationship => r !== null)
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function Spinner() {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:8, height:'100%', minHeight:80 }}>
+      <div style={{ width:18, height:18, border:'2px solid rgba(201,168,76,0.15)', borderTop:'2px solid rgba(201,168,76,0.7)', borderRadius:'50%', animation:'pkg-spin 0.8s linear infinite' }} />
+      <span style={{ fontSize:8, color:'var(--gold)', opacity:0.5, letterSpacing:'0.2em', textTransform:'uppercase' }}>Rendering</span>
+    </div>
+  )
+}
+
+function ImageTile({
+  url, label, width = 120, height = 140, onRegen, isLoading,
+}: {
+  url: string | null; label: string; width?: number; height?: number;
+  onRegen?: () => void; isLoading?: boolean;
+}) {
+  const [lightbox, setLightbox] = useState(false)
+
+  async function handleDownload() {
+    if (!url) return
+    try { const r = await fetch(url); const b = await r.blob(); saveAs(b, `${label.replace(/[^a-z0-9]/gi,'_').toLowerCase()}.png`) }
+    catch { window.open(url, '_blank') }
+  }
+
+  return (
+    <>
+      {lightbox && url && (
+        <div onClick={() => setLightbox(false)} style={{ position:'fixed',inset:0,zIndex:9999,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'zoom-out' }}>
+          <img src={url} alt={label} style={{ maxWidth:'82vw',maxHeight:'82vh',borderRadius:6,border:'1px solid rgba(201,168,76,0.3)' }} onClick={e=>e.stopPropagation()} />
+          <button onClick={()=>setLightbox(false)} style={{ position:'absolute',top:20,right:24,background:'none',border:'none',color:'rgba(255,255,255,0.4)',fontSize:24,cursor:'pointer' }}>✕</button>
+        </div>
+      )}
+      <div style={{ display:'flex',flexDirection:'column',alignItems:'center',gap:5 }}>
+        <div style={{ width, height, borderRadius:5, border:'1px solid var(--border)', background:'var(--bg-base)', overflow:'hidden', display:'flex',alignItems:'center',justifyContent:'center', cursor: url ? 'zoom-in' : 'default', position:'relative' }}
+          onClick={() => url && setLightbox(true)}>
+          {isLoading ? <Spinner /> : url ? (
+            <img src={url} alt={label} style={{ width:'100%',height:'100%',objectFit:'cover' }} />
+          ) : (
+            <span style={{ fontSize:9,color:'var(--text-muted)',opacity:0.25,textAlign:'center',padding:'0 8px',letterSpacing:'0.1em' }}>{label}</span>
+          )}
+        </div>
+        <div style={{ display:'flex',gap:4 }}>
+          <span style={{ fontSize:8,color:'var(--text-muted)',opacity:0.5,letterSpacing:'0.12em',textTransform:'uppercase' }}>{label}</span>
+          {onRegen && (
+            <button onClick={onRegen} disabled={isLoading} title="Regenerate" style={{ background:'none',border:'none',cursor:isLoading?'wait':'pointer',color:'var(--gold)',opacity:isLoading?0.3:0.5,fontSize:10,padding:0 }}>↺</button>
+          )}
+          {url && (
+            <button onClick={handleDownload} title="Download PNG" style={{ background:'none',border:'none',cursor:'pointer',color:'var(--gold)',opacity:0.4,fontSize:9,padding:0 }}>↓</button>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Section: Overview
+// ---------------------------------------------------------------------------
+
+function OverviewSection({
+  pkg, onUpdate, onGenerateOverview, isGenerating,
+}: {
+  pkg: CharacterPackage
+  onUpdate: (ov: CharacterOverview) => void
+  onGenerateOverview: () => void
+  isGenerating: boolean
+}) {
+  const ov = pkg.overview!
+
+  const fields: { key: keyof CharacterOverview; label: string; multiline?: boolean }[] = [
+    { key:'name',        label:'Name' },
+    { key:'role',        label:'Role' },
+    { key:'age',         label:'Age' },
+    { key:'gender',      label:'Gender' },
+    { key:'occupation',  label:'Occupation' },
+    { key:'species',     label:'Species' },
+    { key:'nationality', label:'Nationality' },
+    { key:'height',      label:'Height' },
+    { key:'biography',   label:'Short Biography',  multiline:true },
+    { key:'personality', label:'Personality',      multiline:true },
+    { key:'goals',       label:'Goals',            multiline:true },
+    { key:'fears',       label:'Fears',            multiline:true },
+    { key:'strengths',   label:'Strengths',        multiline:true },
+    { key:'weaknesses',  label:'Weaknesses',       multiline:true },
+  ]
+
+  const inputStyle = {
+    width:'100%', background:'var(--bg-base)', border:'1px solid var(--border)',
+    borderRadius:4, padding:'7px 10px', fontSize:11, color:'var(--text-base)',
+    outline:'none', resize:'vertical' as const, fontFamily:'inherit',
+  }
+
+  return (
+    <div>
+      {/* Generate / Regenerate Overview button */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
+        <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500 }}>Character Overview</h2>
+        <button
+          onClick={onGenerateOverview}
+          disabled={isGenerating}
+          style={{
+            fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', textTransform:'uppercase',
+            background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4,
+            padding:'5px 14px', cursor:isGenerating?'wait':'pointer', opacity:isGenerating?0.4:1,
+          }}>
+          {isGenerating ? 'Generating…' : '✦ AI-Generate Overview'}
+        </button>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'16px 24px', maxWidth:640 }}>
+        {fields.map(({ key, label, multiline }) => (
+          <div key={key} style={{ gridColumn: multiline ? 'span 2' : 'span 1' }}>
+            <p style={{ fontSize:8,letterSpacing:'0.2em',color:'var(--text-muted)',textTransform:'uppercase',opacity:0.6,marginBottom:4 }}>{label}</p>
+            {multiline ? (
+              <textarea rows={3} value={ov[key]} onChange={e => onUpdate({ ...ov, [key]: e.target.value })} style={inputStyle} />
+            ) : (
+              <input value={ov[key]} onChange={e => onUpdate({ ...ov, [key]: e.target.value })} style={inputStyle}
+                onFocus={e=>(e.target.style.borderColor='var(--gold)')}
+                onBlur={e=>(e.target.style.borderColor='var(--border)')} />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Section: Relationship Graph
+// ---------------------------------------------------------------------------
+
+function RelationshipGraph({
+  relationships, characterName,
+}: {
+  relationships: CharacterRelationship[]
+  characterName: string
+}) {
+  const [editingIdx, setEditingIdx] = useState<number | null>(null)
+  const [localRels, setLocalRels] = useState(relationships)
+
+  const REL_TYPES: CharacterRelationship['type'][] = [
+    'ally','enemy','romantic','mentor','family','neutral','rival',
+  ]
+
+  if (localRels.length === 0) {
+    return (
+      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:200, gap:10 }}>
+        <p style={{ fontSize:11, color:'var(--text-muted)', opacity:0.3, letterSpacing:'0.15em', textTransform:'uppercase' }}>No relationships detected</p>
+        <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.2, textAlign:'center', maxWidth:280, lineHeight:1.7 }}>
+          Relationships are inferred from scenes where two characters appear in the same frame action. Generate the storyboard first.
+        </p>
+      </div>
+    )
+  }
+
+  // Simple radial SVG layout
+  const cx = 200, cy = 180, r = 120
+  const nodeR = 22
+
+  return (
+    <div>
+      <div style={{ display:'flex', gap:32, alignItems:'flex-start' }}>
+        {/* SVG Graph */}
+        <svg width={400} height={360} style={{ flexShrink:0, background:'var(--bg-surface)', borderRadius:8, border:'1px solid var(--border)' }}>
+          {/* Draw edges */}
+          {localRels.map((rel, i) => {
+            const angle = (i / localRels.length) * 2 * Math.PI - Math.PI / 2
+            const tx = cx + r * Math.cos(angle)
+            const ty = cy + r * Math.sin(angle)
+            const color = RELATIONSHIP_COLORS[rel.type] ?? '#94a3b8'
+            return (
+              <g key={rel.targetCharId}>
+                <line x1={cx} y1={cy} x2={tx} y2={ty}
+                  stroke={color} strokeWidth={rel.strength * 0.8} strokeOpacity={0.4}
+                  strokeDasharray={rel.type === 'enemy' ? '4,3' : undefined} />
+              </g>
+            )
+          })}
+          {/* Center node (this character) */}
+          <circle cx={cx} cy={cy} r={nodeR} fill="rgba(201,168,76,0.15)" stroke="var(--gold)" strokeWidth={1.5} />
+          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
+            style={{ fontSize:9, fill:'var(--gold)', fontFamily:'Georgia,serif' }}>
+            {characterName.split(' ')[0].slice(0,6)}
+          </text>
+          {/* Outer nodes */}
+          {localRels.map((rel, i) => {
+            const angle = (i / localRels.length) * 2 * Math.PI - Math.PI / 2
+            const tx = cx + r * Math.cos(angle)
+            const ty = cy + r * Math.sin(angle)
+            const color = RELATIONSHIP_COLORS[rel.type] ?? '#94a3b8'
+            const shortName = rel.targetName.split(' ')[0].slice(0,6)
+            return (
+              <g key={rel.targetCharId} style={{ cursor:'pointer' }} onClick={() => setEditingIdx(i)}>
+                <circle cx={tx} cy={ty} r={nodeR} fill={`${color}22`} stroke={color} strokeWidth={1.2} />
+                <text x={tx} y={ty} textAnchor="middle" dominantBaseline="middle"
+                  style={{ fontSize:8, fill:'var(--text-base)', fontFamily:'system-ui,sans-serif' }}>
+                  {shortName}
+                </text>
+                {/* Relationship type label on edge midpoint */}
+                <text
+                  x={(cx + tx) / 2} y={(cy + ty) / 2 - 5}
+                  textAnchor="middle"
+                  style={{ fontSize:7, fill:color, fontFamily:'system-ui,sans-serif', textTransform:'capitalize' }}>
+                  {rel.type}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+
+        {/* Relationship list / editor */}
+        <div style={{ flex:1, display:'flex', flexDirection:'column', gap:8 }}>
+          <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.5, marginBottom:4 }}>
+            Relationships · click a node to edit
+          </p>
+          {localRels.map((rel, i) => {
+            const color = RELATIONSHIP_COLORS[rel.type] ?? '#94a3b8'
+            const isEditing = editingIdx === i
+            return (
+              <div key={rel.targetCharId} style={{
+                background:'var(--bg-surface)', border:`1px solid ${isEditing ? color : 'var(--border)'}`,
+                borderRadius:6, padding:'10px 12px', transition:'border-color 150ms ease',
+              }}>
+                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom: isEditing ? 10 : 0 }}>
+                  <div style={{ width:8, height:8, borderRadius:'50%', background:color, flexShrink:0 }} />
+                  <span style={{ fontSize:11, color:'var(--text-base)', flex:1, opacity:0.85 }}>{rel.targetName}</span>
+                  <span style={{ fontSize:8, color, opacity:0.8, letterSpacing:'0.1em', textTransform:'uppercase' }}>{rel.type}</span>
+                  <span style={{ fontSize:9, color:'var(--text-muted)', opacity:0.4 }}>
+                    {'★'.repeat(rel.strength)}{'☆'.repeat(5 - rel.strength)}
+                  </span>
+                  <button onClick={() => setEditingIdx(isEditing ? null : i)}
+                    style={{ background:'none',border:'none',cursor:'pointer',color:'var(--gold)',opacity:0.4,fontSize:10,padding:0 }}>
+                    {isEditing ? '✕' : '✎'}
+                  </button>
+                </div>
+                {isEditing && (
+                  <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                    {/* Type selector */}
+                    <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
+                      {REL_TYPES.map(t => (
+                        <button key={t} onClick={() => {
+                          const updated = [...localRels]
+                          updated[i] = { ...updated[i], type: t }
+                          setLocalRels(updated)
+                        }}
+                          style={{
+                            padding:'3px 8px', borderRadius:999, fontSize:8, cursor:'pointer',
+                            border:`1px solid ${RELATIONSHIP_COLORS[t]}`,
+                            background: rel.type === t ? `${RELATIONSHIP_COLORS[t]}33` : 'transparent',
+                            color: RELATIONSHIP_COLORS[t], letterSpacing:'0.08em', textTransform:'capitalize',
+                          }}>
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Strength slider */}
+                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                      <span style={{ fontSize:8, color:'var(--text-muted)', opacity:0.6, textTransform:'uppercase', letterSpacing:'0.1em', width:60 }}>Strength</span>
+                      <input type="range" min={1} max={5} value={rel.strength}
+                        onChange={e => {
+                          const updated = [...localRels]
+                          updated[i] = { ...updated[i], strength: Number(e.target.value) }
+                          setLocalRels(updated)
+                        }}
+                        style={{ flex:1, accentColor:'var(--gold)' }} />
+                      <span style={{ fontSize:9, color:'var(--gold)', width:12 }}>{rel.strength}</span>
+                    </div>
+                    {/* Description */}
+                    <textarea rows={2} value={rel.description}
+                      onChange={e => {
+                        const updated = [...localRels]
+                        updated[i] = { ...updated[i], description: e.target.value }
+                        setLocalRels(updated)
+                      }}
+                      style={{ width:'100%', background:'var(--bg-base)', border:'1px solid var(--border)', borderRadius:4, padding:'6px 8px', fontSize:10, color:'var(--text-base)', outline:'none', resize:'vertical', fontFamily:'inherit' }}
+                    />
+                    {/* Shared scenes */}
+                    <p style={{ fontSize:8, color:'var(--text-muted)', opacity:0.4 }}>
+                      Shared scenes: {rel.sharedScenes.length > 0 ? rel.sharedScenes.map(n => `#${n}`).join(', ') : 'None detected'}
+                    </p>
+                  </div>
+                )}
+                {!isEditing && (
+                  <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.45, marginTop:4, lineHeight:1.5 }}>{rel.description}</p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Legend */}
+      <div style={{ display:'flex', gap:12, flexWrap:'wrap', marginTop:20 }}>
+        {Object.entries(RELATIONSHIP_COLORS).map(([type, color]) => (
+          <div key={type} style={{ display:'flex', alignItems:'center', gap:5 }}>
+            <div style={{ width:8, height:8, borderRadius:'50%', background:color }} />
+            <span style={{ fontSize:8, color:'var(--text-muted)', opacity:0.5, textTransform:'capitalize', letterSpacing:'0.08em' }}>{type}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main Page
+// ---------------------------------------------------------------------------
+
+interface Props {
+  character: CharacterProfile
+  allCharacters?: CharacterProfile[]
+  scenes: StoryboardScene[]
+  renderStyle?: string
+  onBack?: () => void
+  /** Called when auto-init for this character completes */
+  onAutoInitComplete?: (charId: string) => void
+}
+
+export default function CharacterPackagePage({
+  character, allCharacters = [], scenes, renderStyle = 'bw_sketch', onBack, onAutoInitComplete,
+}: Props) {
+  const [activeTab, setActiveTab] = useState<PackageTab>('Overview')
+  const [pkg, setPkg] = useState<CharacterPackage>(() => {
+    const p = buildEmptyPackage(character, renderStyle)
+    p.overview = buildOverview(character)
+    p.sceneAppearances = scenes
+      .filter(s => s.frames.some(f => f.action_breakdown?.toLowerCase().includes(character.name.split(' ')[0].toLowerCase())))
+      .map(s => s.scene_number)
+    p.relationships = buildRelationships(character, allCharacters, scenes)
+    return p
+  })
+  const [promptDraft, setPromptDraft] = useState(pkg.prompt)
+  const [overviewGenerating, setOverviewGenerating] = useState(false)
+  const loadedTabs  = useRef<Set<string>>(new Set(['Overview', 'Scenes', 'Relationships']))
+  const autoInitRef = useRef(false)
+
+  // ---------------------------------------------------------------------------
+  // Auto-init: generate all default sections when package first mounts
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (autoInitRef.current || pkg.autoInitDone) return
+    autoInitRef.current = true
+    autoInit()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function autoInit() {
+    // Mark all default sections as loading
+    setPkg(p => ({
+      ...p,
+      loading: Object.fromEntries(AUTO_INIT_SECTIONS.map(s => [s, true])),
+    }))
+
+    try {
+      const result = await generateCharacterPackage(character, AUTO_INIT_SECTIONS, renderStyle)
+      setPkg(p => ({
+        ...p,
+        portrait:    (result['portrait'] as string | null) ?? p.portrait,
+        turnaround:  { ...p.turnaround,   ...(result['turnaround']  as object ?? {}) },
+        expressions: { ...p.expressions,  ...(result['expressions'] as object ?? {}) },
+        poses:       { ...p.poses,        ...(result['poses']       as object ?? {}) },
+        outfits:     { ...p.outfits,      ...(result['outfits']     as object ?? {}) },
+        loading:     Object.fromEntries(AUTO_INIT_SECTIONS.map(s => [s, false])),
+        autoInitDone: true,
+      }))
+      // Also mark tabs as loaded so they don't re-fetch
+      AUTO_INIT_SECTIONS.forEach(s => loadedTabs.current.add(s.charAt(0).toUpperCase() + s.slice(1) as PackageTab))
+      loadedTabs.current.add('Portrait')
+    } catch {
+      setPkg(p => ({
+        ...p,
+        loading: Object.fromEntries(AUTO_INIT_SECTIONS.map(s => [s, false])),
+        autoInitDone: true,
+      }))
+    }
+
+    onAutoInitComplete?.(character.id)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  const setLoading = useCallback((section: string, val: boolean) => {
+    setPkg(p => ({ ...p, loading: { ...p.loading, [section]: val } }))
+  }, [])
+
+  const saveVersion = useCallback((images: Record<string, string | null>) => {
+    setPkg(p => ({
+      ...p,
+      versions: [...p.versions, {
+        version: p.versions.length + 1,
+        timestamp: new Date().toLocaleString(),
+        images,
+      }]
+    }))
+  }, [])
+
+  // ---------------------------------------------------------------------------
+  // Generate LLM overview
+  // ---------------------------------------------------------------------------
+
+  async function handleGenerateOverview() {
+    setOverviewGenerating(true)
+    try {
+      const ov = await generateCharacterOverview(character)
+      setPkg(p => ({
+        ...p,
+        overview: { ...buildOverview(character), ...ov },
+      }))
+    } catch { /* leave existing */ }
+    finally { setOverviewGenerating(false) }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Load a tab (lazy — only for tabs not auto-inited)
+  // ---------------------------------------------------------------------------
+
+  const loadTab = useCallback(async (tab: PackageTab) => {
+    if (loadedTabs.current.has(tab)) return
+    loadedTabs.current.add(tab)
+
+    const sectionMap: Partial<Record<PackageTab, string>> = {
+      Portrait:    'portrait',
+      Turnaround:  'turnaround',
+      Expressions: 'expressions',
+      Poses:       'poses',
+      Outfits:     'outfits',
+      Props:       'props',
+    }
+    const section = sectionMap[tab]
+    if (!section) return
+
+    setLoading(section, true)
+    try {
+      const result = await generateCharacterPackage(character, [section], pkg.renderStyle)
+      setPkg(p => ({
+        ...p,
+        ...(section === 'portrait' ? { portrait: result['portrait'] as string | null } : {}),
+        ...(section !== 'portrait' ? { [section]: { ...p[section as keyof typeof p] as object, ...(result[section] as object ?? {}) } } : {}),
+      }))
+    } catch { /* silently leave nulls */ }
+    finally { setLoading(section, false) }
+  }, [character, pkg.renderStyle, setLoading])
+
+  function handleTabChange(tab: PackageTab) {
+    setActiveTab(tab)
+    loadTab(tab)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bulk regenerate a section
+  // ---------------------------------------------------------------------------
+
+  async function handleBulkRegen(section: string) {
+    saveVersion({ portrait: pkg.portrait, ...pkg.turnaround, ...pkg.expressions, ...pkg.poses, ...pkg.outfits })
+    loadedTabs.current.delete(section.charAt(0).toUpperCase() + section.slice(1) as PackageTab)
+    setLoading(section, true)
+    try {
+      const result = await generateCharacterPackage(character, [section], promptDraft)
+      setPkg(p => ({
+        ...p,
+        prompt: promptDraft,
+        ...(section === 'portrait' ? { portrait: result['portrait'] as string | null } : {}),
+        ...(section !== 'portrait' ? { [section]: result[section] as Record<string, string | null> } : {}),
+      }))
+    } catch { /* leave existing */ }
+    finally { setLoading(section, false) }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Regenerate a single image
+  // ---------------------------------------------------------------------------
+
+  async function handleRegenOne(sectionKey: string) {
+    setLoading(sectionKey, true)
+    try {
+      const url = await regenerateCharacterImage(character, sectionKey, promptDraft)
+      const [topSection, subKey] = sectionKey.includes('/') ? sectionKey.split('/') : [sectionKey, null]
+      setPkg(p => {
+        if (!subKey) return { ...p, [topSection]: url }
+        return { ...p, [topSection]: { ...(p[topSection as keyof typeof p] as object), [subKey]: url } }
+      })
+    } catch { /* leave existing */ }
+    finally { setLoading(sectionKey, false) }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Full Reference Pack (premium)
+  // ---------------------------------------------------------------------------
+
+  async function handleFullPack() {
+    if (pkg.fullPackLoading) return
+    setPkg(p => ({ ...p, fullPackLoading: true }))
+    try {
+      const result = await generateFullCharacterPack(
+        character, pkg.renderStyle,
+        ['turnaround_360', 'premium_poses', 'material_closeups'],
+      )
+      setPkg(p => ({
+        ...p,
+        turnaround360:   result['turnaround_360'] ?? null,
+        premiumPoses:    result['premium_poses']  ?? null,
+        materialCloseups:result['material_closeups'] ?? null,
+        fullPackLoading: false,
+        fullPackGenerated: true,
+      }))
+    } catch {
+      setPkg(p => ({ ...p, fullPackLoading: false }))
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Download section as ZIP
+  // ---------------------------------------------------------------------------
+
+  async function downloadSectionZip(sectionName: string, images: Record<string, string | null>) {
+    const { default: JSZip } = await import('jszip')
+    const zip = new JSZip()
+    const folder = zip.folder(sectionName)!
+    await Promise.all(Object.entries(images).filter(([,v]) => v).map(async ([k, v]) => {
+      try {
+        const res = await fetch(v!)
+        folder.file(`${k}.png`, await res.blob())
+      } catch { /* skip */ }
+    }))
+    const blob = await zip.generateAsync({ type: 'blob' })
+    saveAs(blob, `${character.name.replace(/\s+/g,'_')}_${sectionName}.zip`)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Colour palette (derived from character description)
+  // ---------------------------------------------------------------------------
+
+  const isDark = character.facial_blueprint?.base_ethnicity_or_type?.toLowerCase().includes('dark')
+  const paletteColors = [
+    { label:'Skin',             color: isDark ? '#5c3a1e' : '#d4956a' },
+    { label:'Hair',             color:'#3a2c1a' },
+    { label:'Eyes',             color:'#2e5ca8' },
+    { label:'Primary Clothing', color:'#3a3a5c' },
+    { label:'Accent',           color:'#c9a84c' },
+  ]
+
+  // ---------------------------------------------------------------------------
+  // Render helpers
+  // ---------------------------------------------------------------------------
+
+  const isLoading = (section: string) => !!pkg.loading[section]
+
+  // Auto-init progress indicator
+  const autoInitInProgress = AUTO_INIT_SECTIONS.some(s => isLoading(s))
+  const autoInitDoneCount  = AUTO_INIT_SECTIONS.filter(s => {
+    if (s === 'portrait') return !!pkg.portrait
+    const map = pkg[s as keyof CharacterPackage] as Record<string, string | null> | null
+    return map && Object.values(map).some(v => v !== null)
+  }).length
+
+  function SectionHeader({ title, section }: { title: string; section: string }) {
+    return (
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
+        <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500 }}>{title}</h2>
+        <div style={{ display:'flex', gap:8 }}>
+          <button onClick={() => handleBulkRegen(section.toLowerCase())} disabled={isLoading(section.toLowerCase())}
+            style={{ fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', textTransform:'uppercase', background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4, padding:'5px 12px', cursor:isLoading(section.toLowerCase())?'wait':'pointer', opacity:isLoading(section.toLowerCase())?0.4:1 }}>
+            {isLoading(section.toLowerCase()) ? 'Rendering…' : '↺ Regenerate All'}
+          </button>
+          {section !== 'portrait' && (
+            <button onClick={() => {
+              const imgMap = section === 'turnaround' ? pkg.turnaround : section === 'expressions' ? pkg.expressions : section === 'poses' ? pkg.poses : pkg.outfits
+              downloadSectionZip(section, imgMap)
+            }}
+              style={{ fontSize:9, letterSpacing:'0.15em', color:'var(--text-muted)', textTransform:'uppercase', background:'none', border:'1px solid var(--border)', borderRadius:4, padding:'5px 12px', cursor:'pointer', opacity:0.6 }}>
+              ↓ ZIP
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
+  return (
+    <div className="flex-1 flex flex-col bg-[var(--bg-base)] overflow-hidden">
+      <style>{`@keyframes pkg-spin { to { transform: rotate(360deg); } }`}</style>
+
+      {/* Header */}
+      <div style={{ padding:'14px 24px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', gap:16, flexShrink:0 }}>
+        {onBack && (
+          <button onClick={onBack} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--gold)', opacity:0.5, fontSize:18, padding:0, lineHeight:1 }}>←</button>
+        )}
+        {pkg.portrait ? (
+          <img src={pkg.portrait} alt="" style={{ width:40, height:40, borderRadius:'50%', objectFit:'cover', border:'1px solid rgba(201,168,76,0.3)', flexShrink:0 }} />
+        ) : (
+          <div style={{ width:40, height:40, borderRadius:'50%', background:'var(--bg-raised)', border:'1px solid rgba(201,168,76,0.2)', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, position:'relative' }}>
+            <span style={{ color:'var(--gold)', opacity:0.6, fontSize:14, fontFamily:'Georgia,serif', fontWeight:'bold' }}>
+              {character.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}
+            </span>
+            {autoInitInProgress && (
+              <div style={{
+                position:'absolute', inset:0, borderRadius:'50%',
+                border:'2px solid transparent', borderTop:'2px solid var(--gold)',
+                animation:'pkg-spin 1s linear infinite',
+              }} />
+            )}
+          </div>
+        )}
+        <div style={{ flex:1 }}>
+          <h1 style={{ fontSize:14, fontWeight:600, color:'var(--text-base)', fontFamily:'Georgia,serif', letterSpacing:'0.04em' }}>{character.name}</h1>
+          <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--gold)', opacity:0.4, textTransform:'uppercase', marginTop:2 }}>Character Package · {character.id}</p>
+        </div>
+
+        {/* Auto-init progress bar */}
+        {!pkg.autoInitDone && (
+          <div style={{ display:'flex', flexDirection:'column', gap:4, alignItems:'flex-end' }}>
+            <span style={{ fontSize:8, letterSpacing:'0.15em', color:'var(--gold)', opacity:0.6, textTransform:'uppercase' }}>
+              {autoInitInProgress ? `Auto-generating… ${autoInitDoneCount}/${AUTO_INIT_SECTIONS.length}` : 'Initialising…'}
+            </span>
+            <div style={{ width:120, height:2, background:'var(--border)', borderRadius:2, overflow:'hidden' }}>
+              <div style={{
+                height:'100%', background:'var(--gold)', borderRadius:2,
+                width:`${(autoInitDoneCount / AUTO_INIT_SECTIONS.length) * 100}%`,
+                transition:'width 400ms ease',
+              }} />
+            </div>
+          </div>
+        )}
+        {pkg.autoInitDone && (
+          <span style={{ fontSize:8, letterSpacing:'0.15em', color:'#4ade80', opacity:0.7, textTransform:'uppercase' }}>✓ Package Ready</span>
+        )}
+      </div>
+
+      {/* Premium Full Pack Banner */}
+      {!pkg.fullPackGenerated && (
+        <div style={{
+          padding:'10px 24px', background:'rgba(201,168,76,0.04)', borderBottom:'1px solid rgba(201,168,76,0.15)',
+          display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0,
+        }}>
+          <div>
+            <span style={{ fontSize:9, letterSpacing:'0.2em', color:'var(--gold)', textTransform:'uppercase', opacity:0.8 }}>
+              ✦ Full Character Reference Pack
+            </span>
+            <span style={{ fontSize:9, color:'var(--text-muted)', opacity:0.45, marginLeft:10 }}>
+              360° turntable · T/A-pose · Close-up material refs · Export-ready sheets
+            </span>
+          </div>
+          <button
+            onClick={handleFullPack}
+            disabled={pkg.fullPackLoading}
+            style={{
+              padding:'7px 18px', borderRadius:4, fontSize:9, letterSpacing:'0.15em', textTransform:'uppercase',
+              cursor: pkg.fullPackLoading ? 'wait' : 'pointer',
+              border:'1px solid var(--gold)', background: pkg.fullPackLoading ? 'rgba(201,168,76,0.1)' : 'var(--gold)',
+              color: pkg.fullPackLoading ? 'var(--gold)' : 'var(--bg-base)',
+              fontWeight: 700, opacity: pkg.fullPackLoading ? 0.5 : 1,
+              transition:'all 150ms ease',
+            }}>
+            {pkg.fullPackLoading ? 'Generating…' : 'Generate Full Pack'}
+          </button>
+        </div>
+      )}
+
+      {/* Tab bar */}
+      <div style={{ display:'flex', gap:0, padding:'0 24px', borderBottom:'1px solid var(--border)', flexShrink:0, overflowX:'auto' }}>
+        {PACKAGE_TABS.map(tab => {
+          const hasNew = tab === 'Versions' && pkg.versions.length > 0
+          return (
+            <button key={tab} onClick={() => handleTabChange(tab)}
+              style={{
+                padding:'10px 14px', fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', cursor:'pointer',
+                background:'none', border:'none', borderBottom: activeTab===tab ? '2px solid var(--gold)' : '2px solid transparent',
+                color: activeTab===tab ? 'var(--gold)' : 'var(--text-muted)', opacity: activeTab===tab ? 1 : 0.5,
+                transition:'color 150ms ease', whiteSpace:'nowrap', position:'relative',
+              }}>
+              {tab}
+              {hasNew && (
+                <span style={{ position:'absolute', top:8, right:4, width:4, height:4, borderRadius:'50%', background:'var(--gold)' }} />
+              )}
+              {/* Loading indicator per tab */}
+              {isLoading(tab.toLowerCase()) && (
+                <span style={{
+                  position:'absolute', bottom:0, left:0, right:0, height:2,
+                  background:'linear-gradient(90deg, transparent, var(--gold), transparent)',
+                  animation:'shimmer 1s ease infinite',
+                }} />
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Content */}
+      <div style={{ flex:1, overflowY:'auto', padding:24 }}>
+
+        {/* ── Overview ─────────────────────────────────── */}
+        {activeTab === 'Overview' && pkg.overview && (
+          <OverviewSection
+            pkg={pkg}
+            onUpdate={ov => setPkg(p => ({ ...p, overview: ov }))}
+            onGenerateOverview={handleGenerateOverview}
+            isGenerating={overviewGenerating}
+          />
+        )}
+
+        {/* ── Portrait ─────────────────────────────────── */}
+        {activeTab === 'Portrait' && (
+          <div>
+            <SectionHeader title="Hero Portrait" section="portrait" />
+            <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
+              <ImageTile url={pkg.portrait} label="Portrait" width={200} height={260} isLoading={isLoading('portrait')} onRegen={() => handleRegenOne('portrait')} />
+              <div style={{ flex:1, maxWidth:320 }}>
+                <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.6, marginBottom:8 }}>Generation Notes</p>
+                <p style={{ fontSize:11, color:'var(--text-base)', opacity:0.65, lineHeight:1.7 }}>
+                  Neutral pose, looking at camera, clean background, cinematic lighting. Used for character identification and header thumbnails.
+                </p>
+                {pkg.portrait && (
+                  <button onClick={async () => { try { const r=await fetch(pkg.portrait!); saveAs(await r.blob(), `${character.name}_portrait.png`) } catch { window.open(pkg.portrait!,'_blank') }}}
+                    style={{ marginTop:16, padding:'8px 18px', borderRadius:4, fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', cursor:'pointer', border:'1px solid var(--gold)', background:'transparent', color:'var(--gold)' }}>
+                    ↓ Download PNG
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Turnaround ───────────────────────────────── */}
+        {activeTab === 'Turnaround' && (
+          <div>
+            <SectionHeader title="Turnaround Sheet — 5 Views" section="turnaround" />
+            <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:20, lineHeight:1.6 }}>
+              Industry-standard 5-view reference sheet. For the 360° turntable (8 angles) use the Full Reference Pack.
+            </p>
+            <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+              {TURNAROUND_KEYS.map(key => (
+                <ImageTile key={key} url={pkg.turnaround[key]} label={TURNAROUND_LABELS[key]} width={130} height={180}
+                  isLoading={isLoading(`turnaround/${key}`)} onRegen={() => handleRegenOne(`turnaround/${key}`)} />
+              ))}
+            </div>
+
+            {/* 360° section (premium) */}
+            {pkg.fullPackGenerated && pkg.turnaround360 && (
+              <div style={{ marginTop:32 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+                  <div>
+                    <h3 style={{ fontSize:10, letterSpacing:'0.25em', color:'var(--gold)', opacity:0.8, textTransform:'uppercase', fontWeight:500 }}>360° Turntable</h3>
+                    <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.4, marginTop:2 }}>8-angle full rotation — export-ready for Maya, Blender, Unreal, Unity</p>
+                  </div>
+                  <button onClick={() => downloadSectionZip('turnaround_360', pkg.turnaround360!)}
+                    style={{ fontSize:9, letterSpacing:'0.15em', color:'var(--text-muted)', textTransform:'uppercase', background:'none', border:'1px solid var(--border)', borderRadius:4, padding:'5px 12px', cursor:'pointer', opacity:0.6 }}>
+                    ↓ ZIP
+                  </button>
+                </div>
+                <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
+                  {TURNAROUND_360_KEYS.map(key => (
+                    <ImageTile key={key} url={pkg.turnaround360![key] ?? null} label={TURNAROUND_360_LABELS[key]}
+                      width={110} height={150} onRegen={() => handleRegenOne(`turnaround/${key}`)} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Expressions ──────────────────────────────── */}
+        {activeTab === 'Expressions' && (
+          <div>
+            <SectionHeader title="Expression Sheet — 9 Expressions" section="expressions" />
+            <div style={{ display:'flex', gap:14, flexWrap:'wrap' }}>
+              {EXPRESSION_KEYS.map(key => (
+                <ImageTile key={key} url={pkg.expressions[key]} label={`${EXPRESSION_EMOJIS[key]} ${key.charAt(0).toUpperCase()+key.slice(1)}`}
+                  width={110} height={130} isLoading={isLoading(`expressions/${key}`)} onRegen={() => handleRegenOne(`expressions/${key}`)} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Poses ────────────────────────────────────── */}
+        {activeTab === 'Poses' && (
+          <div>
+            <SectionHeader title="Pose Sheet — 7 Common Poses" section="poses" />
+            <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+              {POSE_KEYS.map(key => (
+                <ImageTile key={key} url={pkg.poses[key]} label={POSE_LABELS[key]} width={120} height={160}
+                  isLoading={isLoading(`poses/${key}`)} onRegen={() => handleRegenOne(`poses/${key}`)} />
+              ))}
+            </div>
+
+            {/* Premium poses */}
+            {pkg.fullPackGenerated && pkg.premiumPoses && (
+              <div style={{ marginTop:32 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+                  <div>
+                    <h3 style={{ fontSize:10, letterSpacing:'0.25em', color:'var(--gold)', opacity:0.8, textTransform:'uppercase', fontWeight:500 }}>Extended Pose Library</h3>
+                    <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.4, marginTop:2 }}>T-pose · A-pose · 6 additional action poses</p>
+                  </div>
+                  <button onClick={() => downloadSectionZip('premium_poses', pkg.premiumPoses!)}
+                    style={{ fontSize:9, letterSpacing:'0.15em', color:'var(--text-muted)', textTransform:'uppercase', background:'none', border:'1px solid var(--border)', borderRadius:4, padding:'5px 12px', cursor:'pointer', opacity:0.6 }}>
+                    ↓ ZIP
+                  </button>
+                </div>
+                <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+                  {PREMIUM_POSE_KEYS.map(key => (
+                    <ImageTile key={key} url={pkg.premiumPoses![key] ?? null} label={PREMIUM_POSE_LABELS[key]}
+                      width={120} height={160} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Outfits ──────────────────────────────────── */}
+        {activeTab === 'Outfits' && (
+          <div>
+            <SectionHeader title="Outfit Variations — 7 Costumes" section="outfits" />
+            <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:20, lineHeight:1.6 }}>
+              Each outfit can be regenerated independently without affecting the others.
+            </p>
+            <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+              {OUTFIT_KEYS.map(key => (
+                <ImageTile key={key} url={pkg.outfits[key]} label={OUTFIT_LABELS[key]} width={120} height={160}
+                  isLoading={isLoading(`outfits/${key}`)} onRegen={() => handleRegenOne(`outfits/${key}`)} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Colour Palette ───────────────────────────── */}
+        {activeTab === 'Palette' && (
+          <div style={{ maxWidth:560 }}>
+            <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500, marginBottom:20 }}>Colour Palette</h2>
+            <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:20, lineHeight:1.6 }}>
+              Extracted from character description. These colours maintain visual consistency across all generated assets.
+            </p>
+            <div style={{ display:'flex', gap:12, flexWrap:'wrap', marginBottom:28 }}>
+              {paletteColors.map(({ label, color }) => (
+                <div key={label} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:6 }}>
+                  <div style={{ width:56, height:56, borderRadius:8, background:color, border:'1px solid rgba(255,255,255,0.08)' }} />
+                  <span style={{ fontSize:8, color:'var(--text-muted)', opacity:0.6, textTransform:'uppercase', letterSpacing:'0.1em' }}>{label}</span>
+                  <span style={{ fontSize:8, color:'var(--text-muted)', opacity:0.4, fontFamily:'monospace' }}>{color}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Material close-ups (premium) */}
+            {pkg.fullPackGenerated && pkg.materialCloseups && (
+              <div style={{ marginTop:12 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+                  <h3 style={{ fontSize:10, letterSpacing:'0.25em', color:'var(--gold)', opacity:0.8, textTransform:'uppercase', fontWeight:500 }}>Material Close-up References</h3>
+                  <button onClick={() => downloadSectionZip('material_closeups', pkg.materialCloseups!)}
+                    style={{ fontSize:9, letterSpacing:'0.15em', color:'var(--text-muted)', textTransform:'uppercase', background:'none', border:'1px solid var(--border)', borderRadius:4, padding:'5px 12px', cursor:'pointer', opacity:0.6 }}>
+                    ↓ ZIP
+                  </button>
+                </div>
+                <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
+                  {MATERIAL_KEYS.map(key => (
+                    <ImageTile key={key} url={pkg.materialCloseups![key] ?? null} label={MATERIAL_LABELS[key]}
+                      width={100} height={100} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:6, padding:'14px 16px', marginTop:20 }}>
+              <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', opacity:0.5, textTransform:'uppercase', marginBottom:10 }}>Wardrobe Description</p>
+              <p style={{ fontSize:11, color:'var(--text-base)', opacity:0.75, lineHeight:1.7 }}>{character.wardrobe_defaults}</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Props ────────────────────────────────────── */}
+        {activeTab === 'Props' && (
+          <div>
+            <SectionHeader title="Props & Accessories" section="props" />
+            {Object.keys(pkg.props).length === 0 && !isLoading('props') ? (
+              <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:180, gap:12 }}>
+                <p style={{ fontSize:11, color:'var(--text-muted)', opacity:0.3, letterSpacing:'0.15em', textTransform:'uppercase' }}>No props generated yet</p>
+                <button onClick={() => handleBulkRegen('props')}
+                  style={{ padding:'8px 20px', borderRadius:4, fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', cursor:'pointer', border:'1px solid var(--gold)', background:'transparent', color:'var(--gold)' }}>
+                  Auto-Detect & Generate Props
+                </button>
+              </div>
+            ) : (
+              <div style={{ display:'flex', gap:14, flexWrap:'wrap' }}>
+                {Object.entries(pkg.props).map(([key, url]) => (
+                  <ImageTile key={key} url={url} label={key} width={100} height={100}
+                    isLoading={isLoading(`props/${key}`)} onRegen={() => handleRegenOne(`props/${key}`)} />
+                ))}
+                {isLoading('props') && <Spinner />}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Relationships ────────────────────────────── */}
+        {activeTab === 'Relationships' && (
+          <div>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
+              <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500 }}>Relationship Graph</h2>
+              <span style={{ fontSize:9, color:'var(--text-muted)', opacity:0.4 }}>
+                {pkg.relationships.length} connection{pkg.relationships.length !== 1 ? 's' : ''} detected
+              </span>
+            </div>
+            <RelationshipGraph relationships={pkg.relationships} characterName={character.name} />
+          </div>
+        )}
+
+        {/* ── Scene Appearances ────────────────────────── */}
+        {activeTab === 'Scenes' && (
+          <div style={{ maxWidth:560 }}>
+            <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500, marginBottom:20 }}>Scene Appearances</h2>
+            {pkg.sceneAppearances.length === 0 ? (
+              <p style={{ fontSize:11, color:'var(--text-muted)', opacity:0.35, lineHeight:1.7 }}>
+                No scene appearances detected. The character's first name was not found in any frame action descriptions.
+              </p>
+            ) : (
+              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                {pkg.sceneAppearances.map(num => {
+                  const scene = scenes.find(s => s.scene_number === num)
+                  if (!scene) return null
+                  const thumb = scene.frames.find(f => f.generated_image_url)?.generated_image_url
+                  return (
+                    <div key={num} style={{ display:'flex', alignItems:'center', gap:14, background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:6, padding:'10px 14px' }}>
+                      {thumb ? (
+                        <img src={thumb} alt="" style={{ width:64, height:40, objectFit:'cover', borderRadius:3, border:'1px solid var(--border)', flexShrink:0 }} />
+                      ) : (
+                        <div style={{ width:64, height:40, background:'var(--bg-base)', borderRadius:3, border:'1px solid var(--border)', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                          <span style={{ fontSize:9, color:'var(--text-muted)', opacity:0.3 }}>S{num}</span>
+                        </div>
+                      )}
+                      <div>
+                        <p style={{ fontSize:12, color:'var(--text-base)', opacity:0.8, fontFamily:'Georgia,serif' }}>Scene {num}</p>
+                        <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.5, letterSpacing:'0.1em', textTransform:'uppercase', marginTop:2 }}>{scene.location_heading} · {scene.time_of_day}</p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── AI Prompt ────────────────────────────────── */}
+        {activeTab === 'AI Prompt' && (
+          <div style={{ maxWidth:560 }}>
+            <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500, marginBottom:8 }}>AI Generation Prompt</h2>
+            <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:16, lineHeight:1.6 }}>
+              This prompt drives all generated images in this package. Edit it to control appearance, then click Save. The next regeneration of any section will use the updated prompt.
+            </p>
+            <textarea
+              value={promptDraft}
+              onChange={e => setPromptDraft(e.target.value)}
+              rows={7}
+              style={{ width:'100%', background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:6, padding:'12px 14px', fontSize:11, color:'var(--text-base)', outline:'none', resize:'vertical', fontFamily:'monospace', lineHeight:1.7 }}
+              onFocus={e=>(e.target.style.borderColor='var(--gold)')}
+              onBlur={e=>(e.target.style.borderColor='var(--border)')}
+            />
+            <div style={{ display:'flex', gap:8, marginTop:10 }}>
+              <button onClick={() => setPkg(p => ({ ...p, prompt: promptDraft }))}
+                style={{ padding:'8px 18px', borderRadius:4, fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', cursor:'pointer', border:'1px solid var(--gold)', background:'var(--gold)', color:'var(--bg-base)', fontWeight:700 }}>
+                ✓ Save Prompt
+              </button>
+              <button onClick={() => setPromptDraft(pkg.prompt)}
+                style={{ padding:'8px 14px', borderRadius:4, fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', cursor:'pointer', border:'1px solid var(--border)', background:'transparent', color:'var(--text-muted)' }}>
+                Reset
+              </button>
+            </div>
+            {promptDraft !== pkg.prompt && (
+              <p style={{ fontSize:9, color:'rgba(201,168,76,0.7)', marginTop:8, letterSpacing:'0.1em' }}>⚠ Unsaved changes — save before regenerating</p>
+            )}
+          </div>
+        )}
+
+        {/* ── Versions ─────────────────────────────────── */}
+        {activeTab === 'Versions' && (
+          <div style={{ maxWidth:560 }}>
+            <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500, marginBottom:20 }}>Version History</h2>
+            {pkg.versions.length === 0 ? (
+              <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:140, gap:8 }}>
+                <p style={{ fontSize:11, color:'var(--text-muted)', opacity:0.25, letterSpacing:'0.15em', textTransform:'uppercase' }}>No versions yet</p>
+                <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.2, lineHeight:1.6, textAlign:'center', maxWidth:280 }}>
+                  Every time you click "Regenerate All" on any section, the current images are saved as a version here.
+                </p>
+              </div>
+            ) : (
+              <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                {[...pkg.versions].reverse().map(v => (
+                  <div key={v.version} style={{ background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:6, padding:'12px 14px' }}>
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+                      <span style={{ fontSize:11, color:'var(--text-base)', opacity:0.7 }}>Version {v.version}</span>
+                      <span style={{ fontSize:9, color:'var(--text-muted)', opacity:0.4, letterSpacing:'0.1em' }}>{v.timestamp}</span>
+                    </div>
+                    <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                      {Object.entries(v.images).filter(([,url]) => url).slice(0,8).map(([key, url]) => (
+                        <img key={key} src={url!} alt={key} style={{ width:48, height:48, objectFit:'cover', borderRadius:3, border:'1px solid var(--border)' }} />
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => setPkg(p => ({
+                        ...p,
+                        portrait: (v.images['portrait'] ?? p.portrait),
+                      }))}
+                      style={{ marginTop:10, fontSize:9, letterSpacing:'0.15em', textTransform:'uppercase', background:'none', border:'1px solid var(--border)', borderRadius:4, padding:'5px 12px', cursor:'pointer', color:'var(--text-muted)' }}>
+                      ↺ Restore this version
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+      </div>
+    </div>
+  )
+}

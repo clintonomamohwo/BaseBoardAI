@@ -38,6 +38,305 @@ from app.core.image import generate_frame_image
 
 router = APIRouter(prefix="/storyboard", tags=["storyboard"])
 
+
+# ---------------------------------------------------------------------------
+# Image generation helper endpoint
+# ---------------------------------------------------------------------------
+
+from fastapi import Body
+
+@router.post("/generate-image", summary="Generate a single frame image from a prompt")
+def generate_single_image(
+    prompt: str = Body(...),
+    render_style: str = Body("bw_sketch"),
+) -> dict:
+    """
+    Lightweight endpoint used by the Shot Planner to generate individual
+    keyframe images without running the full pipeline.
+    Returns { image_url: "data:image/png;base64,..." } or { image_url: null }.
+    """
+    from app.core.image import _generate_pollinations, _STYLE_PREFIXES
+    style_prefix = _STYLE_PREFIXES.get(render_style, _STYLE_PREFIXES["bw_sketch"])
+    full_prompt = (style_prefix + prompt)[:450]
+    url = _generate_pollinations(full_prompt)
+    return {"image_url": url}
+
+
+# ---------------------------------------------------------------------------
+# Character Package — multi-image generation for a single character
+# ---------------------------------------------------------------------------
+
+# Turnaround angles used by every character sheet
+_TURNAROUND_ANGLES = [
+    ("front",       "full front view, facing camera directly"),
+    ("three_q_front","three-quarter front view, slight left turn"),
+    ("side",        "pure side profile, 90 degrees"),
+    ("three_q_back","three-quarter back view, slight right turn"),
+    ("back",        "full back view, facing away from camera"),
+]
+
+_EXPRESSIONS = [
+    "neutral", "happy", "laughing", "angry", "sad",
+    "surprised", "fearful", "thinking", "crying",
+]
+
+_POSES = [
+    ("standing",       "standing relaxed, arms at sides"),
+    ("walking",        "mid-stride walking"),
+    ("running",        "running at full speed"),
+    ("sitting",        "seated, legs forward"),
+    ("pointing",       "pointing finger outward, determined"),
+    ("holding_object", "holding an object in both hands"),
+    ("hero_pose",      "heroic stance, confident, chin up"),
+]
+
+_OUTFITS = [
+    ("default",  "default signature outfit"),
+    ("casual",   "casual everyday clothes"),
+    ("formal",   "formal business attire"),
+    ("travel",   "travel/adventure gear"),
+    ("combat",   "combat or action-ready gear"),
+    ("winter",   "winter cold-weather clothing"),
+    ("summer",   "summer lightweight clothing"),
+]
+
+# Premium full-pack additions
+_TURNAROUND_360 = [
+    ("deg_000", "full front, 0 degrees"),
+    ("deg_045", "45 degrees right, slight front-left turn"),
+    ("deg_090", "pure right side, 90 degrees"),
+    ("deg_135", "135 degrees, rear three-quarter right"),
+    ("deg_180", "full back, 180 degrees"),
+    ("deg_225", "225 degrees, rear three-quarter left"),
+    ("deg_270", "pure left side, 270 degrees"),
+    ("deg_315", "315 degrees, slight front-right turn"),
+]
+
+_PREMIUM_POSES = [
+    ("t_pose",          "T-pose, arms horizontal, standardised rigging pose"),
+    ("a_pose",          "A-pose, arms slightly lowered at 45 degrees, relaxed rigging pose"),
+    ("crouching",       "crouching low, defensive stance"),
+    ("climbing",        "climbing upward, arms and legs engaged"),
+    ("fighting_stance", "combat fighting stance, guard up"),
+    ("falling",         "falling backwards, arms outstretched"),
+    ("celebrating",     "arms raised in victory celebration"),
+    ("kneeling",        "kneeling on one knee, respectful"),
+]
+
+_MATERIAL_CLOSEUPS = [
+    ("face_closeup",    "extreme close-up of face, skin texture, pore detail"),
+    ("hair_closeup",    "extreme close-up of hair, strand texture and volume"),
+    ("fabric_closeup",  "extreme close-up of clothing fabric, material texture"),
+    ("hand_closeup",    "extreme close-up of hands, knuckle detail"),
+    ("eye_closeup",     "extreme close-up of eyes, iris detail"),
+]
+
+
+def _char_base_desc(char_data: dict) -> str:
+    """Build a consistent base description for character image prompts."""
+    fb = char_data.get("facial_blueprint", {})
+    parts = [
+        char_data.get("name", "character"),
+        fb.get("base_ethnicity_or_type", ""),
+        f"age {fb.get('estimated_age', '')}" if fb.get("estimated_age") else "",
+        fb.get("bone_structure", ""),
+        fb.get("distinct_markers", "") or "",
+        char_data.get("wardrobe_defaults", ""),
+    ]
+    return ", ".join(p for p in parts if p)
+
+
+def _pkg_prompt(base: str, view_desc: str, render_style: str) -> str:
+    from app.core.image import _STYLE_PREFIXES
+    prefix = _STYLE_PREFIXES.get(render_style, _STYLE_PREFIXES["bw_sketch"])
+    return (prefix + f"{base}, {view_desc}, full body, white background, character reference sheet")[:450]
+
+
+@router.post("/character-package/generate", summary="Generate all image sheets for a character")
+def generate_character_package(
+    char_data: dict = Body(..., description="CharacterProfile JSON"),
+    render_style: str = Body("bw_sketch"),
+    sections: list[str] = Body(
+        default=["portrait", "turnaround", "expressions", "poses", "outfits"],
+        description="Which sections to generate",
+    ),
+) -> dict:
+    """
+    Generates the requested image sections for a character and returns them
+    as a dict keyed by section name. Each image is a base64 data URL.
+    Only requested sections are computed — callers fetch lazily per tab.
+    """
+    from app.core.image import _generate_pollinations, _STYLE_PREFIXES
+
+    base = _char_base_desc(char_data)
+    result: dict = {}
+
+    if "portrait" in sections:
+        prompt = _pkg_prompt(base, "hero portrait, neutral pose, looking at camera, cinematic lighting, bust shot", render_style)
+        result["portrait"] = _generate_pollinations(prompt)
+
+    if "turnaround" in sections:
+        result["turnaround"] = {}
+        for key, view_desc in _TURNAROUND_ANGLES:
+            prompt = _pkg_prompt(base, view_desc, render_style)
+            result["turnaround"][key] = _generate_pollinations(prompt)
+
+    if "expressions" in sections:
+        result["expressions"] = {}
+        for expr in _EXPRESSIONS:
+            prompt = _pkg_prompt(base, f"{expr} facial expression, head and shoulders", render_style)
+            result["expressions"][expr] = _generate_pollinations(prompt)
+
+    if "poses" in sections:
+        result["poses"] = {}
+        for key, pose_desc in _POSES:
+            prompt = _pkg_prompt(base, pose_desc, render_style)
+            result["poses"][key] = _generate_pollinations(prompt)
+
+    if "outfits" in sections:
+        result["outfits"] = {}
+        for key, outfit_desc in _OUTFITS:
+            prompt = _pkg_prompt(base, outfit_desc, render_style)
+            result["outfits"][key] = _generate_pollinations(prompt)
+
+    if "props" in sections:
+        # Auto-detect props from wardrobe description
+        wardrobe = char_data.get("wardrobe_defaults", "")
+        prop_words = [w.strip() for w in wardrobe.replace(",", " ").replace(".", " ").split() if len(w) > 3]
+        prop_items = prop_words[:5] or ["prop", "accessory", "tool", "object", "item"]
+        result["props"] = {}
+        for prop in prop_items:
+            prompt = (_STYLE_PREFIXES.get(render_style, _STYLE_PREFIXES["bw_sketch"]) +
+                      f"close-up illustration of {prop}, isolated on white background, clean design")[:450]
+            result["props"][prop] = _generate_pollinations(prompt)
+
+    return result
+
+
+@router.post("/character-package/generate-one", summary="Regenerate a single character image")
+def regenerate_character_image(
+    char_data: dict = Body(...),
+    section: str = Body(..., description="e.g. 'portrait', 'turnaround/front', 'expressions/happy'"),
+    render_style: str = Body("bw_sketch"),
+) -> dict:
+    """
+    Regenerate exactly one image within a section. Returns { image_url: str|null }.
+    `section` uses slash notation: 'turnaround/front', 'expressions/angry', 'poses/running', etc.
+    """
+    from app.core.image import _generate_pollinations, _STYLE_PREFIXES
+
+    base = _char_base_desc(char_data)
+
+    if section == "portrait":
+        prompt = _pkg_prompt(base, "hero portrait, neutral pose, looking at camera, cinematic lighting, bust shot", render_style)
+    elif section.startswith("turnaround/"):
+        key = section.split("/", 1)[1]
+        view_desc = dict(_TURNAROUND_ANGLES).get(key, key.replace("_", " "))
+        prompt = _pkg_prompt(base, view_desc, render_style)
+    elif section.startswith("expressions/"):
+        expr = section.split("/", 1)[1]
+        prompt = _pkg_prompt(base, f"{expr} facial expression, head and shoulders", render_style)
+    elif section.startswith("poses/"):
+        key = section.split("/", 1)[1]
+        pose_desc = dict(_POSES).get(key, key.replace("_", " "))
+        prompt = _pkg_prompt(base, pose_desc, render_style)
+    elif section.startswith("outfits/"):
+        key = section.split("/", 1)[1]
+        outfit_desc = dict(_OUTFITS).get(key, key.replace("_", " ") + " outfit")
+        prompt = _pkg_prompt(base, outfit_desc, render_style)
+    else:
+        prompt = _pkg_prompt(base, section.replace("/", " ").replace("_", " "), render_style)
+
+    url = _generate_pollinations(prompt)
+    return {"image_url": url}
+
+
+# ---------------------------------------------------------------------------
+# Character Package — LLM-generated Overview
+# ---------------------------------------------------------------------------
+
+@router.post("/character-package/overview", summary="Generate a rich character overview via LLM")
+def generate_character_overview(
+    char_data: dict = Body(..., description="CharacterProfile JSON"),
+) -> dict:
+    """
+    Calls the LLM to expand a raw CharacterProfile into a full narrative overview
+    (biography, personality, goals, fears, strengths, weaknesses, etc.).
+    Returns a CharacterOverview-compatible dict.
+    """
+    from app.core.prompts import CHARACTER_OVERVIEW_PROMPT
+    from app.core.llm import _invoke_with_fallback, _parse_json_response
+
+    name          = char_data.get("name", "Unknown")
+    fb            = char_data.get("facial_blueprint", {})
+    wardrobe      = char_data.get("wardrobe_defaults", "")
+    ethnicity     = fb.get("base_ethnicity_or_type", "")
+    age           = fb.get("estimated_age", "")
+    bone          = fb.get("bone_structure", "")
+    markers       = fb.get("distinct_markers", "") or ""
+
+    try:
+        prompt_text = CHARACTER_OVERVIEW_PROMPT.format(
+            name=name, ethnicity=ethnicity, age=age,
+            bone_structure=bone, distinct_markers=markers, wardrobe=wardrobe,
+        )
+        raw = _invoke_with_fallback(prompt_text)
+        parsed = _parse_json_response(raw)
+        if isinstance(parsed, list):
+            parsed = parsed[0]
+        return parsed
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=502, detail=f"Overview LLM failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Character Package — Full Reference Pack (premium generation)
+# ---------------------------------------------------------------------------
+
+@router.post("/character-package/generate-full-pack", summary="Generate premium full character reference pack")
+def generate_full_character_pack(
+    char_data: dict = Body(..., description="CharacterProfile JSON"),
+    render_style: str = Body("bw_sketch"),
+    targets: list[str] = Body(
+        default=["turnaround_360", "premium_poses", "material_closeups"],
+        description="Which premium sections to generate: turnaround_360, premium_poses, material_closeups",
+    ),
+) -> dict:
+    """
+    Premium generation endpoint.  Produces:
+      - turnaround_360: 8-view 360° character turntable (deg_000 … deg_315)
+      - premium_poses: T-pose, A-pose + 6 extended action poses
+      - material_closeups: face, hair, fabric, hand, eye close-up reference sheets
+    Returns each section as a dict of key → base64 data URL.
+    """
+    from app.core.image import _generate_pollinations, _STYLE_PREFIXES
+
+    base = _char_base_desc(char_data)
+    result: dict = {}
+
+    if "turnaround_360" in targets:
+        result["turnaround_360"] = {}
+        for key, view_desc in _TURNAROUND_360:
+            prompt = _pkg_prompt(base, view_desc, render_style)
+            result["turnaround_360"][key] = _generate_pollinations(prompt)
+
+    if "premium_poses" in targets:
+        result["premium_poses"] = {}
+        for key, pose_desc in _PREMIUM_POSES:
+            prompt = _pkg_prompt(base, pose_desc, render_style)
+            result["premium_poses"][key] = _generate_pollinations(prompt)
+
+    if "material_closeups" in targets:
+        result["material_closeups"] = {}
+        for key, mat_desc in _MATERIAL_CLOSEUPS:
+            prefix = _STYLE_PREFIXES.get(render_style, _STYLE_PREFIXES["bw_sketch"])
+            prompt = (prefix + f"{base}, {mat_desc}, technical reference, isolated white background")[:450]
+            result["material_closeups"][key] = _generate_pollinations(prompt)
+
+    return result
+
+
 DbSession = Annotated[Session, Depends(get_db)]
 
 

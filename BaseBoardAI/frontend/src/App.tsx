@@ -9,6 +9,7 @@ import CreativeDirectorReport from './pages/CreativeDirectorReport'
 import StudioPage             from './pages/StudioPage'
 import CharacterDictionaryPage from './pages/CharacterDictionaryPage'
 import WorldBiblePage         from './pages/WorldBiblePage'
+import ProjectLibraryPage     from './pages/ProjectLibraryPage'
 import ThemeToggle            from './components/ThemeToggle'
 import GraniteNotification    from './components/GraniteNotification'
 
@@ -19,6 +20,7 @@ type AppView =
   | 'genesis-running'  // AI analysis pipeline
   | 'report'           // Creative Director's Report
   | 'studio'
+  | 'library'          // Project folder library
 
 type StudioTab = 'storyboard' | 'characters' | 'world-bible'
 
@@ -95,6 +97,13 @@ export default function App() {
     setView('genesis-running')
   }
 
+  function handleLoadProject(p: StoryboardProject) {
+    setProject(p)
+    setStudioTab('storyboard')
+    setView('studio')
+    pushNotif(`"${p.project_title}" loaded ✓`)
+  }
+
   function switchTab(tab: StudioTab) {
     setStudioTab(tab)
     setTabKey(k => k + 1)
@@ -135,6 +144,15 @@ export default function App() {
       onNotify={pushNotif}
       onLanding={() => setView('landing')}
       onBack={() => setView('new-project')}
+    />
+  )
+
+  /* ─── Project Library ────────────────────────────────────────────────── */
+  if (view === 'library') return (
+    <ProjectLibraryPage
+      onLoadProject={handleLoadProject}
+      onNewProject={() => setView('new-project')}
+      onLanding={() => setView('landing')}
     />
   )
 
@@ -180,6 +198,18 @@ export default function App() {
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
+          {/* Library shortcut */}
+          <button onClick={() => setView('library')} className="btn-tactile"
+            style={{
+              fontSize: 9, letterSpacing: '0.2em', color: 'var(--text-muted)',
+              background: 'transparent', border: '1px solid var(--border)',
+              borderRadius: 999, padding: '4px 12px',
+              textTransform: 'uppercase', cursor: 'pointer', opacity: 0.6,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.borderColor = 'var(--gold)'; e.currentTarget.style.color = 'var(--gold)' }}
+            onMouseLeave={e => { e.currentTarget.style.opacity = '0.6'; e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' }}>
+            📁 Library
+          </button>
           {/* New Project shortcut */}
           <button onClick={() => setView('new-project')} className="btn-tactile"
             style={{
@@ -210,7 +240,11 @@ export default function App() {
           <StudioPage key={project?.db_id ?? 'new'} initialProject={project} onNotify={pushNotif} />
         )}
         {studioTab === 'characters' && (
-          <CharacterDictionaryPage characters={project?.characters ?? []} />
+          <CharacterDictionaryPage
+            characters={project?.characters ?? []}
+            scenes={project?.scenes ?? []}
+            renderStyle={project?.render_style ?? 'bw_sketch'}
+          />
         )}
         {studioTab === 'world-bible' && (
           <WorldBiblePage scenes={project?.scenes ?? []} />

@@ -1,5 +1,5 @@
 """
-LLM orchestration layer — IBM WatsonX Granite via LangChain.
+LLM orchestration layer — IBM WatsonX via LangChain.
 
 Exposes three stage functions matching the 3-stage pipeline:
   invoke_character_stage  → list[CharacterProfileBase]
@@ -8,7 +8,8 @@ Exposes three stage functions matching the 3-stage pipeline:
 
 Each function:
   1. Formats the relevant prompt template with caller-supplied context
-  2. Calls the Granite model
+  2. Calls the active model; on 429 rate-limit automatically retries down
+     the FALLBACK_MODELS chain until one succeeds or all are exhausted
   3. Strips any markdown fences from the raw response
   4. Parses the JSON
   5. Validates each item against the relevant Pydantic schema
@@ -33,24 +34,82 @@ from app.schemas.storyboard import (
     ScriptSceneBase,
 )
 
+# ---------------------------------------------------------------------------
+# Model fallback chain
+# Tried in order when a 429 rate-limit is detected on the active model.
+# The primary model comes from settings so .env still controls the default.
+# ---------------------------------------------------------------------------
+
+FALLBACK_MODELS: list[str] = [
+    "mistralai/mistral-small-3-1-24b-instruct-2503",
+    "meta-llama/llama-3-3-70b-instruct",
+    "mistralai/mistral-medium-2505",
+    "mistral-large-2512",
+]
+
+# Tokens that indicate the model is unavailable / rate-limited and we should
+# try the next one.  Cast to lowercase for case-insensitive matching.
+_FALLBACK_TOKENS = (
+    "429",
+    "consumption_limit_reached",
+    "model_no_support_for_function",
+    "is not supported",
+    "not supported for this environment",
+    "unsupported model",
+    "model not found",
+    "resource not found",
+    "400",
+    "403",
+)
+
+
+def _should_fallback(exc: Exception) -> bool:
+    """Return True if the exception should trigger a model fallback."""
+    msg = str(exc).lower()
+    return any(token in msg for token in _FALLBACK_TOKENS)
+
 
 # ---------------------------------------------------------------------------
 # LLM client factory
 # ---------------------------------------------------------------------------
 
-def _build_llm() -> WatsonxLLM:
-    """Initialise and return a WatsonxLLM instance from current settings."""
+def _build_llm(model_id: str | None = None) -> WatsonxLLM:
+    """Initialise and return a WatsonxLLM instance. Uses settings default when model_id is None."""
     return WatsonxLLM(
-        model_id=settings.WATSONX_MODEL_ID,
+        model_id=model_id or settings.WATSONX_MODEL_ID,
         url=settings.WATSONX_URL,
         apikey=settings.WATSONX_API_KEY,
         project_id=settings.WATSONX_PROJECT_ID,
         params={
-            "max_new_tokens": 2000,
+            "max_new_tokens": 4096,
             "temperature": 0.2,
             "decoding_method": "greedy",
         },
     )
+
+
+def _invoke_with_fallback(prompt_text: str) -> str:
+    """
+    Invoke the LLM with automatic model fallback on 429 rate-limit errors.
+
+    Tries settings.WATSONX_MODEL_ID first, then each model in FALLBACK_MODELS
+    (skipping any that duplicate the primary). Raises the last exception if all
+    models are exhausted.
+    """
+    primary = settings.WATSONX_MODEL_ID
+    candidates = [primary] + [m for m in FALLBACK_MODELS if m != primary]
+
+    last_exc: Exception = RuntimeError("No models available.")
+    for model_id in candidates:
+        try:
+            return _build_llm(model_id).invoke(prompt_text)
+        except Exception as exc:
+            if _should_fallback(exc):
+                last_exc = exc
+                continue  # try next model
+            raise  # unrecoverable error — surface immediately
+
+    raise last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -59,16 +118,28 @@ def _build_llm() -> WatsonxLLM:
 
 def _parse_json_response(raw: str) -> Any:
     """
-    Strip markdown code fences if present, then parse as JSON.
-    Raises ValueError with context if parsing fails.
+    Extract and parse JSON from the LLM response.
+    1. Strip markdown code fences if present.
+    2. If that fails, extract the first [...] or {...} block from the text (fallback
+       for models that prepend prose despite instructions).
+    Raises ValueError with context if all attempts fail.
     """
-    # Remove ```json ... ``` or ``` ... ``` wrappers
     cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned.strip())
     try:
         return json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"LLM returned invalid JSON: {e}\nRaw output:\n{raw[:500]}")
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: extract the first complete JSON array or object
+    match = re.search(r"(\[.*\]|\{.*\})", raw, flags=re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError(f"LLM returned invalid JSON.\nRaw output:\n{raw[:500]}")
 
 
 # ---------------------------------------------------------------------------
@@ -82,13 +153,8 @@ def invoke_character_stage(raw_notes: str) -> list[CharacterProfileBase]:
     Raises HTTPException(502) on LLM or validation failure.
     """
     try:
-        llm = _build_llm()
-        template = PromptTemplate(
-            input_variables=["raw_character_notes"],
-            template=CHARACTER_PROMPT,
-        )
-        prompt_text = template.format(raw_character_notes=raw_notes)
-        raw_response = llm.invoke(prompt_text)
+        prompt_text = CHARACTER_PROMPT.format(raw_character_notes=raw_notes)
+        raw_response = _invoke_with_fallback(prompt_text)
         parsed = _parse_json_response(raw_response)
         if not isinstance(parsed, list):
             parsed = [parsed]
@@ -111,13 +177,8 @@ def invoke_world_stage(raw_notes: str) -> list[EnvironmentProfileBase]:
     Raises HTTPException(502) on LLM or validation failure.
     """
     try:
-        llm = _build_llm()
-        template = PromptTemplate(
-            input_variables=["raw_world_notes"],
-            template=WORLD_PROMPT,
-        )
-        prompt_text = template.format(raw_world_notes=raw_notes)
-        raw_response = llm.invoke(prompt_text)
+        prompt_text = WORLD_PROMPT.format(raw_world_notes=raw_notes)
+        raw_response = _invoke_with_fallback(prompt_text)
         parsed = _parse_json_response(raw_response)
         if not isinstance(parsed, list):
             parsed = [parsed]
@@ -155,7 +216,6 @@ def invoke_storyboard_stage(
         world_context = json.dumps(
             [e.model_dump() for e in environments], indent=2
         )
-        llm = _build_llm()
         template = PromptTemplate(
             input_variables=["character_context", "world_context", "raw_script_text", "global_aesthetic", "render_style"],
             template=STORYBOARD_PROMPT,
@@ -167,7 +227,7 @@ def invoke_storyboard_stage(
             global_aesthetic=global_aesthetic,
             render_style=render_style,
         )
-        raw_response = llm.invoke(prompt_text)
+        raw_response = _invoke_with_fallback(prompt_text)
         parsed = _parse_json_response(raw_response)
         if not isinstance(parsed, list):
             parsed = [parsed]
