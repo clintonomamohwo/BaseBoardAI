@@ -102,6 +102,9 @@ export interface StoryboardFrame {
   lighting_notes: string
   sound_cue: string | null
   generated_image_url: string | null
+  /** True when the user has uploaded their own artwork for this frame.
+   *  Re-run skips locked frames so artist overrides are never overwritten. */
+  is_manual_override?: boolean
 }
 
 export interface StoryboardScene {

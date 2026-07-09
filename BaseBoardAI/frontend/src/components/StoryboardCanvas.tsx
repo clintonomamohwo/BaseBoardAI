@@ -7,9 +7,10 @@ interface Props {
   selectedKeys: Map<string, boolean>
   onToggleSelect: (key: string) => void
   onOpenPlayer: () => void
+  onReplaceImage?: (sceneNumber: number, frameNumber: number, dataUrl: string) => void
 }
 
-export default function StoryboardCanvas({ scene, renderStyleLabel, selectedKeys, onToggleSelect, onOpenPlayer }: Props) {
+export default function StoryboardCanvas({ scene, renderStyleLabel, selectedKeys, onToggleSelect, onOpenPlayer, onReplaceImage }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Canvas header */}
@@ -37,12 +38,13 @@ export default function StoryboardCanvas({ scene, renderStyleLabel, selectedKeys
         <div className="flex gap-3 p-4 h-full items-start">
           {scene.frames.map((frame) => (
             <FrameCard
-              key={frame.frame_number}
-              frame={frame}
-              scene={scene}
-              isSelected={selectedKeys.get(`s${scene.scene_number}_f${frame.frame_number}`) ?? false}
-              onToggleSelect={onToggleSelect}
-            />
+                key={frame.frame_number}
+                frame={frame}
+                scene={scene}
+                isSelected={selectedKeys.get(`s${scene.scene_number}_f${frame.frame_number}`) ?? false}
+                onToggleSelect={onToggleSelect}
+                onReplaceImage={onReplaceImage}
+              />
           ))}
           {scene.frames.length === 0 && (
             <div className="flex-1 flex items-center justify-center text-[var(--text-base)]/20 text-sm tracking-widest uppercase">
