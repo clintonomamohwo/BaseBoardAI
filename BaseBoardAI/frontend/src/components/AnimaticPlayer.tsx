@@ -94,7 +94,7 @@ export default function AnimaticPlayer({ frames }: Props) {
   const pad2 = (n: number) => String(Math.floor(n)).padStart(2, '0')
   const formatTime = (s: number) => `${pad2(s / 60)}:${pad2(s % 60)}`
   const currentTime = frameOffsets[idx] + elapsed
-  const frameId = `${String(frame.scene_number ?? 0).padStart(2,'0')}.${String(frame.frame_number).padStart(2,'0')}`
+  const frameId = String(frame.frame_number).padStart(2, '0')
 
   return (
     <div className="flex flex-col gap-3">

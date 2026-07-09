@@ -28,6 +28,7 @@ import {
   generateCharacterOverview,
   generateFullCharacterPack,
 } from '../api/storyboard'
+import GalleryLightbox, { type GalleryItem } from '../components/GalleryLightbox'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -190,13 +191,13 @@ function Spinner() {
 }
 
 function ImageTile({
-  url, label, width = 120, height = 140, onRegen, isLoading,
+  url, label, width = 120, height = 140, onRegen, isLoading, onOpen,
 }: {
   url: string | null; label: string; width?: number; height?: number;
   onRegen?: () => void; isLoading?: boolean;
+  /** Called when the tile is clicked — parent opens the shared gallery */
+  onOpen?: () => void;
 }) {
-  const [lightbox, setLightbox] = useState(false)
-
   async function handleDownload() {
     if (!url) return
     try { const r = await fetch(url); const b = await r.blob(); saveAs(b, `${label.replace(/[^a-z0-9]/gi,'_').toLowerCase()}.png`) }
@@ -204,33 +205,27 @@ function ImageTile({
   }
 
   return (
-    <>
-      {lightbox && url && (
-        <div onClick={() => setLightbox(false)} style={{ position:'fixed',inset:0,zIndex:9999,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'zoom-out' }}>
-          <img src={url} alt={label} style={{ maxWidth:'82vw',maxHeight:'82vh',borderRadius:6,border:'1px solid rgba(201,168,76,0.3)' }} onClick={e=>e.stopPropagation()} />
-          <button onClick={()=>setLightbox(false)} style={{ position:'absolute',top:20,right:24,background:'none',border:'none',color:'rgba(255,255,255,0.4)',fontSize:24,cursor:'pointer' }}>✕</button>
-        </div>
-      )}
-      <div style={{ display:'flex',flexDirection:'column',alignItems:'center',gap:5 }}>
-        <div style={{ width, height, borderRadius:5, border:'1px solid var(--border)', background:'var(--bg-base)', overflow:'hidden', display:'flex',alignItems:'center',justifyContent:'center', cursor: url ? 'zoom-in' : 'default', position:'relative' }}
-          onClick={() => url && setLightbox(true)}>
-          {isLoading ? <Spinner /> : url ? (
-            <img src={url} alt={label} style={{ width:'100%',height:'100%',objectFit:'cover' }} />
-          ) : (
-            <span style={{ fontSize:9,color:'var(--text-muted)',opacity:0.25,textAlign:'center',padding:'0 8px',letterSpacing:'0.1em' }}>{label}</span>
-          )}
-        </div>
-        <div style={{ display:'flex',gap:4 }}>
-          <span style={{ fontSize:8,color:'var(--text-muted)',opacity:0.5,letterSpacing:'0.12em',textTransform:'uppercase' }}>{label}</span>
-          {onRegen && (
-            <button onClick={onRegen} disabled={isLoading} title="Regenerate" style={{ background:'none',border:'none',cursor:isLoading?'wait':'pointer',color:'var(--gold)',opacity:isLoading?0.3:0.5,fontSize:10,padding:0 }}>↺</button>
-          )}
-          {url && (
-            <button onClick={handleDownload} title="Download PNG" style={{ background:'none',border:'none',cursor:'pointer',color:'var(--gold)',opacity:0.4,fontSize:9,padding:0 }}>↓</button>
-          )}
-        </div>
+    <div style={{ display:'flex',flexDirection:'column',alignItems:'center',gap:5 }}>
+      <div
+        style={{ width, height, borderRadius:5, border:'1px solid var(--border)', background:'var(--bg-base)', overflow:'hidden', display:'flex',alignItems:'center',justifyContent:'center', cursor: url ? 'zoom-in' : 'default', position:'relative' }}
+        onClick={() => url && onOpen?.()}
+      >
+        {isLoading ? <Spinner /> : url ? (
+          <img src={url} alt={label} style={{ width:'100%',height:'100%',objectFit:'cover' }} />
+        ) : (
+          <span style={{ fontSize:9,color:'var(--text-muted)',opacity:0.25,textAlign:'center',padding:'0 8px',letterSpacing:'0.1em' }}>{label}</span>
+        )}
       </div>
-    </>
+      <div style={{ display:'flex',gap:4 }}>
+        <span style={{ fontSize:8,color:'var(--text-muted)',opacity:0.5,letterSpacing:'0.12em',textTransform:'uppercase' }}>{label}</span>
+        {onRegen && (
+          <button onClick={onRegen} disabled={isLoading} title="Regenerate" style={{ background:'none',border:'none',cursor:isLoading?'wait':'pointer',color:'var(--gold)',opacity:isLoading?0.3:0.5,fontSize:10,padding:0 }}>↺</button>
+        )}
+        {url && (
+          <button onClick={handleDownload} title="Download PNG" style={{ background:'none',border:'none',cursor:'pointer',color:'var(--gold)',opacity:0.4,fontSize:9,padding:0 }}>↓</button>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -530,6 +525,19 @@ export default function CharacterPackagePage({
   const loadedTabs  = useRef<Set<string>>(new Set(['Overview', 'Scenes', 'Relationships']))
   const autoInitRef = useRef(false)
 
+  // Shared gallery lightbox state — null = closed
+  const [gallery, setGallery] = useState<{ items: GalleryItem[]; index: number } | null>(null)
+
+  /** Build a GalleryItem list from a keyed image map and open at the given key */
+  function openGallery(imageMap: Record<string, string | null>, keys: readonly string[], labels: Record<string, string>, clickedKey: string) {
+    const items = keys
+      .filter(k => imageMap[k])
+      .map(k => ({ url: imageMap[k]!, label: labels[k] ?? k }))
+    const index = items.findIndex(it => it.label === (labels[clickedKey] ?? clickedKey))
+    if (items.length === 0) return
+    setGallery({ items, index: Math.max(0, index) })
+  }
+
   // ---------------------------------------------------------------------------
   // Auto-init: generate all default sections when package first mounts
   // ---------------------------------------------------------------------------
@@ -809,6 +817,15 @@ export default function CharacterPackagePage({
     <div className="flex-1 flex flex-col bg-[var(--bg-base)] overflow-hidden">
       <style>{`@keyframes pkg-spin { to { transform: rotate(360deg); } }`}</style>
 
+      {/* Shared gallery lightbox */}
+      {gallery && (
+        <GalleryLightbox
+          items={gallery.items}
+          initialIndex={gallery.index}
+          onClose={() => setGallery(null)}
+        />
+      )}
+
       {/* Header */}
       <div style={{ padding:'14px 24px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', gap:16, flexShrink:0 }}>
         {onBack && (
@@ -965,7 +982,8 @@ export default function CharacterPackagePage({
           <div>
             <SectionHeader title="Hero Portrait" section="portrait" />
             <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
-              <ImageTile url={pkg.portrait} label="Portrait" width={200} height={260} isLoading={isLoading('portrait')} onRegen={() => handleRegenOne('portrait')} />
+              <ImageTile url={pkg.portrait} label="Portrait" width={200} height={260} isLoading={isLoading('portrait')} onRegen={() => handleRegenOne('portrait')}
+                onOpen={() => pkg.portrait && setGallery({ items:[{ url: pkg.portrait, label:'Portrait' }], index:0 })} />
               <div style={{ flex:1, maxWidth:320 }}>
                 <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.6, marginBottom:8 }}>Generation Notes</p>
                 <p style={{ fontSize:11, color:'var(--text-base)', opacity:0.65, lineHeight:1.7 }}>
@@ -992,7 +1010,8 @@ export default function CharacterPackagePage({
             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
               {TURNAROUND_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.turnaround[key]} label={TURNAROUND_LABELS[key]} width={130} height={180}
-                  isLoading={isLoading(`turnaround/${key}`)} onRegen={() => handleRegenOne(`turnaround/${key}`)} />
+                  isLoading={isLoading(`turnaround/${key}`)} onRegen={() => handleRegenOne(`turnaround/${key}`)}
+                  onOpen={() => openGallery(pkg.turnaround, TURNAROUND_KEYS, TURNAROUND_LABELS, key)} />
               ))}
             </div>
 
@@ -1012,7 +1031,8 @@ export default function CharacterPackagePage({
                 <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
                   {TURNAROUND_360_KEYS.map(key => (
                     <ImageTile key={key} url={pkg.turnaround360![key] ?? null} label={TURNAROUND_360_LABELS[key]}
-                      width={110} height={150} onRegen={() => handleRegenOne(`turnaround/${key}`)} />
+                      width={110} height={150} onRegen={() => handleRegenOne(`turnaround/${key}`)}
+                      onOpen={() => openGallery(pkg.turnaround360! as Record<string,string|null>, TURNAROUND_360_KEYS, TURNAROUND_360_LABELS, key)} />
                   ))}
                 </div>
               </div>
@@ -1027,7 +1047,11 @@ export default function CharacterPackagePage({
             <div style={{ display:'flex', gap:14, flexWrap:'wrap' }}>
               {EXPRESSION_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.expressions[key]} label={`${EXPRESSION_EMOJIS[key]} ${key.charAt(0).toUpperCase()+key.slice(1)}`}
-                  width={110} height={130} isLoading={isLoading(`expressions/${key}`)} onRegen={() => handleRegenOne(`expressions/${key}`)} />
+                  width={110} height={130} isLoading={isLoading(`expressions/${key}`)} onRegen={() => handleRegenOne(`expressions/${key}`)}
+                  onOpen={() => {
+                    const emojiLabels = Object.fromEntries(EXPRESSION_KEYS.map(k => [k, `${EXPRESSION_EMOJIS[k]} ${k.charAt(0).toUpperCase()+k.slice(1)}`]))
+                    openGallery(pkg.expressions, EXPRESSION_KEYS, emojiLabels, key)
+                  }} />
               ))}
             </div>
           </div>
@@ -1040,7 +1064,8 @@ export default function CharacterPackagePage({
             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
               {POSE_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.poses[key]} label={POSE_LABELS[key]} width={120} height={160}
-                  isLoading={isLoading(`poses/${key}`)} onRegen={() => handleRegenOne(`poses/${key}`)} />
+                  isLoading={isLoading(`poses/${key}`)} onRegen={() => handleRegenOne(`poses/${key}`)}
+                  onOpen={() => openGallery(pkg.poses, POSE_KEYS, POSE_LABELS, key)} />
               ))}
             </div>
 
@@ -1060,7 +1085,8 @@ export default function CharacterPackagePage({
                 <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
                   {PREMIUM_POSE_KEYS.map(key => (
                     <ImageTile key={key} url={pkg.premiumPoses![key] ?? null} label={PREMIUM_POSE_LABELS[key]}
-                      width={120} height={160} />
+                      width={120} height={160}
+                      onOpen={() => openGallery(pkg.premiumPoses! as Record<string,string|null>, PREMIUM_POSE_KEYS, PREMIUM_POSE_LABELS, key)} />
                   ))}
                 </div>
               </div>
@@ -1078,7 +1104,8 @@ export default function CharacterPackagePage({
             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
               {OUTFIT_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.outfits[key]} label={OUTFIT_LABELS[key]} width={120} height={160}
-                  isLoading={isLoading(`outfits/${key}`)} onRegen={() => handleRegenOne(`outfits/${key}`)} />
+                  isLoading={isLoading(`outfits/${key}`)} onRegen={() => handleRegenOne(`outfits/${key}`)}
+                  onOpen={() => openGallery(pkg.outfits, OUTFIT_KEYS, OUTFIT_LABELS, key)} />
               ))}
             </div>
           </div>
@@ -1114,7 +1141,8 @@ export default function CharacterPackagePage({
                 <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
                   {MATERIAL_KEYS.map(key => (
                     <ImageTile key={key} url={pkg.materialCloseups![key] ?? null} label={MATERIAL_LABELS[key]}
-                      width={100} height={100} />
+                      width={100} height={100}
+                      onOpen={() => openGallery(pkg.materialCloseups! as Record<string,string|null>, MATERIAL_KEYS, MATERIAL_LABELS, key)} />
                   ))}
                 </div>
               </div>
@@ -1143,7 +1171,8 @@ export default function CharacterPackagePage({
               <div style={{ display:'flex', gap:14, flexWrap:'wrap' }}>
                 {Object.entries(pkg.props).map(([key, url]) => (
                   <ImageTile key={key} url={url} label={key} width={100} height={100}
-                    isLoading={isLoading(`props/${key}`)} onRegen={() => handleRegenOne(`props/${key}`)} />
+                    isLoading={isLoading(`props/${key}`)} onRegen={() => handleRegenOne(`props/${key}`)}
+                    onOpen={() => openGallery(pkg.props, Object.keys(pkg.props), Object.fromEntries(Object.keys(pkg.props).map(k => [k,k])), key)} />
                 ))}
                 {isLoading('props') && <Spinner />}
               </div>

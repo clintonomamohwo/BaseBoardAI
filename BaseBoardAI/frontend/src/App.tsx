@@ -244,6 +244,11 @@ export default function App() {
             characters={project?.characters ?? []}
             scenes={project?.scenes ?? []}
             renderStyle={project?.render_style ?? 'bw_sketch'}
+            onReplacePortrait={(_charId, _dataUrl) => {
+              // Portrait URLs live in CharacterRow local state; callback is a
+              // hook for future persistence (e.g. saving to the project record).
+              // Nothing to do at App level today — the row re-renders itself.
+            }}
           />
         )}
         {studioTab === 'world-bible' && (

@@ -78,11 +78,12 @@ export default function GenesisEnginePage({
     }
 
     // Animate task cards independently
-    const timers: ReturnType<typeof setInterval>[] = []
+    const timers: ReturnType<typeof setInterval>[]  = []
+    const starters: ReturnType<typeof setTimeout>[] = []
     TASKS.forEach((task) => {
       const startDelay = task.delay * 1000
       const totalMs    = task.duration * 1000
-      setTimeout(() => {
+      const st = setTimeout(() => {
         setTaskStatus(prev => ({ ...prev, [task.id]: 'running' }))
         const startTime = Date.now()
         const interval  = setInterval(() => {
@@ -95,6 +96,7 @@ export default function GenesisEnginePage({
         }, 50)
         timers.push(interval)
       }, startDelay)
+      starters.push(st)
     })
 
     // Fire the actual pipeline
@@ -131,7 +133,16 @@ export default function GenesisEnginePage({
         }
       }, 1000)
     } catch (err) {
+      // Stop all running and pending animations immediately
+      starters.forEach(clearTimeout)
       timers.forEach(clearInterval)
+      // Snap all pending tasks back to pending state so nothing shows partial progress
+      setTaskStatus(prev =>
+        Object.fromEntries(Object.entries(prev).map(([id, s]) => [id, s === 'done' ? 'done' : 'pending']))
+      )
+      setTaskProgress(prev =>
+        Object.fromEntries(Object.entries(prev).map(([id, v]) => [id, v >= 1 ? 1 : 0]))
+      )
       let msg = err instanceof Error ? err.message : 'Pipeline failed'
       if (msg === 'Failed to fetch' || msg.includes('NetworkError') || msg.includes('fetch')) {
         msg = 'Cannot reach the backend.\n\nMake sure the server is running:\ncd BaseBoardAI/backend && source .venv/bin/activate && uvicorn app.main:app --reload'

@@ -48,6 +48,19 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
     if (!project) return
     setRerunLoading(true); setRerunError(null)
     onNotify?.('Re-running pipeline…', 'info')
+
+    // Snapshot locked frames before the pipeline wipes project state
+    const lockedFrames: Record<string, { url: string }> = {}
+    for (const scene of project.scenes) {
+      for (const frame of scene.frames) {
+        if (frame.is_manual_override && frame.generated_image_url) {
+          lockedFrames[`${scene.scene_number}:${frame.frame_number}`] = {
+            url: frame.generated_image_url,
+          }
+        }
+      }
+    }
+
     try {
       const p = await forgePipeline({
         project_title:         project.project_title,
@@ -60,9 +73,26 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
           s.frames.map(f => f.action_breakdown).join(' ')
         ).join('\n\n'),
       })
+
+      // Restore artist overrides — re-run cannot overwrite locked frames
+      if (Object.keys(lockedFrames).length > 0) {
+        p.scenes = p.scenes.map(scene => ({
+          ...scene,
+          frames: scene.frames.map(frame => {
+            const locked = lockedFrames[`${scene.scene_number}:${frame.frame_number}`]
+            if (!locked) return frame
+            return { ...frame, generated_image_url: locked.url, is_manual_override: true }
+          }),
+        }))
+      }
+
       handleProjectLoaded(p)
       setRerunOpen(false)
-      onNotify?.('Re-run complete ✓')
+      const restoredCount = Object.keys(lockedFrames).length
+      onNotify?.(restoredCount > 0
+        ? `Re-run complete ✓ — ${restoredCount} locked frame${restoredCount !== 1 ? 's' : ''} preserved`
+        : 'Re-run complete ✓'
+      )
     } catch (err) {
       setRerunError(err instanceof Error ? err.message : 'Re-run failed')
     } finally {
@@ -92,6 +122,30 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
     setShowForm(false)
   }
 
+  /** Replace a single frame's image and mark it as an artist override.
+   *  Marked frames are skipped by re-run so the artwork is never overwritten. */
+  function handleReplaceFrameImage(sceneNumber: number, frameNumber: number, dataUrl: string) {
+    const patch = (f: import('../types/storyboard').StoryboardFrame) =>
+      f.frame_number === frameNumber
+        ? { ...f, generated_image_url: dataUrl, is_manual_override: true }
+        : f
+
+    setProject(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        scenes: prev.scenes.map(s =>
+          s.scene_number !== sceneNumber ? s : { ...s, frames: s.frames.map(patch) }
+        ),
+      }
+    })
+    // Keep activeScene in sync so the canvas re-renders immediately
+    setActiveScene(prev => {
+      if (!prev || prev.scene_number !== sceneNumber) return prev
+      return { ...prev, frames: prev.frames.map(patch) }
+    })
+  }
+
   function handleToggleSelect(key: string) {
     setSelectedKeys((prev) => {
       const next = new Map(prev)
@@ -103,6 +157,10 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
   const displayScene = activeScene ?? project?.scenes[0] ?? null
   const renderStyleLabel = project ? (RENDER_STYLE_LABELS[project.render_style] ?? project.render_style) : ''
   const lockedCount = [...selectedKeys.values()].filter(Boolean).length
+  // Frames the artist has manually overridden — protected from re-run
+  const overrideCount = project
+    ? project.scenes.reduce((sum, s) => sum + s.frames.filter(f => f.is_manual_override).length, 0)
+    : 0
 
   if (!project || showForm) {
     return (
@@ -168,8 +226,8 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
       {(viewMode === 'vault' || viewMode === 'locked') ? (
         <div className="flex-1 overflow-y-auto p-4">
           {viewMode === 'vault'
-            ? <VaultGrid scenes={project.scenes} selectedKeys={selectedKeys} onToggleSelect={handleToggleSelect} />
-            : <LockedCutFolder scenes={project.scenes} selectedKeys={selectedKeys} onToggleSelect={handleToggleSelect} />
+            ? <VaultGrid scenes={project.scenes} selectedKeys={selectedKeys} onToggleSelect={handleToggleSelect} onReplaceImage={handleReplaceFrameImage} />
+            : <LockedCutFolder scenes={project.scenes} selectedKeys={selectedKeys} onToggleSelect={handleToggleSelect} onReplaceImage={handleReplaceFrameImage} />
           }
         </div>
       ) : viewMode === 'player' && displayScene ? (
@@ -257,6 +315,32 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
                       Re-uses the existing script text and character notes with your new settings. Saves as a new project.
                     </p>
 
+                    {/* Override status */}
+                    {overrideCount > 0 ? (
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: 7,
+                        borderRadius: 4, padding: '7px 10px',
+                        background: 'rgba(74,222,128,0.06)',
+                        border: '1px solid rgba(74,222,128,0.25)',
+                      }}>
+                        <span style={{ fontSize: 10, color: '#4ade80' }}>◈</span>
+                        <span style={{ fontSize: 9, color: '#4ade80', opacity: 0.8, lineHeight: 1.5 }}>
+                          {overrideCount} artist frame{overrideCount !== 1 ? 's' : ''} locked — will be preserved
+                        </span>
+                      </div>
+                    ) : (
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: 7,
+                        borderRadius: 4, padding: '7px 10px',
+                        background: 'var(--bg-base)',
+                        border: '1px solid var(--border)',
+                      }}>
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.45, lineHeight: 1.5 }}>
+                          No artist overrides — all frames will be regenerated
+                        </span>
+                      </div>
+                    )}
+
                     <button
                       onClick={handleRerun}
                       style={{
@@ -295,6 +379,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
                 selectedKeys={selectedKeys}
                 onToggleSelect={handleToggleSelect}
                 onOpenPlayer={() => setViewMode('player')}
+                onReplaceImage={handleReplaceFrameImage}
               />
             )}
           </main>

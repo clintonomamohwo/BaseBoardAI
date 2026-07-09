@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { saveAs } from 'file-saver'
 import type { CharacterProfile, StoryboardScene } from '../types/storyboard'
 import { generateImage } from '../api/storyboard'
@@ -10,6 +10,9 @@ interface Props {
   characters: CharacterProfile[]
   scenes?: StoryboardScene[]
   renderStyle?: string
+  /** Called when the user uploads a replacement portrait for a character.
+   *  Receives the character ID and a base64 data URL. */
+  onReplacePortrait?: (charId: string, dataUrl: string) => void
 }
 
 function downloadCharacterJson(char: CharacterProfile) {
@@ -44,12 +47,15 @@ function buildPortraitPrompt(char: CharacterProfile): string {
 function CharacterRow({
   char,
   onDelete,
+  onOpenPackage,
+  onReplacePortrait,
   renderStyle,
   isPackageReady = false,
 }: {
   char: CharacterProfile
   onDelete: () => void
   onOpenPackage: () => void
+  onReplacePortrait?: (charId: string, dataUrl: string) => void
   renderStyle: string
   isPackageReady?: boolean
 }) {
@@ -58,8 +64,22 @@ function CharacterRow({
   const [portraitUrl,  setPortraitUrl]  = useState<string | null>(null)
   const [portraitLoading, setPortraitLoading] = useState(false)
   const [lightbox,     setLightbox]     = useState(false)
+  const portraitUploadRef = useRef<HTMLInputElement>(null)
 
   const initials = char.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
+
+  function handlePortraitUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result as string
+      setPortraitUrl(dataUrl)
+      onReplacePortrait?.(char.id, dataUrl)
+    }
+    reader.readAsDataURL(file)
+  }
 
   const handleExpand = useCallback(async () => {
     const next = !expanded
@@ -187,6 +207,14 @@ function CharacterRow({
                   }}
                   onClick={() => portraitUrl && setLightbox(true)}
                 >
+                  {/* Hidden upload input */}
+                  <input
+                    ref={portraitUploadRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    style={{ display: 'none' }}
+                    onChange={handlePortraitUpload}
+                  />
                   {portraitLoading ? (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
                       <div style={{
@@ -203,7 +231,25 @@ function CharacterRow({
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
                   ) : (
-                    <span style={{ fontSize: 8, color: 'var(--text-muted)', opacity: 0.3, textAlign: 'center', padding: '0 8px', letterSpacing: '0.1em' }}>No portrait</span>
+                    <div
+                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+                      onClick={() => portraitUploadRef.current?.click()}
+                      title="Upload your own portrait"
+                    >
+                      <span style={{ fontSize: 8, color: 'var(--text-muted)', opacity: 0.3, textAlign: 'center', padding: '0 8px', letterSpacing: '0.1em' }}>No portrait</span>
+                      <span style={{ fontSize: 7, color: 'var(--gold)', opacity: 0.4, letterSpacing: '0.1em', textTransform: 'uppercase' }}>+ Upload</span>
+                    </div>
+                  )}
+                  {/* Replace overlay — shows on hover when portrait exists */}
+                  {portraitUrl && (
+                    <div
+                      className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
+                      style={{ background: 'rgba(0,0,0,0.55)', cursor: 'pointer', borderRadius: 4 }}
+                      onClick={e => { e.stopPropagation(); portraitUploadRef.current?.click() }}
+                      title="Replace portrait"
+                    >
+                      <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.8)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>⇪ Replace</span>
+                    </div>
                   )}
                 </div>
                 <p style={{ fontSize: 7, color: 'var(--text-muted)', opacity: 0.4, textAlign: 'center', marginTop: 4, letterSpacing: '0.1em', textTransform: 'uppercase' }}>AI Portrait</p>
@@ -289,7 +335,7 @@ function CharacterRow({
   )
 }
 
-export default function CharacterDictionaryPage({ characters: initialCharacters, scenes = [], renderStyle = 'bw_sketch' }: Props) {
+export default function CharacterDictionaryPage({ characters: initialCharacters, scenes = [], renderStyle = 'bw_sketch', onReplacePortrait }: Props) {
   const [characters,       setCharacters]       = useState(initialCharacters)
   const [search,           setSearch]           = useState('')
   const [activePackage,    setActivePackage]    = useState<CharacterProfile | null>(null)
@@ -374,6 +420,7 @@ export default function CharacterDictionaryPage({ characters: initialCharacters,
                 char={char}
                 onDelete={() => handleDelete(char.id)}
                 onOpenPackage={() => setActivePackage(char)}
+                onReplacePortrait={onReplacePortrait}
                 renderStyle={renderStyle}
                 isPackageReady={packagedCharIds.has(char.id)}
               />

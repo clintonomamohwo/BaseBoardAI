@@ -5,9 +5,10 @@ interface Props {
   scenes: StoryboardScene[]
   selectedKeys: Map<string, boolean>
   onToggleSelect: (key: string) => void
+  onReplaceImage?: (sceneNumber: number, frameNumber: number, dataUrl: string) => void
 }
 
-export default function VaultGrid({ scenes, selectedKeys, onToggleSelect }: Props) {
+export default function VaultGrid({ scenes, selectedKeys, onToggleSelect, onReplaceImage }: Props) {
   const allFrames = scenes.flatMap((scene) => scene.frames.map((frame) => ({ frame, scene })))
   return (
     <div className="space-y-4">
@@ -16,7 +17,8 @@ export default function VaultGrid({ scenes, selectedKeys, onToggleSelect }: Prop
         {allFrames.map(({ frame, scene }) => (
           <FrameCard key={`s${scene.scene_number}_f${frame.frame_number}`} frame={frame} scene={scene}
             isSelected={selectedKeys.get(`s${scene.scene_number}_f${frame.frame_number}`) ?? false}
-            onToggleSelect={onToggleSelect} />
+            onToggleSelect={onToggleSelect}
+            onReplaceImage={onReplaceImage} />
         ))}
       </div>
     </div>
