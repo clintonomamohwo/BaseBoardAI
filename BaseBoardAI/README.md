@@ -300,7 +300,7 @@ baseboard/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/clintonomamohwo/baseboard.git
+git clone https://github.com/clintonomamohwo/BaseBoardAI.git
 cd baseboard
 ```
 
