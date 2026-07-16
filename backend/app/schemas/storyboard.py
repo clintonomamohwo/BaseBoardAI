@@ -483,6 +483,10 @@ class StoryboardProjectResponse(BaseModel):
     # Null for projects created before the Canon was introduced (backwards compat).
     canon: "ProjectCanon | None" = Field(None, description="Approved visual facts consulted by every generation")
 
+    # Set to True when the LLM output was truncated mid-generation and only a
+    # partial storyboard was recovered. The frontend should warn the user.
+    truncated: bool = Field(False, description="True if the storyboard was cut off by the model's token limit")
+
 
 # --- STANDALONE RUNNER PAYLOADS ---
 

@@ -67,6 +67,7 @@ export default function GenesisEnginePage({
   const [error,     setError]     = useState<string | null>(null)
   const [started,   setStarted]   = useState(false)
   const [countdown, setCountdown] = useState<number | null>(null)
+  const [truncated, setTruncated] = useState(false)
   const ran = useRef(false)
 
   useEffect(() => {
@@ -134,6 +135,7 @@ export default function GenesisEnginePage({
         scenes:    project.scenes.length,
         frames:    totalFrames,
       })
+      if (project.truncated) setTruncated(true)
       onNotify?.('Genesis Engine complete ✓')
 
       // Countdown before report
@@ -357,6 +359,25 @@ export default function GenesisEnginePage({
                 )
               })}
             </div>
+
+            {/* Truncation warning — shown when the model hit its token limit */}
+            {truncated && (
+              <div className="anim-slide-up" style={{
+                borderRadius: 6, padding: '12px 16px', marginBottom: 16,
+                background: 'rgba(201,140,30,0.08)', border: '1px solid rgba(201,140,30,0.4)',
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+              }}>
+                <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>⚠</span>
+                <div>
+                  <p style={{ fontSize: 12, color: '#c98c1e', fontWeight: 600, marginBottom: 3, letterSpacing: '0.05em' }}>
+                    Storyboard partially generated
+                  </p>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
+                    The AI reached its output limit before finishing all scenes. Your storyboard has been saved with the scenes that completed successfully. To get the full storyboard, try uploading a shorter script or splitting it into sections.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Status line / countdown */}
             {countdown !== null ? (

@@ -371,6 +371,9 @@ export interface StoryboardProject {
   /** Creative Knowledge Graph — the single source of truth for all AI generation.
    *  Populated automatically by forge-pipeline. Null for legacy projects. */
   canon: CreativeKnowledgeGraph | null
+  /** True when the LLM output was truncated mid-generation and only a partial
+   *  storyboard was recovered. The UI should surface a warning to the user. */
+  truncated?: boolean
 }
 
 export interface FrameExportItem {
