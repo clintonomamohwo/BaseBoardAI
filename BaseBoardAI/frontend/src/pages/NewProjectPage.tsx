@@ -101,7 +101,6 @@ interface Props {
 
 export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }: Props) {
   const [dragging,  setDragging]  = useState(false)
-  const [hovering,  setHovering]  = useState(false)
   const [error,     setError]     = useState<string | null>(null)
   const [hovered,   setHovered]   = useState<'upload' | 'template' | 'blank' | null>(null)
   const [confirmed, setConfirmed] = useState<{ file: File; title: string } | null>(null)
@@ -285,8 +284,8 @@ export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }:
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
-            onMouseEnter={() => { setHovering(true); setHovered('upload') }}
-            onMouseLeave={() => { setHovering(false); setHovered(null) }}
+            onMouseEnter={() => setHovered('upload')}
+            onMouseLeave={() => setHovered(null)}
             onClick={() => document.getElementById('np-file-input')?.click()}
             style={{
               border: `1.5px dashed ${dragging || isUpHov ? 'var(--gold)' : 'var(--border)'}`,

@@ -16,7 +16,7 @@ export default function AnimaticPlayer({ frames }: Props) {
   const totalSeconds = frames.reduce((s, f) => s + (f.duration_seconds ?? 3), 0)
 
   // Cumulative second offset for each frame (for scrub bar)
-  const frameOffsets = frames.reduce<number[]>((acc, f, i) => {
+  const frameOffsets = frames.reduce<number[]>((acc, _f, i) => {
     acc.push(i === 0 ? 0 : acc[i - 1] + (frames[i - 1].duration_seconds ?? 3))
     return acc
   }, [])
@@ -94,8 +94,6 @@ export default function AnimaticPlayer({ frames }: Props) {
   const pad2 = (n: number) => String(Math.floor(n)).padStart(2, '0')
   const formatTime = (s: number) => `${pad2(s / 60)}:${pad2(s % 60)}`
   const currentTime = frameOffsets[idx] + elapsed
-  const frameId = String(frame.frame_number).padStart(2, '0')
-
   return (
     <div className="flex flex-col gap-3">
 

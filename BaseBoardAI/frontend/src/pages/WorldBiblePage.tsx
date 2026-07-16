@@ -7,6 +7,8 @@ const SUB_TABS = ['Locations', 'Factions', 'Lore', 'Artifacts', 'Timelines']
 
 interface Props {
   scenes: StoryboardScene[]
+  /** Called when the user deletes a location so the change propagates to project state */
+  onDeleteScene?: (sceneNumber: number) => void
 }
 
 function downloadSceneJson(scene: StoryboardScene) {
@@ -183,8 +185,8 @@ function LocationRow({
                 )}
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {scene.frames.map((frame, idx) => {
-                  const imgIdx = framesWithImages.findIndex(f => f.frame_number === frame.frame_number)
+                {scene.frames.map((frame) => {
+                    const imgIdx = framesWithImages.findIndex(f => f.frame_number === frame.frame_number)
                   return (
                     <div
                       key={frame.frame_number}
@@ -379,13 +381,8 @@ function Lightbox({
 // Page
 // ---------------------------------------------------------------------------
 
-export default function WorldBiblePage({ scenes: initialScenes }: Props) {
-  const [scenes,   setScenes]   = useState(initialScenes)
+export default function WorldBiblePage({ scenes, onDeleteScene }: Props) {
   const [lightbox, setLightbox] = useState<LightboxState | null>(null)
-
-  function handleDelete(sceneNumber: number) {
-    setScenes(prev => prev.filter(s => s.scene_number !== sceneNumber))
-  }
 
   return (
     <div className="flex-1 flex flex-col bg-[var(--bg-base)] overflow-hidden">
@@ -428,7 +425,7 @@ export default function WorldBiblePage({ scenes: initialScenes }: Props) {
               <LocationRow
                 key={scene.scene_number}
                 scene={scene}
-                onDelete={() => handleDelete(scene.scene_number)}
+                onDelete={() => onDeleteScene?.(scene.scene_number)}
                 onOpenLightbox={(frames, idx) => setLightbox({ frames, index: idx })}
               />
             ))}

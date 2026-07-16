@@ -22,9 +22,9 @@ Baseboard AI was built around a single conviction: **AI should not replace the c
 
 The platform directly answers:
 
-- **How can AI help people create faster?** The Genesis Engine collapses weeks of pre-production into a single pipeline execution. A solo creator can hold a complete visual production bible in under two minutes.
+- **How can AI help people create faster?** The Genesis Engine collapses weeks of pre-production into a single pipeline execution. A solo creator can hold a complete visual production bible in under ten minutes.
 - **How can AI bridge the gap between imagination and execution?** Baseboard takes raw prose — unformatted notes, a rough screenplay, a novel chapter — and outputs structured, production-ready assets without requiring the creator to know anything about cinematography or visual design.
-- **How can AI become a creative partner instead of simply generating content?** The Studio is non-destructive. Every AI decision is visible, editable, and re-runnable. Users select render styles, upload visual reference images for img2img consistency, regenerate individual frames, reorder scenes, lock specific shots into an export cut, and write custom generation prompts per character. Artists can replace any AI-generated frame with their own artwork — and those frames are permanently protected from being overwritten when the pipeline is re-run. The AI handles the volume; the human handles the taste.
+- **How can AI become a creative partner instead of simply generating content?** The Studio is non-destructive. Every AI decision is visible, editable, and re-runnable. Users select render styles, upload visual reference images for img2img consistency, regenerate individual frames, reorder scenes, lock specific shots into an export cut, and write custom generation prompts per character. The AI handles the volume; the human handles the taste.
 - **How can AI unlock entirely new creative experiences?** The Character Package System — generating portrait sheets, 360° turnarounds, nine expression states, seven pose types, seven outfit variants, and material close-ups for any character — is a workflow that has no manual equivalent at this speed and price point.
 
 ---
@@ -73,13 +73,10 @@ Baseboard AI solves this by treating the entire pre-visualization workflow as a 
 - **Batch ZIP Export** — Export selected frames as PNG files + a production manifest Markdown file
 - **Animatic Player** — Step through frames with action descriptions and sound cues
 - **Studio Re-run** — Re-execute the pipeline with a different render style or global aesthetic without re-uploading the script
-- **Artist Artwork Override** — Replace any AI-generated frame with custom artwork via drag-and-drop upload; replaced frames are marked with a green ◈ badge and permanently protected from re-run
-- **Portrait Upload** — Upload custom portraits for any character; hover overlay on the portrait thumbnail triggers replacement
-- **Re-run Lock Status** — The Re-run overlay displays a live count of protected artist frames before execution so nothing is accidentally overwritten
-- **Project Library** — Persisted project history from the SQLite database
+- **Project Library** — Persisted project list loaded from the backend database
 - **Dark / Light Theme** — System-aware with persistent preference
 - **Drag & Drop Upload** — PDF, DOCX, TXT, FDX, and Markdown extracted client-side before sending to backend
-- **Cinematic UI** — Film-grain overlay, gold compass navigation, idle-state animations, pulse effects
+- **Cinematic UI** — Film-grain overlay, gold compass compass navigation, idle-state animations, pulse effects
 
 ---
 
@@ -217,9 +214,6 @@ The platform also compresses the **idea-to-decision window** — the time betwee
 - **Batch ZIP export** — PNG frames + production manifest Markdown in one download
 - **World Bible** — Location index with color palettes, emotional tones, and frame lightbox
 - **Studio Re-run** — Re-execute the pipeline with new render style or aesthetic
-- **Artist Artwork Override** — Upload custom artwork to replace any AI-generated frame; the frame is immediately locked with a green ◈ badge and border
-- **Portrait Upload** — Replace any character's AI portrait with custom artwork via the Character Dictionary; hover the portrait thumbnail to reveal the upload overlay
-- **Re-run Lock Preservation** — Artist-overridden frames survive pipeline re-runs automatically; the Re-run overlay shows a live protected frame count before you execute
 - **Project Library** — Persisted project history from the SQLite database
 - **Drag & Drop file upload** — PDF, DOCX, TXT, FDX, Markdown
 - **Creative Director's Report** — Post-analysis summary card before entering Studio
@@ -300,7 +294,7 @@ baseboard/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/clintonomamohwo/BaseBoardAI.git
+git clone <repository-url>
 cd baseboard
 ```
 
@@ -384,7 +378,7 @@ npm run dev
 ### Working in the Studio
 
 - **Scene Index** (left column): Click any scene to load its frames on the canvas. Drag to reorder. Delete scenes you do not need.
-- **Storyboard Canvas** (centre column): Each frame card shows the generated image, shot type, camera angle, duration, and action description. Click a frame to select/lock it. Click the image for a full-screen lightbox. Hover a card to reveal the **⇪** button — click it to upload your own artwork and permanently lock that frame against re-runs (shown with a green ◈ badge and border).
+- **Storyboard Canvas** (centre column): Each frame card shows the generated image, shot type, camera angle, duration, and action description. Click a frame to select/lock it. Click the image for a full-screen lightbox.
 - **Studio Inspector** (right column): Scene metadata, color palette, emotional tone, lighting notes, and a reference image uploader for img2img generation.
 - **Animatic Player**: Click the **Player** tab to step through frames with action breakdowns as captions.
 - **Vault**: The **Vault** tab shows every frame in every scene in a gallery grid.
@@ -394,7 +388,7 @@ npm run dev
 
 1. Navigate to the **CHARACTERS** tab in the top bar.
 2. Each character is listed with an AI-generated portrait thumbnail (generated on first expand).
-3. Click any character to expand their facial blueprint, wardrobe, and portrait. When no portrait exists yet, the portrait area shows a **+ Upload** prompt — click it to supply your own artwork immediately. When a portrait is already shown, hover it to reveal the **⇪ Replace** overlay.
+3. Click any character to expand their facial blueprint, wardrobe, and portrait.
 4. Click **✦ Full Package** to open the Character Package suite.
 
 ### Character Package
@@ -457,7 +451,8 @@ Click **Full Pack** to generate the premium 360° turnaround (8 angles), premium
 ---
 
 ## Future Improvements
-
+- **Editable Character Packages** — Allow users to upload or replace individual character assets (portraits, expressions, outfits, poses, and turnaround sheets) while preserving AI-generated consistency across the project.
+- **Artwork Replacement & Synchronization** — Enable users to replace any AI-generated storyboard image or artwork with their own custom artwork. Once an image is updated, Baseboard AI will automatically propagate the change across every scene, frame, and reference where that artwork or character appears, ensuring visual consistency throughout the storyboard.
 - **User authentication** — Multi-user support with per-user project libraries, using JWT or OAuth
 - **Real-time streaming** — Stream Genesis Engine stages via Server-Sent Events so the UI reflects actual pipeline progress rather than animated simulation
 - **Shot Planner AI** — Auto-suggest optimal shot sequences for a scene based on dramatic tension and character positions

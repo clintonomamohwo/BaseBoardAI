@@ -154,7 +154,6 @@ export default function GenesisEnginePage({
 
   const totalDone  = Object.values(taskStatus).filter(s => s === 'done').length
   const overallPct = Math.round((totalDone / TASKS.length) * 100)
-  const allDone    = totalDone === TASKS.length
 
   return (
     <div

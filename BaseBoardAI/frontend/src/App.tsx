@@ -109,6 +109,13 @@ export default function App() {
     setTabKey(k => k + 1)
   }
 
+  function handleDeleteScene(sceneNumber: number) {
+    setProject(p => p ? {
+      ...p,
+      scenes: p.scenes.filter(s => s.scene_number !== sceneNumber),
+    } : p)
+  }
+
   /* ─── Landing ─────────────────────────────────────────────────────────── */
   if (view === 'landing') return (
     <LandingPage
@@ -252,7 +259,10 @@ export default function App() {
           />
         )}
         {studioTab === 'world-bible' && (
-          <WorldBiblePage scenes={project?.scenes ?? []} />
+          <WorldBiblePage
+            scenes={project?.scenes ?? []}
+            onDeleteScene={handleDeleteScene}
+          />
         )}
       </div>
 

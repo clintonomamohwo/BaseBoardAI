@@ -168,11 +168,11 @@ function buildRelationships(
       return {
         targetCharId: other.id,
         targetName: other.name,
-        type: 'neutral' as const,
+        type: 'neutral' as CharacterRelationship['type'],
         strength: Math.min(shared.length, 5),
         sharedScenes: shared,
         description: `Appears together in ${shared.length} scene${shared.length !== 1 ? 's' : ''}.`,
-      }
+      } satisfies CharacterRelationship
     })
     .filter((r): r is CharacterRelationship => r !== null)
 }
