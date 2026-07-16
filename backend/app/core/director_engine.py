@@ -54,7 +54,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from app.core.lens_planner import assign_lens_to_scene, detect_scene_type
-from app.core.shot_balancer import balance_shot_distribution, compute_diversity_score
+from app.core.shot_balancer import (
+    balance_shot_distribution,
+    compute_diversity_score,
+    get_director_style_thresholds,
+)
 
 if TYPE_CHECKING:
     from app.schemas.storyboard import ScriptSceneBase
@@ -156,14 +160,14 @@ SCENE_TYPE_PROFILES: dict[str, dict[str, float]] = {
 # Cinematic rhythm enforcement
 # ---------------------------------------------------------------------------
 
-_MAX_CONSECUTIVE_SAME_TYPE = 3   # no more than N identical shot types in a row
+_MAX_CONSECUTIVE_SAME_TYPE = 2   # tightened from 3 → max 2 identical in a row
 
 
 def _enforce_cinematic_rhythm(scenes: "list[ScriptSceneBase]") -> "list[ScriptSceneBase]":
     """
     Walk frames in scene order.  Whenever the same shot-type slug appears more
     than _MAX_CONSECUTIVE_SAME_TYPE times in a row, replace it with a logical
-    cinematic break (wide → medium, close → medium, anything else → wide).
+    cinematic break.
     """
     from app.core.shot_balancer import _classify_shot
 
@@ -196,6 +200,37 @@ def _enforce_cinematic_rhythm(scenes: "list[ScriptSceneBase]") -> "list[ScriptSc
                 frame.shot_type = break_type
                 streak_type = _classify_shot(break_type)
                 streak_count = 1
+
+    return scenes
+
+
+# ---------------------------------------------------------------------------
+# Scene-opening rule enforcement
+# ---------------------------------------------------------------------------
+
+def _enforce_scene_openings(scenes: "list[ScriptSceneBase]") -> "list[ScriptSceneBase]":
+    """
+    The first frame of every scene must be a Wide or Establishing shot.
+    If it's a Close-Up or Medium, replace it — unless the frame is user-locked.
+    """
+    from app.core.shot_balancer import _classify_shot
+
+    _OPENING_VIOLATIONS = {"close", "extreme_close", "ots", "pov", "insert"}
+
+    for scene in scenes:
+        if not scene.frames:
+            continue
+        first = scene.frames[0]
+        locked = getattr(first, "locked_fields", None) or []
+        if "shot_type" in locked:
+            continue
+        slug = _classify_shot(first.shot_type)
+        if slug in _OPENING_VIOLATIONS:
+            logger.info(
+                "Scene %d: opening frame was '%s' — replaced with Establishing Wide Shot.",
+                scene.scene_number, first.shot_type,
+            )
+            first.shot_type = "Establishing Wide Shot"
 
     return scenes
 
@@ -294,21 +329,23 @@ def direct_storyboard(
     scenes: "list[ScriptSceneBase]",
     project_settings: dict | None = None,
     character_hints: dict[str, Any] | None = None,
+    director_style: str = "balanced",
 ) -> "list[ScriptSceneBase]":
     """
     Orchestrate all cinematic planning for a full storyboard.
 
     Steps:
       1. Detect scene type per scene and attach as scene metadata (scene_type attr)
-      2. Apply per-scene shot profile ceilings via Shot Balancer
-      3. Apply CKM character shot biases (Classification + Abilities)
-      4. Enforce cinematic rhythm (no long runs of identical shot types)
-      5. Assign lens + focal length + depth style to every frame (lens_planner)
-      6. Cinematic Brain — fill all missing cinematic fields intelligently
-      7. Log the final Composition Diversity Score
+      2. Enforce scene-opening rule (first frame = wide/establishing)
+      3. Apply director-style shot distribution via Shot Balancer
+      4. Apply CKM character shot biases (Classification + Abilities)
+      5. Enforce cinematic rhythm (max 2 consecutive identical shot types)
+      6. Assign lens + focal length + depth style to every frame (lens_planner)
+      7. Cinematic Brain — fill all missing cinematic fields intelligently
+      8. Compute Variety Score; if < 0.55 run a second rebalance pass
 
+    director_style: one of "balanced" | "cinematic" | "dialogue" | "action" | "intimate"
     character_hints: optional dict of {char_id: get_director_hints() result}
-    obtained from identity_system.get_director_hints() for each character in the project.
 
     Returns the enriched scene list (same objects, mutated in-place).
     Never raises — failures are logged and the pipeline continues.
@@ -324,23 +361,27 @@ def direct_storyboard(
         for scene in scenes:
             stype = detect_scene_type(scene)
             scene_types[scene.scene_number] = stype
-            # Cache on the object's __dict__ for downstream prompt_builder lookup.
-            # The outer try/except on the whole block guards Pydantic frozen models.
             try:
                 scene.__dict__["_scene_type"] = stype
             except (AttributeError, TypeError):
                 pass
 
         logger.info(
-            "Director Engine — detected scene types: %s",
+            "Director Engine — style=%s, detected scene types: %s",
+            director_style,
             {n: t for n, t in scene_types.items()},
         )
 
-        # ── Step 2: Shot balancing (global distribution + scene-type profiles) ─
-        thresholds = settings.get("shot_thresholds", None)
-        scenes = balance_shot_distribution(scenes, thresholds=thresholds)
+        # ── Step 2: Enforce scene-opening rule ───────────────────────────────
+        scenes = _enforce_scene_openings(scenes)
 
-        # ── Step 3: CKM character shot biases ────────────────────────────────
+        # ── Step 3: Shot balancing driven by director style ──────────────────
+        thresholds, floors = get_director_style_thresholds(director_style)
+        # Allow project-level overrides to win
+        thresholds = {**thresholds, **settings.get("shot_thresholds", {})}
+        scenes = balance_shot_distribution(scenes, thresholds=thresholds, floors=floors)
+
+        # ── Step 4: CKM character shot biases ────────────────────────────────
         if character_hints:
             scenes = apply_character_shot_bias(scenes, character_hints)
             logger.info(
@@ -348,20 +389,28 @@ def direct_storyboard(
                 len(character_hints),
             )
 
-        # ── Step 4: Cinematic rhythm enforcement ─────────────────────────────
+        # ── Step 5: Cinematic rhythm enforcement ─────────────────────────────
         scenes = _enforce_cinematic_rhythm(scenes)
 
-        # ── Step 5: Lens assignment per scene ───────────────────────────────
+        # ── Step 6: Lens assignment per scene ───────────────────────────────
         for i, scene in enumerate(scenes):
             scenes[i] = assign_lens_to_scene(scene)
 
-        # ── Step 6: Cinematic Brain — fill every missing cinematic field ──────
+        # ── Step 7: Cinematic Brain — fill every missing cinematic field ──────
         scenes = _run_cinematic_brain(scenes, character_hints)
 
-        # ── Step 7: Log diversity report ─────────────────────────────────────
-        report = compute_diversity_score(scenes, thresholds)
+        # ── Step 8: Variety score gate — second pass if needed ───────────────
+        report = compute_diversity_score(scenes, thresholds, floors)
         for line in report.summary_lines():
             logger.info("  %s", line)
+
+        if report.diversity_score < 0.55:
+            logger.info(
+                "Variety score %.0f%% below threshold — running second rebalance pass.",
+                report.diversity_score * 100,
+            )
+            scenes = balance_shot_distribution(scenes, thresholds=thresholds, floors=floors)
+            scenes = _enforce_cinematic_rhythm(scenes)
 
     except Exception as exc:  # noqa: BLE001
         logger.error("Director Engine encountered an error: %s — pipeline continues.", exc)

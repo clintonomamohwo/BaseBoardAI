@@ -8,8 +8,9 @@
 import { useEffect, useState, useRef } from 'react'
 import logoSrc from '../assets/logo.png'
 import type { RenderStyle, StoryboardProject } from '../types/storyboard'
-import { forgePipeline } from '../api/storyboard'
+import { forgePipelineStream } from '../api/storyboard'
 import { extractDocumentText } from '../utils/extractDocumentText'
+import type { DirectorStyle } from './NewProjectPage'
 
 interface TaskDef {
   id: string
@@ -20,18 +21,18 @@ interface TaskDef {
 }
 
 const TASKS: TaskDef[] = [
-  { id: 'read',       label: 'Reading Story',               icon: '📖', delay: 0.0, duration: 1.2 },
-  { id: 'genre',      label: 'Understanding Genre',         icon: '🎭', delay: 0.4, duration: 1.0 },
-  { id: 'chars',      label: 'Extracting Characters',       icon: '👤', delay: 0.8, duration: 2.2 },
-  { id: 'relations',  label: 'Building Relationships',      icon: '🕸', delay: 1.4, duration: 1.8 },
-  { id: 'locations',  label: 'Detecting Locations',         icon: '📍', delay: 1.8, duration: 1.6 },
-  { id: 'world',      label: 'Building World Bible',        icon: '🌍', delay: 2.2, duration: 2.0 },
-  { id: 'props',      label: 'Detecting Props',             icon: '🗡',  delay: 2.8, duration: 1.4 },
-  { id: 'scenes',     label: 'Splitting Into Scenes',       icon: '🎬', delay: 3.2, duration: 2.2 },
-  { id: 'timeline',   label: 'Creating Story Timeline',     icon: '⏱',  delay: 3.8, duration: 1.6 },
-  { id: 'storyboard', label: 'Generating Storyboard',       icon: '🖼',  delay: 4.4, duration: 3.0 },
-  { id: 'style',      label: 'Creating Visual Style Guide', icon: '🎨', delay: 5.0, duration: 1.8 },
-  { id: 'workspace',  label: 'Preparing Studio',            icon: '⚡', delay: 5.6, duration: 1.4 },
+  { id: 'read',       label: 'Reading Story',               icon: '📖', delay: 0, duration: 0 },
+  { id: 'genre',      label: 'Understanding Genre',         icon: '🎭', delay: 0, duration: 0 },
+  { id: 'chars',      label: 'Extracting Characters',       icon: '👤', delay: 0, duration: 0 },
+  { id: 'relations',  label: 'Building Relationships',      icon: '🕸', delay: 0, duration: 0 },
+  { id: 'locations',  label: 'Detecting Locations',         icon: '📍', delay: 0, duration: 0 },
+  { id: 'world',      label: 'Building World Bible',        icon: '🌍', delay: 0, duration: 0 },
+  { id: 'props',      label: 'Detecting Props',             icon: '🗡',  delay: 0, duration: 0 },
+  { id: 'scenes',     label: 'Splitting Into Scenes',       icon: '🎬', delay: 0, duration: 0 },
+  { id: 'timeline',   label: 'Creating Story Timeline',     icon: '⏱',  delay: 0, duration: 0 },
+  { id: 'storyboard', label: 'Generating Storyboard',       icon: '🖼',  delay: 0, duration: 0 },
+  { id: 'style',      label: 'Creating Visual Style Guide', icon: '🎨', delay: 0, duration: 0 },
+  { id: 'workspace',  label: 'Preparing Studio',            icon: '⚡', delay: 0, duration: 0 },
 ]
 
 type TaskStatus = 'pending' | 'running' | 'done'
@@ -48,6 +49,7 @@ interface Props {
   file: File | null
   projectTitle: string
   renderStyle: RenderStyle
+  directorStyle?: DirectorStyle
   onComplete: (project: StoryboardProject) => void
   onNotify?: (msg: string, type?: 'success' | 'info') => void
   onBack: () => void
@@ -55,7 +57,7 @@ interface Props {
 }
 
 export default function GenesisEnginePage({
-  file, projectTitle, renderStyle, onComplete, onNotify, onBack, onLanding,
+  file, projectTitle, renderStyle, directorStyle = 'balanced', onComplete, onNotify, onBack, onLanding,
 }: Props) {
   const [taskStatus,   setTaskStatus]   = useState<Record<string, TaskStatus>>(
     Object.fromEntries(TASKS.map(t => [t.id, 'pending' as TaskStatus]))
@@ -63,12 +65,44 @@ export default function GenesisEnginePage({
   const [taskProgress, setTaskProgress] = useState<Record<string, number>>(
     Object.fromEntries(TASKS.map(t => [t.id, 0]))
   )
-  const [counts,    setCounts]    = useState<TaskCounts | null>(null)
-  const [error,     setError]     = useState<string | null>(null)
-  const [started,   setStarted]   = useState(false)
-  const [countdown, setCountdown] = useState<number | null>(null)
-  const [truncated, setTruncated] = useState(false)
+  const [counts,      setCounts]      = useState<TaskCounts | null>(null)
+  const [error,       setError]       = useState<string | null>(null)
+  const [started,     setStarted]     = useState(false)
+  const [countdown,   setCountdown]   = useState<number | null>(null)
+  const [truncated,   setTruncated]   = useState(false)
+  const [statusLine,  setStatusLine]  = useState('Genesis Engine initialising…')
+  const [imagesDone,  setImagesDone]  = useState(0)
+  const [imagesTotal, setImagesTotal] = useState(0)
   const ran = useRef(false)
+
+  // Map SSE stage names → task card IDs that should flip to done
+  const STAGE_TASKS: Record<string, string[]> = {
+    chars:      ['read', 'genre', 'chars', 'relations'],
+    world:      ['locations', 'world', 'props'],
+    storyboard: ['scenes', 'timeline', 'storyboard'],
+    images:     ['style', 'workspace'],
+  }
+
+  function markRunning(taskIds: string[]) {
+    setTaskStatus(prev => {
+      const next = { ...prev }
+      taskIds.forEach(id => { if (next[id] === 'pending') next[id] = 'running' })
+      return next
+    })
+  }
+
+  function markDone(taskIds: string[]) {
+    setTaskStatus(prev => {
+      const next = { ...prev }
+      taskIds.forEach(id => { next[id] = 'done' })
+      return next
+    })
+    setTaskProgress(prev => {
+      const next = { ...prev }
+      taskIds.forEach(id => { next[id] = 1 })
+      return next
+    })
+  }
 
   useEffect(() => {
     if (ran.current) return
@@ -79,7 +113,6 @@ export default function GenesisEnginePage({
   async function runGenesis() {
     setStarted(true)
 
-    // Extract document text
     let docText = ''
     try {
       if (file) docText = await extractDocumentText(file)
@@ -88,55 +121,75 @@ export default function GenesisEnginePage({
       return
     }
 
-    // Animate task cards independently
-    const timers: ReturnType<typeof setInterval>[]  = []
-    const starters: ReturnType<typeof setTimeout>[] = []
-    TASKS.forEach((task) => {
-      const startDelay = task.delay * 1000
-      const totalMs    = task.duration * 1000
-      const st = setTimeout(() => {
-        setTaskStatus(prev => ({ ...prev, [task.id]: 'running' }))
-        const startTime = Date.now()
-        const interval  = setInterval(() => {
-          const progress = Math.min((Date.now() - startTime) / totalMs, 1)
-          setTaskProgress(prev => ({ ...prev, [task.id]: progress }))
-          if (progress >= 1) {
-            clearInterval(interval)
-            setTaskStatus(prev => ({ ...prev, [task.id]: 'done' }))
-          }
-        }, 50)
-        timers.push(interval)
-      }, startDelay)
-      starters.push(st)
-    })
-
-    // Fire the actual pipeline
     onNotify?.('Genesis Engine initialising…', 'info')
     try {
-      const project = await forgePipeline({
-        project_title:         projectTitle || (file ? file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Genesis Project'),
-        global_aesthetic:      'Cinematic High-Contrast',
-        render_style:          renderStyle,
-        reference_style_image: null,
-        raw_character_notes:   docText,
-        raw_world_notes:       docText,
-        raw_script_text:       docText,
-      })
+      let finalProject: StoryboardProject | null = null
 
-      // Flash all tasks to done and inject real counts into labels
+      await forgePipelineStream(
+        {
+          project_title:         projectTitle || (file ? file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Genesis Project'),
+          global_aesthetic:      'Cinematic High-Contrast',
+          render_style:          renderStyle,
+          director_style:        directorStyle,
+          reference_style_image: null,
+          raw_character_notes:   docText,
+          raw_world_notes:       docText,
+          raw_script_text:       docText,
+        },
+        (ev) => {
+          if (ev.event === 'stage_start') {
+            const tasks = STAGE_TASKS[ev.stage] ?? []
+            markRunning(tasks)
+            const labels: Record<string, string> = {
+              chars:      'Extracting characters…',
+              world:      'Building world bible…',
+              storyboard: 'Generating storyboard…',
+              images:     `Generating images (0 / ${ev.total ?? '?'})…`,
+            }
+            setStatusLine(labels[ev.stage] ?? `Running ${ev.stage}…`)
+            if (ev.stage === 'images') setImagesTotal(ev.total ?? 0)
+          } else if (ev.event === 'stage_done') {
+            const tasks = STAGE_TASKS[ev.stage] ?? []
+            markDone(tasks)
+            if (ev.stage === 'chars')
+              setStatusLine(`${ev.count} character${ev.count !== 1 ? 's' : ''} extracted — building world…`)
+            else if (ev.stage === 'world')
+              setStatusLine(`${ev.count} environment${ev.count !== 1 ? 's' : ''} built — generating storyboard…`)
+            else if (ev.stage === 'storyboard') {
+              setStatusLine(`${ev.frames} frames across ${ev.scenes} scenes — generating images…`)
+              if (ev.truncated) setTruncated(true)
+            } else if (ev.stage === 'images')
+              setStatusLine('All images generated — saving project…')
+          } else if (ev.event === 'image_progress') {
+            setImagesDone(ev.done)
+            setImagesTotal(ev.total)
+            setStatusLine(`Generating images (${ev.done} / ${ev.total})…`)
+            // Pulse the style/workspace bars proportionally
+            const pct = ev.done / ev.total
+            setTaskProgress(prev => ({ ...prev, style: Math.min(pct * 1.5, 1), workspace: Math.min(pct * 0.8, 1) }))
+          } else if (ev.event === 'complete') {
+            finalProject = ev.project
+          } else if (ev.event === 'error') {
+            throw new Error(ev.detail)
+          }
+        }
+      )
+
+      if (!finalProject) throw new Error('Pipeline ended without a result.')
+
+      // Snap everything to done
       setTaskStatus(Object.fromEntries(TASKS.map(t => [t.id, 'done'])))
       setTaskProgress(Object.fromEntries(TASKS.map(t => [t.id, 1])))
-      timers.forEach(clearInterval)
-      const uniqueLocations = new Set(project.scenes.map(s => s.location_heading)).size
-      const totalFrames     = project.scenes.reduce((s, sc) => s + sc.frames.length, 0)
+      const uniqueLocations = new Set(finalProject.scenes.map(s => s.location_heading)).size
+      const totalFrames = finalProject.scenes.reduce((s, sc) => s + sc.frames.length, 0)
       setCounts({
-        chars:     project.characters.length,
+        chars:     finalProject.characters.length,
         locations: uniqueLocations,
-        scenes:    project.scenes.length,
+        scenes:    finalProject.scenes.length,
         frames:    totalFrames,
       })
-      if (project.truncated) setTruncated(true)
       onNotify?.('Genesis Engine complete ✓')
+      setStatusLine('Analysis complete!')
 
       // Countdown before report
       const SECS = 5
@@ -147,16 +200,12 @@ export default function GenesisEnginePage({
         if (remaining <= 0) {
           clearInterval(tick)
           setCountdown(null)
-          onComplete(project)
+          onComplete(finalProject!)
         } else {
           setCountdown(remaining)
         }
       }, 1000)
     } catch (err) {
-      // Stop all running and pending animations immediately
-      starters.forEach(clearTimeout)
-      timers.forEach(clearInterval)
-      // Snap all pending tasks back to pending state so nothing shows partial progress
       setTaskStatus(prev =>
         Object.fromEntries(Object.entries(prev).map(([id, s]) => [id, s === 'done' ? 'done' : 'pending']))
       )
@@ -413,10 +462,25 @@ export default function GenesisEnginePage({
                 </div>
               </div>
             ) : (
-              <div className="text-center" style={{ opacity: 0.5 }}>
+              <div className="text-center" style={{ opacity: 0.6 }}>
                 <span style={{ fontSize: 10, letterSpacing: '0.25em', color: 'var(--gold)', textTransform: 'uppercase' }}>
-                  {overallPct < 100 ? 'Genesis Engine is analysing your story…' : 'Preparing report…'}
+                  {statusLine}
                 </span>
+                {imagesTotal > 0 && imagesDone < imagesTotal && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ height: 2, background: 'var(--border)', borderRadius: 2, overflow: 'hidden', maxWidth: 300, margin: '0 auto' }}>
+                      <div style={{
+                        height: '100%', borderRadius: 2,
+                        width: `${Math.round((imagesDone / imagesTotal) * 100)}%`,
+                        background: 'linear-gradient(90deg, var(--gold-dim), var(--gold))',
+                        transition: 'width 300ms ease',
+                      }} />
+                    </div>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginTop: 4, display: 'block' }}>
+                      {imagesDone} / {imagesTotal} frames
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </>

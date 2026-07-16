@@ -9,6 +9,7 @@ Public API
 ----------
 balance_shot_distribution(scenes, thresholds, project_settings) -> list[ScriptSceneBase]
 compute_diversity_score(scenes) -> CompositionReport
+get_director_style_thresholds(style) -> tuple[dict, dict]
 """
 
 from __future__ import annotations
@@ -16,12 +17,132 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from app.schemas.storyboard import ScriptSceneBase
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Director Style — five creative voices, each with its own shot distribution.
+# These are the ceilings (max fraction) and floors (min fraction) that the
+# Shot Balancer enforces across the full storyboard.
+# ---------------------------------------------------------------------------
+
+DirectorStyle = Literal["balanced", "cinematic", "dialogue", "action", "intimate"]
+
+# (thresholds, floors) per style
+_DIRECTOR_STYLE_PROFILES: dict[str, tuple[dict[str, float], dict[str, float]]] = {
+    # Hollywood-standard mix: wides, mediums, inserts, close-ups in proportion
+    "balanced": (
+        {
+            "close":         0.10,   # Brief description: max 10% close-ups
+            "extreme_close": 0.05,
+            "medium":        0.40,
+            "wide":          0.40,
+            "establishing":  0.20,
+            "ots":           0.25,
+            "tracking":      0.20,
+            "insert":        0.12,
+            "pov":           0.10,
+            "drone":         0.10,
+        },
+        {
+            "wide":          0.15,
+            "establishing":  0.08,
+            "medium":        0.20,
+        },
+    ),
+    # Grand visuals: wides and establishing shots dominate
+    "cinematic": (
+        {
+            "close":         0.07,
+            "extreme_close": 0.03,
+            "medium":        0.30,
+            "wide":          0.50,
+            "establishing":  0.35,
+            "ots":           0.15,
+            "tracking":      0.25,
+            "insert":        0.10,
+            "pov":           0.08,
+            "drone":         0.15,
+        },
+        {
+            "wide":          0.25,
+            "establishing":  0.15,
+            "medium":        0.15,
+        },
+    ),
+    # Two-shots and OTS dominate; close-ups only for peaks
+    "dialogue": (
+        {
+            "close":         0.12,
+            "extreme_close": 0.04,
+            "medium":        0.45,
+            "wide":          0.20,
+            "establishing":  0.12,
+            "ots":           0.40,
+            "tracking":      0.08,
+            "insert":        0.15,
+            "pov":           0.12,
+            "drone":         0.05,
+        },
+        {
+            "wide":          0.08,
+            "establishing":  0.05,
+            "medium":        0.25,
+            "ots":           0.15,
+        },
+    ),
+    # Dynamic tracking, wides, dutch tilts; close-ups rare
+    "action": (
+        {
+            "close":         0.08,
+            "extreme_close": 0.04,
+            "medium":        0.25,
+            "wide":          0.45,
+            "establishing":  0.20,
+            "ots":           0.10,
+            "tracking":      0.35,
+            "insert":        0.10,
+            "pov":           0.15,
+            "drone":         0.15,
+        },
+        {
+            "wide":          0.20,
+            "tracking":      0.10,
+            "medium":        0.15,
+        },
+    ),
+    # Emotionally justified close-ups; still capped, no runaway close-up spam
+    "intimate": (
+        {
+            "close":         0.22,
+            "extreme_close": 0.08,
+            "medium":        0.35,
+            "wide":          0.20,
+            "establishing":  0.10,
+            "ots":           0.25,
+            "tracking":      0.10,
+            "insert":        0.18,
+            "pov":           0.12,
+            "drone":         0.05,
+        },
+        {
+            "wide":          0.08,
+            "establishing":  0.04,
+            "medium":        0.20,
+        },
+    ),
+}
+
+
+def get_director_style_thresholds(
+    style: str,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Return (thresholds, floors) for the given DirectorStyle slug."""
+    return _DIRECTOR_STYLE_PROFILES.get(style, _DIRECTOR_STYLE_PROFILES["balanced"])
 
 # ---------------------------------------------------------------------------
 # Shot-type taxonomy

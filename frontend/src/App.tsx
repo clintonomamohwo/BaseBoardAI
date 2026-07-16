@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import logoSrc from './assets/logo.png'
 import type { RenderStyle, StoryboardProject } from './types/storyboard'
+import type { DirectorStyle } from './pages/NewProjectPage'
 import { useDirectorsLight } from './hooks/useDirectorsLight'
 import { DEMO_PROJECT } from './data/demoProject'
 import LandingPage            from './pages/LandingPage'
@@ -28,7 +29,7 @@ type StudioTab = 'storyboard' | 'characters' | 'world-bible'
 
 interface Notif { id: number; message: string; type?: 'success' | 'info' }
 
-interface GenesisState { file: File | null; title: string; renderStyle: RenderStyle }
+interface GenesisState { file: File | null; title: string; renderStyle: RenderStyle; directorStyle: DirectorStyle }
 
 function getInitialDark(): boolean {
   const stored = localStorage.getItem('theme')
@@ -48,7 +49,7 @@ export default function App() {
   const [notifs, setNotifs]          = useState<Notif[]>([])
   const [notifId, setNotifId]        = useState(0)
   const [idle, setIdle]              = useState(false)
-  const [genesisState, setGenesisState] = useState<GenesisState>({ file: null, title: '', renderStyle: 'bw_sketch' })
+  const [genesisState, setGenesisState] = useState<GenesisState>({ file: null, title: '', renderStyle: 'bw_sketch', directorStyle: 'balanced' })
   // Completed project held for the Report screen before entering Studio
   const [pendingProject, setPending] = useState<StoryboardProject | null>(null)
 
@@ -103,8 +104,8 @@ export default function App() {
     setView('studio')
   }
 
-  function handleFileReady(file: File, title: string, renderStyle: RenderStyle = 'bw_sketch') {
-    setGenesisState({ file, title, renderStyle })
+  function handleFileReady(file: File, title: string, renderStyle: RenderStyle = 'bw_sketch', directorStyle: DirectorStyle = 'balanced') {
+    setGenesisState({ file, title, renderStyle, directorStyle })
     setView('genesis-running')
   }
 
@@ -160,6 +161,7 @@ export default function App() {
       file={genesisState.file}
       projectTitle={genesisState.title}
       renderStyle={genesisState.renderStyle}
+      directorStyle={genesisState.directorStyle}
       onComplete={handleGenesisComplete}
       onNotify={pushNotif}
       onLanding={() => setView('landing')}

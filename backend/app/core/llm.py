@@ -23,7 +23,8 @@ import re
 from typing import Any
 
 from fastapi import HTTPException
-from langchain_ibm import WatsonxLLM
+from langchain_ibm import ChatWatsonx
+from langchain_core.messages import HumanMessage
 from langchain_core.prompts import PromptTemplate
 
 from app.core.config import settings
@@ -73,18 +74,15 @@ def _should_fallback(exc: Exception) -> bool:
 # LLM client factory
 # ---------------------------------------------------------------------------
 
-def _build_llm(model_id: str | None = None, max_new_tokens: int = 4096) -> WatsonxLLM:
-    """Initialise and return a WatsonxLLM instance. Uses settings default when model_id is None."""
-    return WatsonxLLM(
+def _build_llm(model_id: str | None = None, max_new_tokens: int = 4096) -> ChatWatsonx:
+    """Initialise and return a ChatWatsonx instance. Uses settings default when model_id is None."""
+    return ChatWatsonx(
         model_id=model_id or settings.WATSONX_MODEL_ID,
         url=settings.WATSONX_URL,
         apikey=settings.WATSONX_API_KEY,
         project_id=settings.WATSONX_PROJECT_ID,
-        params={
-            "max_new_tokens": max_new_tokens,
-            "temperature": 0.2,
-            "decoding_method": "greedy",
-        },
+        max_tokens=max_new_tokens,
+        temperature=0.2,
     )
 
 
@@ -102,7 +100,8 @@ def _invoke_with_fallback(prompt_text: str, max_new_tokens: int = 4096) -> str:
     last_exc: Exception = RuntimeError("No models available.")
     for model_id in candidates:
         try:
-            return _build_llm(model_id, max_new_tokens=max_new_tokens).invoke(prompt_text)
+            response = _build_llm(model_id, max_new_tokens=max_new_tokens).invoke([HumanMessage(content=prompt_text)])
+            return response.content
         except Exception as exc:
             if _should_fallback(exc):
                 last_exc = exc
@@ -213,21 +212,49 @@ def invoke_world_stage(raw_notes: str) -> list[EnvironmentProfileBase]:
 # Stage 3 — Storyboard Orchestrator
 # ---------------------------------------------------------------------------
 
+# Per-style shot distribution guidance injected into STORYBOARD_PROMPT
+_STYLE_GUIDANCE: dict[str, str] = {
+    "balanced": (
+        "Target distribution: ~30% Wide/Establishing, ~25% Medium, ~15% Two-Shot/OTS, "
+        "~10% Tracking/Dolly, ~10% Insert/Detail, ~10% Close-Up max.\n"
+        "Close-Ups are reserved for genuine emotional peaks only."
+    ),
+    "cinematic": (
+        "Target distribution: ~35% Wide/Establishing, ~30% Medium, ~15% Tracking/Dolly, "
+        "~10% OTS, ~7% Insert, ~5% Close-Up max.\n"
+        "Prioritise grand establishing shots and environmental storytelling. Close-Ups extremely rare."
+    ),
+    "dialogue": (
+        "Target distribution: ~30% Medium, ~25% OTS/Two-Shot, ~20% Wide, "
+        "~12% Insert, ~10% Close-Up max, ~5% Tracking.\n"
+        "Vary OTS coverage — alternate A/B angles, wide callbacks, insert cutaways. Close-Ups only at emotional peaks."
+    ),
+    "action": (
+        "Target distribution: ~35% Wide, ~25% Tracking/Dolly, ~20% Medium, "
+        "~10% Establishing, ~5% POV, ~5% Close-Up max.\n"
+        "Emphasise movement, geography, and dynamic angles. Close-Ups extremely rare."
+    ),
+    "intimate": (
+        "Target distribution: ~30% Medium, ~22% Close-Up max, ~20% Wide, "
+        "~15% OTS, ~8% Insert, ~5% Tracking.\n"
+        "Close-Ups are permitted but must be emotionally justified — not used for simple reactions."
+    ),
+}
+
+
 def invoke_storyboard_stage(
     characters: list[CharacterProfileBase],
     environments: list[EnvironmentProfileBase],
     raw_script_text: str,
     global_aesthetic: str,
     render_style: str = 'bw_sketch',
+    director_style: str = 'balanced',
 ) -> tuple[list[ScriptSceneBase], bool]:
     """
     Run STORYBOARD_PROMPT with compiled character + world context and the raw screenplay.
     Returns a (scenes, truncated) tuple.
     `truncated` is True when the LLM output was cut off and only partial scenes were recovered.
     Raises HTTPException(502) on LLM or validation failure.
-
-    Characters and environments are serialised to compact JSON strings and injected
-    into the prompt so Granite can reference locked identifiers in action_breakdown.
     """
     try:
         character_context = json.dumps(
@@ -237,7 +264,10 @@ def invoke_storyboard_stage(
             [e.model_dump() for e in environments], indent=2
         )
         template = PromptTemplate(
-            input_variables=["character_context", "world_context", "raw_script_text", "global_aesthetic", "render_style"],
+            input_variables=[
+                "character_context", "world_context", "raw_script_text",
+                "global_aesthetic", "render_style", "director_style", "shot_distribution_guidance",
+            ],
             template=STORYBOARD_PROMPT,
         )
         prompt_text = template.format(
@@ -246,6 +276,8 @@ def invoke_storyboard_stage(
             raw_script_text=raw_script_text,
             global_aesthetic=global_aesthetic,
             render_style=render_style,
+            director_style=director_style,
+            shot_distribution_guidance=_STYLE_GUIDANCE.get(director_style, _STYLE_GUIDANCE["balanced"]),
         )
         raw_response = _invoke_with_fallback(prompt_text, max_new_tokens=16384)
         parsed, truncated = _parse_json_response(raw_response)

@@ -13,10 +13,20 @@ import type { DragEvent, ChangeEvent } from 'react'
 import { detectFormat, titleFromFilename } from '../utils/extractDocumentText'
 import type { RenderStyle } from '../types/storyboard'
 
+export type DirectorStyle = 'balanced' | 'cinematic' | 'dialogue' | 'action' | 'intimate'
+
 const STYLE_OPTIONS: { value: RenderStyle; label: string; description: string }[] = [
   { value: 'bw_sketch',   label: 'B&W Sketch',  description: 'Clean line art, no shading' },
   { value: 'flat_color',  label: 'Flat Color',   description: 'Cel-shaded, solid fills' },
   { value: 'full_shaded', label: 'Full Shaded',  description: 'Cinematic, volumetric light' },
+]
+
+const DIRECTOR_STYLE_OPTIONS: { value: DirectorStyle; label: string; description: string }[] = [
+  { value: 'balanced',  label: 'Balanced',  description: 'Hollywood-standard mix of wides, mediums & close-ups' },
+  { value: 'cinematic', label: 'Cinematic', description: 'Grand establishing shots, environmental storytelling' },
+  { value: 'dialogue',  label: 'Dialogue',  description: 'Two-shots, OTS coverage, varied conversation angles' },
+  { value: 'action',    label: 'Action',    description: 'Tracking shots, dynamic wides, minimal close-ups' },
+  { value: 'intimate',  label: 'Intimate',  description: 'Emotionally justified close-ups, personal framing' },
 ]
 
 const ACCEPTED   = '.pdf,.docx,.txt,.fdx,.md,.markdown'
@@ -101,17 +111,18 @@ Dialogue Notes: [Key exchanges or beats]
 `
 
 interface Props {
-  onFileReady:  (file: File, title: string, renderStyle: RenderStyle) => void
+  onFileReady:  (file: File, title: string, renderStyle: RenderStyle, directorStyle: DirectorStyle) => void
   onStartBlank: () => void
   onLanding:    () => void
 }
 
 export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }: Props) {
-  const [dragging,     setDragging]     = useState(false)
-  const [error,        setError]        = useState<string | null>(null)
-  const [hovered,      setHovered]      = useState<'upload' | 'template' | 'blank' | null>(null)
-  const [confirmed,    setConfirmed]    = useState<{ file: File; title: string } | null>(null)
-  const [renderStyle,  setRenderStyle]  = useState<RenderStyle>('bw_sketch')
+  const [dragging,       setDragging]       = useState(false)
+  const [error,          setError]          = useState<string | null>(null)
+  const [hovered,        setHovered]        = useState<'upload' | 'template' | 'blank' | null>(null)
+  const [confirmed,      setConfirmed]      = useState<{ file: File; title: string } | null>(null)
+  const [renderStyle,    setRenderStyle]    = useState<RenderStyle>('bw_sketch')
+  const [directorStyle,  setDirectorStyle]  = useState<DirectorStyle>('balanced')
 
   function validateAndAccept(file: File) {
     setError(null)
@@ -229,11 +240,50 @@ export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }:
                 </div>
               </div>
 
+              {/* Director Style selector */}
+              <div style={{ marginBottom: 4, marginTop: 8 }}>
+                <p style={{ fontSize: 9, letterSpacing: '0.3em', color: 'var(--gold)', textTransform: 'uppercase', opacity: 0.6, marginBottom: 10 }}>
+                  Director Style
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {DIRECTOR_STYLE_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setDirectorStyle(opt.value)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '9px 12px', borderRadius: 4, cursor: 'pointer',
+                        textAlign: 'left', transition: 'all 150ms ease',
+                        border: directorStyle === opt.value ? '1px solid var(--gold)' : '1px solid var(--border)',
+                        background: directorStyle === opt.value ? 'rgba(201,168,76,0.08)' : 'var(--bg-raised)',
+                      }}
+                      onMouseEnter={e => { if (directorStyle !== opt.value) e.currentTarget.style.borderColor = 'rgba(201,168,76,0.3)' }}
+                      onMouseLeave={e => { if (directorStyle !== opt.value) e.currentTarget.style.borderColor = 'var(--border)' }}
+                    >
+                      <div style={{
+                        width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                        background: directorStyle === opt.value ? 'var(--gold)' : 'var(--border)',
+                        transition: 'background 150ms ease',
+                      }} />
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: directorStyle === opt.value ? 'var(--gold)' : 'var(--text-base)', display: 'block', marginBottom: 1 }}>
+                          {opt.label}
+                        </span>
+                        <span style={{ fontSize: 10, color: 'var(--text-muted)', opacity: 0.65 }}>
+                          {opt.description}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div style={{ height: 1, background: 'var(--border)', margin: '16px 0', opacity: 0.6 }} />
             </div>
             <div style={{ padding: '0 28px 28px', display: 'flex', flexDirection: 'column', gap: 10 }}>
               <button className="btn-tactile gold-glow"
-                onClick={() => onFileReady(confirmed.file, confirmed.title, renderStyle)}
+                onClick={() => onFileReady(confirmed.file, confirmed.title, renderStyle, directorStyle)}
                 style={{ padding: '14px 24px', borderRadius: 4, border: '1px solid var(--gold)', background: 'var(--gold)', color: 'var(--bg-base)', fontSize: 12, letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 700, cursor: 'pointer', transition: 'background 150ms ease, color 150ms ease' }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--gold)' }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'var(--gold)'; e.currentTarget.style.color = 'var(--bg-base)' }}>

@@ -442,6 +442,9 @@ class PipelineExecutionRequest(BaseModel):
     render_style: Literal['bw_sketch', 'flat_color', 'full_shaded'] = Field(
         'bw_sketch', description="Visual rendering pipeline mode"
     )
+    director_style: Literal['balanced', 'cinematic', 'dialogue', 'action', 'intimate'] = Field(
+        'balanced', description="Director AI shot-planning style"
+    )
     reference_style_image: str | None = Field(
         None, description="Optional user-uploaded reference style image encoded as a Base64 data URL string."
     )

@@ -54,6 +54,59 @@ export async function forgePipeline(
   return handleResponse<StoryboardProject>(res)
 }
 
+export type PipelineProgressEvent =
+  | { event: 'stage_start'; stage: string; total?: number }
+  | { event: 'stage_done';  stage: string; count?: number; scenes?: number; frames?: number; truncated?: boolean }
+  | { event: 'image_progress'; done: number; total: number }
+  | { event: 'complete'; project: StoryboardProject }
+  | { event: 'error'; detail: string }
+
+export async function forgePipelineStream(
+  req: PipelineExecutionRequest,
+  onEvent: (e: PipelineProgressEvent) => void,
+): Promise<void> {
+  const res = await fetch(`${BASE_URL}/storyboard/forge-pipeline-stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok || !res.body) {
+    let detail = `HTTP ${res.status}`
+    try { const b = await res.json(); detail = b.detail ?? detail } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const messages = buf.split('\n\n')
+    buf = messages.pop() ?? ''
+    for (const msg of messages) {
+      if (!msg.trim()) continue
+      const eventLine = msg.match(/^event: (.+)$/m)?.[1]
+      const dataLine  = msg.match(/^data: (.+)$/ms)?.[1]
+      if (!eventLine || !dataLine) continue
+      try {
+        const parsed = JSON.parse(dataLine)
+        if (eventLine === 'complete') {
+          onEvent({ event: 'complete', project: parsed as StoryboardProject })
+        } else if (eventLine === 'error') {
+          onEvent({ event: 'error', detail: parsed.detail })
+        } else if (eventLine === 'stage_start') {
+          onEvent({ event: 'stage_start', stage: parsed.stage, total: parsed.total })
+        } else if (eventLine === 'stage_done') {
+          onEvent({ event: 'stage_done', ...parsed })
+        } else if (eventLine === 'image_progress') {
+          onEvent({ event: 'image_progress', done: parsed.done, total: parsed.total })
+        }
+      } catch { /* malformed SSE chunk — skip */ }
+    }
+  }
+}
+
 export async function listProjects(): Promise<StoryboardProject[]> {
   const res = await fetch(`${BASE_URL}/storyboard/`)
   return handleResponse<StoryboardProject[]>(res)

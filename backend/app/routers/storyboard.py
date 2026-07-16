@@ -8,8 +8,10 @@ DB dependency:     app.db.session.get_db
 
 from __future__ import annotations
 
-from typing import Annotated
+import json
+from typing import Annotated, Generator
 from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
@@ -707,6 +709,104 @@ def _load_project_or_404(db_id: int, db: Session) -> StoryboardProjectORM:
 # Core AI Orchestration Pipelines (New Features)
 # ---------------------------------------------------------------------------
 
+def _sse(event: str, data: dict) -> str:
+    """Format a single SSE message."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@router.post(
+    "/forge-pipeline-stream",
+    summary="Execute full 3-stage AI pipeline with SSE progress stream",
+)
+def forge_storyboard_pipeline_stream(
+    payload: PipelineExecutionRequest,
+    db: DbSession,
+) -> StreamingResponse:
+    """
+    Streams Server-Sent Events as each stage of the pipeline completes:
+      stage_start / stage_done  — for each of the 3 LLM stages + image gen
+      image_progress            — fires after each frame image is generated
+      complete                  — final payload with the full project JSON
+      error                     — on any failure
+    """
+    def generate() -> Generator[str, None, None]:
+        try:
+            # ── Stage 1: Characters ──────────────────────────────────────────
+            yield _sse("stage_start", {"stage": "chars"})
+            characters = invoke_character_stage(payload.raw_character_notes)
+            yield _sse("stage_done", {"stage": "chars", "count": len(characters)})
+
+            # ── Stage 2: World ───────────────────────────────────────────────
+            yield _sse("stage_start", {"stage": "world"})
+            environments = invoke_world_stage(payload.raw_world_notes)
+            yield _sse("stage_done", {"stage": "world", "count": len(environments)})
+
+            # ── Stage 3: Storyboard ──────────────────────────────────────────
+            yield _sse("stage_start", {"stage": "storyboard"})
+            director_style = getattr(payload, "director_style", "balanced")
+            scenes, storyboard_truncated = invoke_storyboard_stage(
+                characters, environments, payload.raw_script_text,
+                payload.global_aesthetic, payload.render_style, director_style,
+            )
+            total_frames = sum(len(s.frames) for s in scenes)
+            yield _sse("stage_done", {
+                "stage": "storyboard",
+                "scenes": len(scenes),
+                "frames": total_frames,
+                "truncated": storyboard_truncated,
+            })
+
+            # ── Director Engine ──────────────────────────────────────────────
+            from app.core.identity_system import get_director_hints
+            character_hints: dict[str, dict] = {
+                char.id: get_director_hints(
+                    classification=char.classification,
+                    abilities=list(char.abilities or []),
+                    physical_form=(char.physical_form.form if char.physical_form else "humanoid"),
+                )
+                for char in characters
+            }
+            scenes = direct_storyboard(scenes, character_hints=character_hints, director_style=director_style)
+            canon = _build_canon(characters, environments, payload.global_aesthetic, payload.render_style, scenes)
+            canon_context = canon.model_dump()
+
+            # ── Image generation — one event per frame ───────────────────────
+            yield _sse("stage_start", {"stage": "images", "total": total_frames})
+            done_count = 0
+            for scene in scenes:
+                for frame in scene.frames:
+                    frame.generated_image_url = generate_frame_image(
+                        frame, scene,
+                        reference_style_image=payload.reference_style_image,
+                        render_style=payload.render_style,
+                        canon_context=canon_context,
+                    )
+                    done_count += 1
+                    yield _sse("image_progress", {"done": done_count, "total": total_frames})
+
+            yield _sse("stage_done", {"stage": "images"})
+
+            # ── Persist ──────────────────────────────────────────────────────
+            project_data = StoryboardProjectCreate(
+                project_title=payload.project_title,
+                global_aesthetic=payload.global_aesthetic,
+                render_style=payload.render_style,
+                characters=characters,
+                scenes=scenes,
+            )
+            project = _build_project_orm(project_data, canon=canon)
+            db.add(project)
+            db.commit()
+            response = _orm_to_response(_load_project_or_404(project.db_id, db))
+            response.truncated = storyboard_truncated
+            yield _sse("complete", response.model_dump())
+
+        except Exception as exc:
+            yield _sse("error", {"detail": str(exc)})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
 @router.post(
     "/forge-pipeline",
     response_model=StoryboardProjectResponse,
@@ -728,14 +828,12 @@ def forge_storyboard_pipeline(
     """
     characters = invoke_character_stage(payload.raw_character_notes)
     environments = invoke_world_stage(payload.raw_world_notes)
+    director_style = getattr(payload, "director_style", "balanced")
     scenes, storyboard_truncated = invoke_storyboard_stage(
         characters, environments, payload.raw_script_text, payload.global_aesthetic,
-        payload.render_style,
+        payload.render_style, director_style,
     )
 
-    # ── Build character hints for the Director Engine from the CKM ────────
-    # Fix 1: extract classification + abilities for every character so the
-    # Director Engine can apply shot biases before image generation.
     from app.core.identity_system import get_director_hints
     character_hints: dict[str, dict] = {
         char.id: get_director_hints(
@@ -746,8 +844,7 @@ def forge_storyboard_pipeline(
         for char in characters
     }
 
-    # ── Director Engine: plan compositions + lenses before image generation ──
-    scenes = direct_storyboard(scenes, character_hints=character_hints)
+    scenes = direct_storyboard(scenes, character_hints=character_hints, director_style=director_style)
 
     # ── Build Project Canon from pipeline outputs ──────────────────────────
     # The canon is constructed silently here — it encodes every approved fact

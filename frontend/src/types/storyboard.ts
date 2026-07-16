@@ -387,6 +387,7 @@ export interface PipelineExecutionRequest {
   project_title: string
   global_aesthetic: string
   render_style: RenderStyle
+  director_style?: 'balanced' | 'cinematic' | 'dialogue' | 'action' | 'intimate'
   reference_style_image: string | null
   raw_character_notes: string
   raw_world_notes: string
