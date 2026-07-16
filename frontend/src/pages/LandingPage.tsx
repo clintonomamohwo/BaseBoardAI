@@ -38,9 +38,18 @@ export default function LandingPage({ onNewProject, onEnter, onDemo, idle = fals
 
       {/* Top bar */}
       <div className="absolute top-6 left-8 right-8 flex items-center justify-between z-10">
-        <div className="flex items-center gap-2">
+        <div
+          className="flex items-center gap-2"
+          style={{ cursor: 'default', transition: 'filter 0.25s ease' }}
+          onMouseEnter={e => {
+            (e.currentTarget as HTMLDivElement).style.filter = 'drop-shadow(0 0 6px rgba(201,168,76,0.7))'
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLDivElement).style.filter = 'none'
+          }}
+        >
           <img src={logoSrc} alt="Baseboard AI" style={{ width: 22, height: 22, objectFit: 'contain', filter: 'drop-shadow(0 0 2px rgba(201,168,76,0.5))' }} />
-          <span style={{ fontSize: 10, letterSpacing: '0.3em', color: 'var(--gold)', opacity: 0.7, textTransform: 'uppercase' }}>
+          <span style={{ fontSize: 10, letterSpacing: '0.3em', color: 'var(--gold)', opacity: 0.7, textTransform: 'uppercase', transition: 'opacity 0.25s ease, text-shadow 0.25s ease' }}>
             BASEBOARD AI
           </span>
         </div>

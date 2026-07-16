@@ -73,7 +73,7 @@ def _should_fallback(exc: Exception) -> bool:
 # LLM client factory
 # ---------------------------------------------------------------------------
 
-def _build_llm(model_id: str | None = None) -> WatsonxLLM:
+def _build_llm(model_id: str | None = None, max_new_tokens: int = 4096) -> WatsonxLLM:
     """Initialise and return a WatsonxLLM instance. Uses settings default when model_id is None."""
     return WatsonxLLM(
         model_id=model_id or settings.WATSONX_MODEL_ID,
@@ -81,14 +81,14 @@ def _build_llm(model_id: str | None = None) -> WatsonxLLM:
         apikey=settings.WATSONX_API_KEY,
         project_id=settings.WATSONX_PROJECT_ID,
         params={
-            "max_new_tokens": 4096,
+            "max_new_tokens": max_new_tokens,
             "temperature": 0.2,
             "decoding_method": "greedy",
         },
     )
 
 
-def _invoke_with_fallback(prompt_text: str) -> str:
+def _invoke_with_fallback(prompt_text: str, max_new_tokens: int = 4096) -> str:
     """
     Invoke the LLM with automatic model fallback on 429 rate-limit errors.
 
@@ -102,7 +102,7 @@ def _invoke_with_fallback(prompt_text: str) -> str:
     last_exc: Exception = RuntimeError("No models available.")
     for model_id in candidates:
         try:
-            return _build_llm(model_id).invoke(prompt_text)
+            return _build_llm(model_id, max_new_tokens=max_new_tokens).invoke(prompt_text)
         except Exception as exc:
             if _should_fallback(exc):
                 last_exc = exc
@@ -116,18 +116,23 @@ def _invoke_with_fallback(prompt_text: str) -> str:
 # JSON response parser
 # ---------------------------------------------------------------------------
 
-def _parse_json_response(raw: str) -> Any:
+def _parse_json_response(raw: str) -> tuple[Any, bool]:
     """
     Extract and parse JSON from the LLM response.
     1. Strip markdown code fences if present.
     2. If that fails, extract the first [...] or {...} block from the text (fallback
        for models that prepend prose despite instructions).
+    3. If the JSON is truncated (model hit token limit mid-output), recover any
+       fully-formed leading objects from an array before raising.
+
+    Returns a (parsed_value, truncated) tuple.
+    `truncated` is True only when path 3 (truncation recovery) was used.
     Raises ValueError with context if all attempts fail.
     """
     cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned.strip())
     try:
-        return json.loads(cleaned)
+        return json.loads(cleaned), False
     except json.JSONDecodeError:
         pass
 
@@ -135,9 +140,23 @@ def _parse_json_response(raw: str) -> Any:
     match = re.search(r"(\[.*\]|\{.*\})", raw, flags=re.DOTALL)
     if match:
         try:
-            return json.loads(match.group(1))
+            return json.loads(match.group(1)), False
         except json.JSONDecodeError:
             pass
+
+    # Truncation recovery: the model was cut off mid-output (token limit hit).
+    # Find the last closing brace }, close the array there, and parse what we have.
+    array_start = raw.find("[")
+    if array_start != -1:
+        last_brace = raw.rfind("}")
+        if last_brace != -1 and last_brace > array_start:
+            attempt = raw[array_start : last_brace + 1] + "\n]"
+            try:
+                result = json.loads(attempt)
+                if isinstance(result, list) and result:
+                    return result, True  # partial recovery — caller must warn user
+            except json.JSONDecodeError:
+                pass
 
     raise ValueError(f"LLM returned invalid JSON.\nRaw output:\n{raw[:500]}")
 
@@ -155,7 +174,7 @@ def invoke_character_stage(raw_notes: str) -> list[CharacterProfileBase]:
     try:
         prompt_text = CHARACTER_PROMPT.format(raw_character_notes=raw_notes)
         raw_response = _invoke_with_fallback(prompt_text)
-        parsed = _parse_json_response(raw_response)
+        parsed, _ = _parse_json_response(raw_response)
         if not isinstance(parsed, list):
             parsed = [parsed]
         return [CharacterProfileBase.model_validate(item) for item in parsed]
@@ -179,7 +198,7 @@ def invoke_world_stage(raw_notes: str) -> list[EnvironmentProfileBase]:
     try:
         prompt_text = WORLD_PROMPT.format(raw_world_notes=raw_notes)
         raw_response = _invoke_with_fallback(prompt_text)
-        parsed = _parse_json_response(raw_response)
+        parsed, _ = _parse_json_response(raw_response)
         if not isinstance(parsed, list):
             parsed = [parsed]
         return [EnvironmentProfileBase.model_validate(item) for item in parsed]
@@ -200,10 +219,11 @@ def invoke_storyboard_stage(
     raw_script_text: str,
     global_aesthetic: str,
     render_style: str = 'bw_sketch',
-) -> list[ScriptSceneBase]:
+) -> tuple[list[ScriptSceneBase], bool]:
     """
     Run STORYBOARD_PROMPT with compiled character + world context and the raw screenplay.
-    Returns a validated list of ScriptSceneBase objects.
+    Returns a (scenes, truncated) tuple.
+    `truncated` is True when the LLM output was cut off and only partial scenes were recovered.
     Raises HTTPException(502) on LLM or validation failure.
 
     Characters and environments are serialised to compact JSON strings and injected
@@ -227,11 +247,11 @@ def invoke_storyboard_stage(
             global_aesthetic=global_aesthetic,
             render_style=render_style,
         )
-        raw_response = _invoke_with_fallback(prompt_text)
-        parsed = _parse_json_response(raw_response)
+        raw_response = _invoke_with_fallback(prompt_text, max_new_tokens=16384)
+        parsed, truncated = _parse_json_response(raw_response)
         if not isinstance(parsed, list):
             parsed = [parsed]
-        return [ScriptSceneBase.model_validate(item) for item in parsed]
+        return [ScriptSceneBase.model_validate(item) for item in parsed], truncated
     except Exception as e:
         raise HTTPException(
             status_code=502,

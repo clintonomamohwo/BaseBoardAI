@@ -199,9 +199,15 @@ export default function App() {
       <header className="flex items-center flex-shrink-0 px-5" style={{ height: 44, borderBottom: '1px solid var(--border)' }}>
         <button onClick={() => setView('landing')} className="flex items-center gap-2 mr-6 group btn-tactile">
           <div className="w-7 h-7 rounded-sm flex items-center justify-center transition-all"
-            style={{ background: 'var(--bg-raised)', border: '1px solid var(--gold)', opacity: 0.7 }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
-            onMouseLeave={e => (e.currentTarget.style.opacity = '0.7')}
+            style={{ background: 'var(--bg-raised)', border: '1px solid var(--gold)', opacity: 0.7, transition: 'opacity 0.25s ease, box-shadow 0.25s ease' }}
+            onMouseEnter={e => {
+              e.currentTarget.style.opacity = '1'
+              e.currentTarget.style.boxShadow = '0 0 8px rgba(201,168,76,0.5)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.opacity = '0.7'
+              e.currentTarget.style.boxShadow = 'none'
+            }}
           >
             <img src={logoSrc} alt="Baseboard AI" style={{ width: 18, height: 18, objectFit: 'contain', filter: 'drop-shadow(0 0 2px rgba(201,168,76,0.5))' }} />
           </div>

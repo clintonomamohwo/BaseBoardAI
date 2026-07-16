@@ -321,7 +321,7 @@ def generate_character_overview(
             bone_structure=bone, distinct_markers=markers, wardrobe=wardrobe,
         )
         raw = _invoke_with_fallback(prompt_text)
-        parsed = _parse_json_response(raw)
+        parsed, _ = _parse_json_response(raw)
         if isinstance(parsed, list):
             parsed = parsed[0]
         return parsed
@@ -728,7 +728,7 @@ def forge_storyboard_pipeline(
     """
     characters = invoke_character_stage(payload.raw_character_notes)
     environments = invoke_world_stage(payload.raw_world_notes)
-    scenes = invoke_storyboard_stage(
+    scenes, storyboard_truncated = invoke_storyboard_stage(
         characters, environments, payload.raw_script_text, payload.global_aesthetic,
         payload.render_style,
     )
@@ -774,7 +774,9 @@ def forge_storyboard_pipeline(
     project = _build_project_orm(project_data, canon=canon)
     db.add(project)
     db.commit()
-    return _orm_to_response(_load_project_or_404(project.db_id, db))
+    response = _orm_to_response(_load_project_or_404(project.db_id, db))
+    response.truncated = storyboard_truncated
+    return response
 
 
 @router.post(
@@ -810,7 +812,7 @@ def forge_standalone_storyboard(payload: StandaloneStoryboardRequest) -> Storybo
     STORYBOARD_PROMPT. Director Engine runs before image generation.
     Returns an unsaved project (db_id=None); no DB write.
     """
-    scenes = invoke_storyboard_stage(
+    scenes, storyboard_truncated = invoke_storyboard_stage(
         payload.characters, [], payload.raw_script_text, payload.global_aesthetic,
         DEFAULT_RENDER_STYLE,
     )
@@ -830,6 +832,7 @@ def forge_standalone_storyboard(payload: StandaloneStoryboardRequest) -> Storybo
         characters=payload.characters,
         scenes=scenes,
         db_id=None,
+        truncated=storyboard_truncated,
     )
 
 
@@ -964,7 +967,7 @@ def regenerate_visual_action(
 
     try:
         raw = _invoke_with_fallback(prompt_text)
-        parsed = _parse_json_response(raw)
+        parsed, _ = _parse_json_response(raw)
         if isinstance(parsed, list):
             parsed = parsed[0]
     except Exception as e:
@@ -1000,7 +1003,7 @@ def import_world_bible(payload: WorldBibleImportRequest) -> WorldBibleImportResu
     try:
         prompt_text = WORLD_BIBLE_IMPORT_PROMPT.format(raw_text=payload.raw_text[:8000])
         raw = _invoke_with_fallback(prompt_text)
-        parsed = _parse_json_response(raw)
+        parsed, _ = _parse_json_response(raw)
         if isinstance(parsed, list):
             parsed = parsed[0]
     except Exception as e:
@@ -1130,7 +1133,7 @@ Return only the JSON object. Nothing else."""
 
     try:
         raw = _invoke_with_fallback(consistency_prompt)
-        parsed = _parse_json_response(raw)
+        parsed, _ = _parse_json_response(raw)
         if isinstance(parsed, list):
             parsed = parsed[0]
 
@@ -1235,7 +1238,7 @@ def import_character_asset(payload: ImportAssetRequest) -> ImportAssetResponse:
         )
         try:
             raw = _invoke_with_fallback(extraction_prompt)
-            parsed = _parse_json_response(raw)
+            parsed, _ = _parse_json_response(raw)
             if isinstance(parsed, list):
                 parsed = parsed[0]
             # Only carry over recognised identity fields
