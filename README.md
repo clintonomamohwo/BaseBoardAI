@@ -67,6 +67,7 @@ POLLINATIONS_HEIGHT=512
 Start the backend:
 
 ```bash
+source .venv/bin/activate    
 uvicorn app.main:app --reload
 # API runs at  http://localhost:8000
 # Auto-docs at http://localhost:8000/docs
