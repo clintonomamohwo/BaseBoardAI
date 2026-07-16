@@ -7,30 +7,56 @@ These four layers are always independent — changing one never overwrites the o
 Architecture
 ------------
   Identity       — who they ARE (face, proportions, markers, signature features)
-  Species        — what anatomy they have (human, elf, wolf, dragon, robot …)
+  Species        — what anatomy they have (human, elf, wolf, dragon, robot, horse …)
   Variants       — how they are dressed/aged/transformed at a given point
   Rendering Style— the artistic register (anime, sketch, painterly, 3D …)
+
+QA Engine (v2)
+--------------
+  Project-Aware Visual QA — validates every generated image against the Project Canon.
+  Does NOT assume human anatomy. Asset type determines which structural validator loads:
+
+    asset_type='character'  → CharacterValidator  (humanoids: human, elf, vampire …)
+    asset_type='creature'   → CreatureValidator   (non-humanoid fantasy: dragon, wolf …)
+    asset_type='animal'     → AnimalValidator     (real-world animals: horse, cat …)
+    asset_type='robot'      → RobotValidator      (mechanical constructs, androids …)
+    asset_type='vehicle'    → VehicleValidator    (cars, ships, spacecraft …)
+
+  Nine scored categories (weights sum to 1.0):
+    identity, species, anatomy, composition, camera, lighting, props, environment, continuity
+
+  Every category that scores < 0.85 produces a QARepairAction with:
+    - label   → human-readable fix ("Regenerate Composition Only")
+    - endpoint → the exact API endpoint to call
+    - severity → 'critical' | 'warning' | 'suggestion'
 
 Public API
 ----------
   SPECIES_REGISTRY            — built-in species profiles (defaulting to human)
+  VEHICLE_REGISTRY            — built-in vehicle type profiles
+  ANIMAL_REGISTRY             — built-in animal type profiles
+  get_species(species_id)     — returns species profile, falls back to human
   build_identity_prompt(identity, species_id, variant, render_style) -> str
-  compute_qa_score(frame_desc, identity, species_id, variant) -> QAScoreResult
+  compute_qa_score(
+      generated_prompt, identity, species_id, variant,
+      asset_type, scene_context, camera_spec
+  ) -> QAScoreResult
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from app.schemas.storyboard import (
         CharacterIdentity,
         CharacterVariant,
+        QARepairAction,
         QAScoreResult,
     )
 
 # ---------------------------------------------------------------------------
-# Species Registry — built-in profiles
+# Species Registry — humanoids & fantasy creatures
 # Default species is Human; all characters are Human unless overridden.
 # ---------------------------------------------------------------------------
 
@@ -42,6 +68,8 @@ SPECIES_REGISTRY: dict[str, dict[str, Any]] = {
         "anatomy_notes": "Standard bipedal human anatomy. No tail, no wings, no horns.",
         "ear_shape": "standard rounded",
         "extra_features": [],
+        "required_features": [],
+        "forbidden_features": ["tail", "wings", "horns", "snout", "scales", "fangs", "fur", "claws"],
         "qa_anatomy_rules": [
             "exactly 2 arms",
             "exactly 2 legs",
@@ -50,7 +78,7 @@ SPECIES_REGISTRY: dict[str, dict[str, Any]] = {
             "no horns",
             "human ear shape",
         ],
-        "prompt_prefix": "",   # no extra prefix needed for humans
+        "prompt_prefix": "",
     },
     "elf": {
         "id": "elf",
@@ -59,6 +87,8 @@ SPECIES_REGISTRY: dict[str, dict[str, Any]] = {
         "anatomy_notes": "Human base with pointed ears, slightly elongated proportions.",
         "ear_shape": "pointed, elongated",
         "extra_features": ["pointed ears", "elongated limbs"],
+        "required_features": ["pointed ears"],
+        "forbidden_features": ["tail", "wings", "scales", "fur", "snout"],
         "qa_anatomy_rules": [
             "exactly 2 arms",
             "exactly 2 legs",
@@ -76,6 +106,8 @@ SPECIES_REGISTRY: dict[str, dict[str, Any]] = {
         "anatomy_notes": "Fur-covered, canine features, tail present.",
         "ear_shape": "pointed canine",
         "extra_features": ["fur", "tail", "snout", "canine teeth"],
+        "required_features": ["fur", "tail"],
+        "forbidden_features": ["wings", "scales", "mechanical", "metal"],
         "qa_anatomy_rules": [
             "fur texture visible",
             "tail present",
@@ -91,6 +123,8 @@ SPECIES_REGISTRY: dict[str, dict[str, Any]] = {
         "anatomy_notes": "Large scaled creature with wings, tail, and horns.",
         "ear_shape": "horned",
         "extra_features": ["wings", "tail", "scales", "horns", "claws"],
+        "required_features": ["wings", "scales", "tail"],
+        "forbidden_features": ["fur", "mechanical", "metal plating"],
         "qa_anatomy_rules": [
             "wings present",
             "tail present",
@@ -107,6 +141,8 @@ SPECIES_REGISTRY: dict[str, dict[str, Any]] = {
         "anatomy_notes": "Mechanical limbs, sensor array, no biological anatomy.",
         "ear_shape": "sensor panel or none",
         "extra_features": ["mechanical joints", "sensors", "plating", "LED indicators"],
+        "required_features": ["mechanical", "metal"],
+        "forbidden_features": ["skin", "hair", "organic", "fur", "scales", "wings", "tail"],
         "qa_anatomy_rules": [
             "mechanical limb construction",
             "no organic skin texture",
@@ -121,6 +157,8 @@ SPECIES_REGISTRY: dict[str, dict[str, Any]] = {
         "anatomy_notes": "Human base with pale skin, fangs, and often sharp features.",
         "ear_shape": "slightly pointed",
         "extra_features": ["fangs", "pale complexion", "sharp features"],
+        "required_features": ["pale", "fangs"],
+        "forbidden_features": ["tail", "wings", "scales", "fur"],
         "qa_anatomy_rules": [
             "pale complexion",
             "fangs visible or implied",
@@ -135,6 +173,107 @@ SPECIES_REGISTRY: dict[str, dict[str, Any]] = {
         "anatomy_notes": "Custom species — anatomy defined by user notes.",
         "ear_shape": "user-defined",
         "extra_features": [],
+        "required_features": [],
+        "forbidden_features": [],
+        "qa_anatomy_rules": [],
+        "prompt_prefix": "",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Vehicle Registry — no biological anatomy assumed
+# ---------------------------------------------------------------------------
+
+VEHICLE_REGISTRY: dict[str, dict[str, Any]] = {
+    "car": {
+        "id": "car",
+        "label": "Car / Road Vehicle",
+        "required_features": ["wheels", "body panel", "windscreen"],
+        "forbidden_features": ["wings", "fins", "organic", "fur", "skin"],
+        "qa_anatomy_rules": ["4 wheels visible", "body panel present", "windscreen present"],
+        "prompt_prefix": "automobile, road vehicle, ",
+    },
+    "spacecraft": {
+        "id": "spacecraft",
+        "label": "Spacecraft",
+        "required_features": ["hull", "thruster", "cockpit"],
+        "forbidden_features": ["wheels", "organic", "fur", "skin"],
+        "qa_anatomy_rules": ["hull structure present", "thruster or engine visible"],
+        "prompt_prefix": "spacecraft, futuristic vessel, ",
+    },
+    "ship": {
+        "id": "ship",
+        "label": "Naval Vessel / Ship",
+        "required_features": ["hull", "deck"],
+        "forbidden_features": ["wheels", "wings", "organic"],
+        "qa_anatomy_rules": ["hull present", "deck or mast visible"],
+        "prompt_prefix": "naval vessel, ship, ",
+    },
+    "aircraft": {
+        "id": "aircraft",
+        "label": "Aircraft / Plane",
+        "required_features": ["wings", "fuselage"],
+        "forbidden_features": ["wheels on body", "organic", "fur"],
+        "qa_anatomy_rules": ["wings present", "fuselage visible", "no biological anatomy"],
+        "prompt_prefix": "aircraft, airplane, ",
+    },
+    "mech": {
+        "id": "mech",
+        "label": "Mech / Giant Robot",
+        "required_features": ["mechanical joints", "cockpit", "armour plating"],
+        "forbidden_features": ["organic", "fur", "skin", "scales"],
+        "qa_anatomy_rules": ["mechanical construction", "armour plating", "cockpit or pilot hatch"],
+        "prompt_prefix": "giant mech, mechanical suit, armour plating, ",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Animal Registry — real-world animals
+# ---------------------------------------------------------------------------
+
+ANIMAL_REGISTRY: dict[str, dict[str, Any]] = {
+    "horse": {
+        "id": "horse",
+        "label": "Horse / Equine",
+        "limbs": "4 legs",
+        "required_features": ["mane", "hooves", "4 legs"],
+        "forbidden_features": ["wings", "scales", "mechanical", "fangs"],
+        "qa_anatomy_rules": ["4 legs visible", "mane present", "hooves"],
+        "prompt_prefix": "horse, equine, four-legged, hooves, mane, ",
+    },
+    "cat": {
+        "id": "cat",
+        "label": "Cat / Feline",
+        "limbs": "4 legs",
+        "required_features": ["pointed ears", "tail", "fur", "whiskers"],
+        "forbidden_features": ["wings", "scales", "mechanical", "horns"],
+        "qa_anatomy_rules": ["4 legs", "pointed ears", "tail present", "fur texture"],
+        "prompt_prefix": "cat, feline, four-legged, fur, whiskers, ",
+    },
+    "dog": {
+        "id": "dog",
+        "label": "Dog / Canine",
+        "limbs": "4 legs",
+        "required_features": ["fur", "tail", "snout"],
+        "forbidden_features": ["wings", "scales", "mechanical", "horns"],
+        "qa_anatomy_rules": ["4 legs", "snout", "tail present", "fur texture"],
+        "prompt_prefix": "dog, canine, four-legged, fur, snout, ",
+    },
+    "bird": {
+        "id": "bird",
+        "label": "Bird / Avian",
+        "limbs": "2 wings, 2 legs",
+        "required_features": ["wings", "beak", "feathers"],
+        "forbidden_features": ["fur", "scales", "mechanical", "teeth"],
+        "qa_anatomy_rules": ["wings present", "beak visible", "feathers"],
+        "prompt_prefix": "bird, avian, wings, beak, feathers, ",
+    },
+    "custom_animal": {
+        "id": "custom_animal",
+        "label": "Custom Animal",
+        "limbs": "user-defined",
+        "required_features": [],
+        "forbidden_features": [],
         "qa_anatomy_rules": [],
         "prompt_prefix": "",
     },
@@ -142,10 +281,20 @@ SPECIES_REGISTRY: dict[str, dict[str, Any]] = {
 
 DEFAULT_SPECIES_ID = "human"
 
+# All registries merged for unified lookup
+_ALL_REGISTRIES: dict[str, dict[str, Any]] = {
+    **SPECIES_REGISTRY,
+    **VEHICLE_REGISTRY,
+    **ANIMAL_REGISTRY,
+}
+
 
 def get_species(species_id: str) -> dict[str, Any]:
-    """Return the species profile for the given id. Falls back to human."""
-    return SPECIES_REGISTRY.get(species_id.lower(), SPECIES_REGISTRY[DEFAULT_SPECIES_ID])
+    """
+    Return the profile for the given species/asset id.
+    Falls back to human for unknown ids.
+    """
+    return _ALL_REGISTRIES.get(species_id.lower(), SPECIES_REGISTRY[DEFAULT_SPECIES_ID])
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +314,7 @@ def build_identity_prompt(
       1. Species prefix (anatomy constraints)
       2. Core identity (face, proportions, markers, hair, eyes)
       3. Active variant overrides (outfit, hair colour, accessories, age)
-      4. Render style modifier
+      4. Render style modifier (prepended by prompt_builder — not duplicated here)
 
     Only the variant layer changes per scene. Identity and species never change.
     """
@@ -173,7 +322,7 @@ def build_identity_prompt(
 
     # ── Layer 1: Species ──────────────────────────────────────────────────────
     parts: list[str] = []
-    if species["prompt_prefix"]:
+    if species.get("prompt_prefix"):
         parts.append(species["prompt_prefix"].rstrip(", "))
 
     # ── Layer 2: Core Identity ────────────────────────────────────────────────
@@ -199,7 +348,6 @@ def build_identity_prompt(
         if variant.outfit:
             parts.append(f"wearing {variant.outfit}")
         if variant.hair_override:
-            # Replace hair_description with the variant override
             parts = [p for p in parts if p != identity.hair_description]
             parts.append(variant.hair_override)
         if variant.age_override is not None:
@@ -209,60 +357,121 @@ def build_identity_prompt(
             parts.append(extra)
         if variant.species_override:
             override_species = get_species(variant.species_override)
-            if override_species["prompt_prefix"]:
+            if override_species.get("prompt_prefix"):
                 parts.insert(0, override_species["prompt_prefix"].rstrip(", "))
-
-    # ── Layer 4: Render style modifier ───────────────────────────────────────
-    # (style prefix is prepended by prompt_builder — not duplicated here)
 
     return ", ".join(p.strip() for p in parts if p.strip())
 
 
 # ---------------------------------------------------------------------------
-# QA scoring (heuristic — no vision model required at v1)
+# QA Engine v2 — Project-Aware Visual QA
 # ---------------------------------------------------------------------------
 
-# Weights for each QA category
+# 9-category weight table.  Weights sum to 1.0.
 _QA_WEIGHTS: dict[str, float] = {
-    "identity":    0.30,
-    "species":     0.15,
-    "anatomy":     0.15,
-    "composition": 0.15,
-    "lighting":    0.10,
-    "props":       0.05,
-    "continuity":  0.10,
+    "identity":    0.25,
+    "species":     0.12,
+    "anatomy":     0.13,
+    "composition": 0.12,
+    "camera":      0.08,
+    "lighting":    0.08,
+    "props":       0.07,
+    "environment": 0.07,
+    "continuity":  0.08,
 }
 
+# Score thresholds for repair action severity
+_CRITICAL_THRESHOLD   = 0.50
+_WARNING_THRESHOLD    = 0.75
+_SUGGESTION_THRESHOLD = 0.85
 
-def compute_qa_score(
-    generated_prompt: str,
+# Targeted repair action catalogue
+# Maps category → (label, endpoint)
+_REPAIR_CATALOGUE: dict[str, tuple[str, str]] = {
+    "identity":    ("Regenerate with Identity Anchors",     "/storyboard/character-package/generate-one"),
+    "species":     ("Regenerate with Species Constraints",  "/storyboard/character-package/generate-one"),
+    "anatomy":     ("Regenerate Anatomy Pass",              "/storyboard/character-package/generate-one"),
+    "composition": ("Regenerate Composition Only",          "/storyboard/frame/reforge-composition"),
+    "camera":      ("Regenerate Camera Angle",              "/storyboard/frame/reforge-composition"),
+    "lighting":    ("Regenerate Lighting Pass",             "/storyboard/frame/reforge-composition"),
+    "props":       ("Regenerate Props Only",                "/storyboard/character-package/generate-one"),
+    "environment": ("Regenerate Environment Pass",          "/storyboard/frame/reforge-composition"),
+    "continuity":  ("Regenerate for Continuity",            "/storyboard/frame/reforge-composition"),
+}
+
+# Keywords used per category for prompt-level heuristic scoring
+_COMPOSITION_KW = ["shot", "angle", "view", "wide", "close", "medium", "ots", "pov",
+                   "establishing", "tracking", "extreme", "insert", "aerial"]
+_CAMERA_KW      = ["lens", "mm", "focal", "depth", "bokeh", "focus", "dolly", "handheld",
+                   "crane", "pan", "tilt", "static", "tracking", "zoom"]
+_LIGHTING_KW    = ["light", "shadow", "ambient", "soft", "hard", "rim", "glow", "dark",
+                   "bright", "diffuse", "key", "fill", "backlight", "silhouette"]
+_ENVIRONMENT_KW = ["interior", "exterior", "int.", "ext.", "location", "background",
+                   "indoor", "outdoor", "setting", "environment", "room", "forest",
+                   "city", "street", "space", "ocean", "desert", "night", "day"]
+
+
+def _severity(score: float) -> str:
+    if score < _CRITICAL_THRESHOLD:
+        return "critical"
+    if score < _WARNING_THRESHOLD:
+        return "warning"
+    return "suggestion"
+
+
+def _build_repairs(breakdown: dict[str, float]) -> "list[QARepairAction]":
+    """
+    Build an ordered list of targeted repair actions for any category below
+    the suggestion threshold (0.85).  Ordered: critical first, then warning,
+    then suggestion.
+    """
+    from app.schemas.storyboard import QARepairAction
+
+    actions: list[QARepairAction] = []
+    for cat, score in breakdown.items():
+        if score < _SUGGESTION_THRESHOLD and cat in _REPAIR_CATALOGUE:
+            label, endpoint = _REPAIR_CATALOGUE[cat]
+            actions.append(QARepairAction(
+                category=cat,
+                label=label,
+                endpoint=endpoint,
+                severity=_severity(score),
+                score=round(score, 3),
+            ))
+
+    # Sort: critical → warning → suggestion, then by score ascending (worst first)
+    _order = {"critical": 0, "warning": 1, "suggestion": 2}
+    actions.sort(key=lambda a: (_order[a.severity], a.score))
+    return actions
+
+
+# ---------------------------------------------------------------------------
+# Per-asset-type validator dispatch
+# ---------------------------------------------------------------------------
+
+AssetType = Literal["character", "creature", "animal", "robot", "vehicle"]
+
+
+def _validate_character(
+    prompt_lower: str,
     identity: "CharacterIdentity",
-    species_id: str = DEFAULT_SPECIES_ID,
-    variant: "CharacterVariant | None" = None,
-) -> "QAScoreResult":
+    species_id: str,
+    variant: "CharacterVariant | None",
+) -> dict[str, float]:
     """
-    Heuristic QA engine — v1.
-
-    Evaluates how well the generation prompt encodes the character identity,
-    species anatomy rules, and active variant. Returns category scores and
-    an overall weighted confidence.
-
-    This is prompt-level QA (not pixel-level). Pixel-level validation
-    requires a vision model and is planned for v2.
+    Validator for humanoid characters (human, elf, vampire, custom humanoid).
+    Checks identity markers, species anatomy rules, and outfit continuity.
     """
-    from app.schemas.storyboard import QAScoreResult
-
-    prompt_lower = generated_prompt.lower()
     species = get_species(species_id)
 
-    # ── Identity score: how many identity markers appear in the prompt ────────
+    # Identity — presence of face/hair/eye/marker tokens in prompt
     identity_markers: list[str] = []
     if identity.name:
         identity_markers.append(identity.name.lower())
     if identity.hair_description:
-        identity_markers.extend(identity.hair_description.lower().split())
+        identity_markers.extend(w for w in identity.hair_description.lower().split() if len(w) > 3)
     if identity.eye_description:
-        identity_markers.extend(identity.eye_description.lower().split())
+        identity_markers.extend(w for w in identity.eye_description.lower().split() if len(w) > 3)
     if identity.distinct_markers:
         identity_markers.append(identity.distinct_markers.lower())
     for acc in (identity.signature_accessories or []):
@@ -271,65 +480,315 @@ def compute_qa_score(
     identity_hits = sum(1 for m in identity_markers if m in prompt_lower)
     identity_score = min(1.0, identity_hits / max(len(identity_markers), 1))
 
-    # ── Species score: anatomy prefix present ────────────────────────────────
+    # Species — prefix + required features present, forbidden absent
     species_prefix = species.get("prompt_prefix", "").lower().strip(", ")
-    species_score = 1.0 if (not species_prefix or species_prefix in prompt_lower) else 0.6
+    has_prefix = not species_prefix or any(w in prompt_lower for w in species_prefix.split(","))
+    required = species.get("required_features", [])
+    required_hits = sum(1 for f in required if f.lower() in prompt_lower)
+    required_score = (required_hits / len(required)) if required else 1.0
+    species_score = round((0.6 * (1.0 if has_prefix else 0.5)) + (0.4 * required_score), 3)
 
-    # ── Anatomy score: no contradicting features ──────────────────────────────
-    # Penalise if forbidden anatomy appears (e.g. "tail" for humans)
-    forbidden: dict[str, list[str]] = {
-        "human":   ["tail", "wings", "horns", "snout", "scales", "fangs"],
-        "elf":     ["tail", "wings", "scales"],
-        "wolf":    [],
-        "dragon":  [],
-        "robot":   ["skin", "hair", "organic"],
-        "vampire": ["tail", "wings", "scales"],
-    }
-    forbidden_terms = forbidden.get(species_id, [])
-    violations = sum(1 for t in forbidden_terms if t in prompt_lower)
+    # Anatomy — forbidden terms absent
+    forbidden = species.get("forbidden_features", [])
+    violations = sum(1 for t in forbidden if t.lower() in prompt_lower)
     anatomy_score = max(0.0, 1.0 - violations * 0.25)
 
-    # ── Composition score: shot type + camera angle present ──────────────────
-    composition_keywords = ["shot", "angle", "view", "wide", "close", "medium", "ots", "pov"]
-    composition_score = 1.0 if any(k in prompt_lower for k in composition_keywords) else 0.7
-
-    # ── Lighting score: lighting notes present ────────────────────────────────
-    lighting_keywords = ["light", "shadow", "ambient", "soft", "hard", "rim", "glow", "dark", "bright"]
-    lighting_score = 1.0 if any(k in prompt_lower for k in lighting_keywords) else 0.75
-
-    # ── Props score: variant accessories mentioned ────────────────────────────
+    # Props — variant accessories
     props_score = 1.0
     if variant and variant.extra_accessories:
-        prop_hits = sum(1 for acc in variant.extra_accessories if acc.lower() in prompt_lower)
-        props_score = prop_hits / len(variant.extra_accessories)
+        hits = sum(1 for acc in variant.extra_accessories if acc.lower() in prompt_lower)
+        props_score = hits / len(variant.extra_accessories)
 
-    # ── Continuity score: canonical outfit / wardrobe present ─────────────────
+    # Continuity — outfit match
     continuity_score = 1.0
     if variant and variant.outfit:
-        continuity_score = 1.0 if variant.outfit.lower() in prompt_lower else 0.65
+        outfit_words = [w for w in variant.outfit.lower().split() if len(w) > 3]
+        if outfit_words:
+            hits = sum(1 for w in outfit_words if w in prompt_lower)
+            continuity_score = hits / len(outfit_words)
 
-    # ── Weighted overall ──────────────────────────────────────────────────────
-    breakdown = {
-        "identity":    round(identity_score,    3),
-        "species":     round(species_score,     3),
-        "anatomy":     round(anatomy_score,     3),
-        "composition": round(composition_score, 3),
-        "lighting":    round(lighting_score,    3),
-        "props":       round(props_score,       3),
-        "continuity":  round(continuity_score,  3),
+    return {
+        "identity":   round(identity_score,   3),
+        "species":    round(species_score,     3),
+        "anatomy":    round(anatomy_score,     3),
+        "props":      round(props_score,       3),
+        "continuity": round(continuity_score,  3),
     }
-    overall = round(
-        sum(_QA_WEIGHTS[k] * v for k, v in breakdown.items()), 3
-    )
 
+
+def _validate_creature(
+    prompt_lower: str,
+    species_id: str,
+    variant: "CharacterVariant | None",
+) -> dict[str, float]:
+    """
+    Validator for non-humanoid fantasy creatures (dragon, wolf, etc.).
+    Identity is structural (required anatomical features) rather than facial.
+    """
+    species = get_species(species_id)
+    required = species.get("required_features", [])
+    forbidden = species.get("forbidden_features", [])
+
+    # Species / Identity for creatures = structural features present
+    req_hits = sum(1 for f in required if f.lower() in prompt_lower)
+    species_score = (req_hits / len(required)) if required else 1.0
+    # Creatures have no human identity layer — score is structural
+    identity_score = species_score
+
+    violations = sum(1 for t in forbidden if t.lower() in prompt_lower)
+    anatomy_score = max(0.0, 1.0 - violations * 0.25)
+
+    props_score = 1.0
+    if variant and variant.extra_accessories:
+        hits = sum(1 for acc in variant.extra_accessories if acc.lower() in prompt_lower)
+        props_score = hits / len(variant.extra_accessories)
+
+    continuity_score = 1.0
+    if variant and variant.outfit:
+        continuity_score = 1.0 if any(w in prompt_lower for w in variant.outfit.lower().split()) else 0.65
+
+    return {
+        "identity":   round(identity_score,  3),
+        "species":    round(species_score,   3),
+        "anatomy":    round(anatomy_score,   3),
+        "props":      round(props_score,     3),
+        "continuity": round(continuity_score, 3),
+    }
+
+
+def _validate_animal(
+    prompt_lower: str,
+    species_id: str,
+    variant: "CharacterVariant | None",
+) -> dict[str, float]:
+    """
+    Validator for real-world animals (horse, cat, dog, bird).
+    Uses ANIMAL_REGISTRY required/forbidden features.
+    """
+    profile = ANIMAL_REGISTRY.get(species_id.lower(), ANIMAL_REGISTRY.get("custom_animal", {}))
+    required = profile.get("required_features", [])
+    forbidden = profile.get("forbidden_features", [])
+
+    req_hits = sum(1 for f in required if f.lower() in prompt_lower)
+    species_score = (req_hits / len(required)) if required else 0.9
+    identity_score = species_score  # animals have no facial identity layer
+
+    violations = sum(1 for t in forbidden if t.lower() in prompt_lower)
+    anatomy_score = max(0.0, 1.0 - violations * 0.25)
+
+    props_score = 1.0
+    if variant and variant.extra_accessories:
+        hits = sum(1 for acc in variant.extra_accessories if acc.lower() in prompt_lower)
+        props_score = hits / len(variant.extra_accessories)
+
+    return {
+        "identity":   round(identity_score,  3),
+        "species":    round(species_score,   3),
+        "anatomy":    round(anatomy_score,   3),
+        "props":      round(props_score,     3),
+        "continuity": 1.0,
+    }
+
+
+def _validate_robot(
+    prompt_lower: str,
+    species_id: str,
+    variant: "CharacterVariant | None",
+) -> dict[str, float]:
+    """
+    Validator for robots and mechanical constructs.
+    Robots have no biological identity. Structural features are the identity.
+    """
+    profile = get_species(species_id) if species_id in SPECIES_REGISTRY else SPECIES_REGISTRY["robot"]
+    required = profile.get("required_features", ["mechanical", "metal"])
+    forbidden = profile.get("forbidden_features", ["skin", "hair", "organic"])
+
+    req_hits = sum(1 for f in required if f.lower() in prompt_lower)
+    species_score = (req_hits / len(required)) if required else 1.0
+    identity_score = species_score  # robots' identity IS their structural spec
+
+    violations = sum(1 for t in forbidden if t.lower() in prompt_lower)
+    anatomy_score = max(0.0, 1.0 - violations * 0.3)
+
+    props_score = 1.0
+    if variant and variant.extra_accessories:
+        hits = sum(1 for acc in variant.extra_accessories if acc.lower() in prompt_lower)
+        props_score = hits / len(variant.extra_accessories)
+
+    continuity_score = 1.0
+    if variant and variant.outfit:
+        continuity_score = 1.0 if any(w in prompt_lower for w in variant.outfit.lower().split()) else 0.65
+
+    return {
+        "identity":   round(identity_score,  3),
+        "species":    round(species_score,   3),
+        "anatomy":    round(anatomy_score,   3),
+        "props":      round(props_score,     3),
+        "continuity": round(continuity_score, 3),
+    }
+
+
+def _validate_vehicle(
+    prompt_lower: str,
+    species_id: str,
+    variant: "CharacterVariant | None",
+) -> dict[str, float]:
+    """
+    Validator for vehicles (cars, ships, spacecraft, mechs).
+    Uses VEHICLE_REGISTRY required/forbidden structural features.
+    Anatomy and identity are both structural — no biological concepts apply.
+    """
+    profile = VEHICLE_REGISTRY.get(species_id.lower(), {
+        "required_features": [],
+        "forbidden_features": ["organic", "skin", "fur", "biological"],
+    })
+    required = profile.get("required_features", [])
+    forbidden = profile.get("forbidden_features", [])
+
+    req_hits = sum(1 for f in required if f.lower() in prompt_lower)
+    species_score = (req_hits / len(required)) if required else 0.9
+    identity_score = species_score  # vehicle identity = structural spec match
+    anatomy_score  = species_score  # no distinction for vehicles
+
+    violations = sum(1 for t in forbidden if t.lower() in prompt_lower)
+    anatomy_score = max(0.0, min(anatomy_score, 1.0 - violations * 0.3))
+
+    props_score = 1.0
+    if variant and variant.extra_accessories:
+        hits = sum(1 for acc in variant.extra_accessories if acc.lower() in prompt_lower)
+        props_score = hits / len(variant.extra_accessories)
+
+    return {
+        "identity":   round(identity_score, 3),
+        "species":    round(species_score,  3),
+        "anatomy":    round(anatomy_score,  3),
+        "props":      round(props_score,    3),
+        "continuity": 1.0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Shared scoring helpers (camera, composition, lighting, environment)
+# ---------------------------------------------------------------------------
+
+def _score_composition(prompt_lower: str) -> float:
+    return 1.0 if any(k in prompt_lower for k in _COMPOSITION_KW) else 0.65
+
+
+def _score_camera(prompt_lower: str, camera_spec: str | None) -> float:
+    """
+    Camera score: checks lens/focal length/depth keywords.
+    If camera_spec is provided, also validates the expected spec is present.
+    """
+    base = 1.0 if any(k in prompt_lower for k in _CAMERA_KW) else 0.65
+    if camera_spec:
+        spec_words = [w for w in camera_spec.lower().split() if len(w) > 2]
+        spec_hits = sum(1 for w in spec_words if w in prompt_lower)
+        spec_match = spec_hits / max(len(spec_words), 1)
+        return round((base * 0.5) + (spec_match * 0.5), 3)
+    return round(base, 3)
+
+
+def _score_lighting(prompt_lower: str) -> float:
+    return 1.0 if any(k in prompt_lower for k in _LIGHTING_KW) else 0.70
+
+
+def _score_environment(prompt_lower: str, scene_context: str | None) -> float:
+    """
+    Environment score: checks location/setting keywords.
+    If scene_context is provided, validates the expected location is present.
+    """
+    base = 1.0 if any(k in prompt_lower for k in _ENVIRONMENT_KW) else 0.65
+    if scene_context:
+        ctx_words = [w for w in scene_context.lower().split() if len(w) > 3]
+        ctx_hits = sum(1 for w in ctx_words if w in prompt_lower)
+        ctx_match = ctx_hits / max(len(ctx_words), 1)
+        return round((base * 0.4) + (ctx_match * 0.6), 3)
+    return round(base, 3)
+
+
+# ---------------------------------------------------------------------------
+# Public: compute_qa_score — Project-Aware Visual QA Engine
+# ---------------------------------------------------------------------------
+
+def compute_qa_score(
+    generated_prompt: str,
+    identity: "CharacterIdentity",
+    species_id: str = DEFAULT_SPECIES_ID,
+    variant: "CharacterVariant | None" = None,
+    asset_type: AssetType = "character",
+    scene_context: str | None = None,
+    camera_spec: str | None = None,
+) -> "QAScoreResult":
+    """
+    Project-Aware Visual QA Engine — v2.
+
+    Validates a generated prompt against the Project Canon.  Does NOT assume
+    human anatomy — the correct structural validator is selected based on
+    asset_type before any scoring begins.
+
+    Returns a QAScoreResult with:
+      - overall       weighted score across 9 categories
+      - breakdown     per-category scores (identity, species, anatomy,
+                      composition, camera, lighting, props, environment,
+                      continuity)
+      - passed        True if overall >= 0.80
+      - asset_type    the validator that was used
+      - repairs       ordered list of targeted fix actions for failing categories
+      - warning       plain-text summary (backwards compat)
+    """
+    from app.schemas.storyboard import QAScoreResult
+
+    prompt_lower = generated_prompt.lower()
+
+    # ── 1. Dispatch to correct structural validator ───────────────────────────
+    _DISPATCH = {
+        "character": lambda: _validate_character(prompt_lower, identity, species_id, variant),
+        "creature":  lambda: _validate_creature(prompt_lower, species_id, variant),
+        "animal":    lambda: _validate_animal(prompt_lower, species_id, variant),
+        "robot":     lambda: _validate_robot(prompt_lower, species_id, variant),
+        "vehicle":   lambda: _validate_vehicle(prompt_lower, species_id, variant),
+    }
+    validator = _DISPATCH.get(asset_type, _DISPATCH["character"])
+    structural_scores = validator()
+
+    # ── 2. Shared categories (same logic regardless of asset type) ────────────
+    composition_score = _score_composition(prompt_lower)
+    camera_score      = _score_camera(prompt_lower, camera_spec)
+    lighting_score    = _score_lighting(prompt_lower)
+    environment_score = _score_environment(prompt_lower, scene_context)
+
+    # ── 3. Assemble full breakdown ────────────────────────────────────────────
+    breakdown: dict[str, float] = {
+        "identity":    structural_scores["identity"],
+        "species":     structural_scores["species"],
+        "anatomy":     structural_scores["anatomy"],
+        "composition": round(composition_score, 3),
+        "camera":      round(camera_score, 3),
+        "lighting":    round(lighting_score, 3),
+        "props":       structural_scores["props"],
+        "environment": round(environment_score, 3),
+        "continuity":  structural_scores["continuity"],
+    }
+
+    # ── 4. Weighted overall ───────────────────────────────────────────────────
+    overall = round(sum(_QA_WEIGHTS[k] * v for k, v in breakdown.items()), 3)
+
+    # ── 5. Targeted repair actions ────────────────────────────────────────────
+    repairs = _build_repairs(breakdown)
+
+    # ── 6. Warning string (backwards compat) ─────────────────────────────────
     warning: str | None = None
     if overall < 0.80:
-        low = [k for k, v in breakdown.items() if v < 0.75]
-        warning = f"Low confidence in: {', '.join(low)}. Consider regenerating."
+        low = [k for k, v in breakdown.items() if v < _WARNING_THRESHOLD]
+        if low:
+            warning = f"Low confidence in: {', '.join(low)}. Use targeted repairs below."
 
     return QAScoreResult(
         overall=overall,
         breakdown=breakdown,
         warning=warning,
         passed=overall >= 0.80,
+        asset_type=asset_type,
+        repairs=repairs,
     )

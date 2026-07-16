@@ -276,12 +276,15 @@ export interface RegenerateVisualActionResult {
 // Character Identity System — CKG + QA + Import
 // ---------------------------------------------------------------------------
 
-/** Run the Visual QA Engine for a generated prompt against an identity + species. */
+/** Run the Project-Aware Visual QA Engine. */
 export async function runCharacterQA(
   generatedPrompt: string,
   identity: CharacterIdentity,
   speciesId = 'human',
   variant?: CharacterVariant,
+  assetType: 'character' | 'creature' | 'animal' | 'robot' | 'vehicle' = 'character',
+  sceneContext?: string,
+  cameraSpec?: string,
 ): Promise<QAScoreResult> {
   const res = await fetch(`${BASE_URL}/storyboard/character/qa-score`, {
     method: 'POST',
@@ -291,6 +294,9 @@ export async function runCharacterQA(
       identity,
       species_id: speciesId,
       variant: variant ?? null,
+      asset_type: assetType,
+      scene_context: sceneContext ?? null,
+      camera_spec: cameraSpec ?? null,
     }),
   })
   return handleResponse<QAScoreResult>(res)

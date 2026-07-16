@@ -1143,24 +1143,26 @@ Return only the JSON object. Nothing else."""
 )
 def character_qa_score(payload: CharacterQARequest) -> QAScoreResult:
     """
-    Runs the heuristic Visual QA Engine over a generated prompt.
+    Project-Aware Visual QA Engine.
 
-    Checks:
-      - Identity markers (face, hair, eyes, distinct_markers) present in prompt
-      - Species anatomy prefix present and no forbidden anatomy terms
-      - Composition (shot/angle keywords)
-      - Lighting keywords
-      - Props / accessories from active variant
-      - Outfit continuity
+    Selects the correct structural validator based on asset_type — no human
+    anatomy is assumed.  Scores 9 categories:
+      identity, species, anatomy, composition, camera, lighting,
+      props, environment, continuity
 
-    Returns a QAScoreResult with overall 0.0–1.0, per-category breakdown,
-    an optional warning string, and a boolean `passed` flag (threshold 0.80).
+    Every category below 0.85 produces a targeted QARepairAction with a
+    human-readable label ("Regenerate Composition Only") and the exact
+    backend endpoint to call — so the frontend can offer surgical fixes
+    instead of a full regeneration.
     """
     return compute_qa_score(
         generated_prompt=payload.generated_prompt,
         identity=payload.identity,
         species_id=payload.species_id,
         variant=payload.variant,
+        asset_type=payload.asset_type,
+        scene_context=payload.scene_context,
+        camera_spec=payload.camera_spec,
     )
 
 
