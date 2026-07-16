@@ -1,111 +1,496 @@
+@import "tailwindcss";
+@variant dark (&:where(.dark, .dark *));
+
+* { box-sizing: border-box; }
+
+/* ═══════════════════════════════════════════
+   BaseBoard Motion System (BMS) — v1
+   Four pillars:
+     Ambient Motion   – Director's Light, compass breathing
+     Focus Motion     – Storyboard Focus, Inspector updates
+     AI Motion        – Genesis pipeline, dependency scan
+     Transition Motion– tab morphs, view transitions
+   ═══════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────
+   BMS-1: Director's Light
+   A single radial gradient pinned to the
+   cursor position, applied as a body::after
+   pseudo-element at 4% white opacity.
+   Never affects text; large blur radius.
+─────────────────────────────────────────── */
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  --directors-light-pos: 50% 50%;
+}
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+/* Only active on non-touch, non-reduced-motion (JS adds the class) */
+body.bms-light-active::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  background: radial-gradient(
+    600px circle at var(--directors-light-pos),
+    rgba(255,255,255,0.04) 0%,
+    transparent 70%
+  );
+}
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* Dark mode — slightly warmer tint to match the gold palette */
+body.bms-light-active.dark::after {
+  background: radial-gradient(
+    600px circle at var(--directors-light-pos),
+    rgba(201,168,76,0.035) 0%,
+    transparent 70%
+  );
+}
 
-  @media (max-width: 1024px) {
-    font-size: 16px;
+/* ─────────────────────────────────────────
+   BMS-3: Storyboard Focus
+   The frame nearest the cursor glows.
+   .bms-frame-focus is toggled via JS.
+─────────────────────────────────────────── */
+.bms-frame-focus {
+  outline: none !important;
+  box-shadow:
+    0 0 0 1.5px var(--gold),
+    0 4px 16px rgba(0,0,0,0.45) !important;
+  transform: translateY(-2px) !important;
+  filter: brightness(1.06);
+  transition:
+    box-shadow 160ms cubic-bezier(0.22,1,0.36,1),
+    transform   160ms cubic-bezier(0.22,1,0.36,1),
+    filter      160ms ease !important;
+}
+
+/* ─────────────────────────────────────────
+   BMS-4: Brass Reflection
+   Applied to elements with class .bms-brass.
+   Uses --brass-x / --brass-y CSS props written
+   by useBrassReflection() hook.
+   Simulates a polished-metal highlight.
+─────────────────────────────────────────── */
+.bms-brass {
+  --brass-x: 0.5;
+  --brass-y: 0;
+  position: relative;
+  overflow: hidden;
+}
+.bms-brass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    calc(90deg + (var(--brass-x) - 0.5) * 60deg),
+    transparent 30%,
+    rgba(201,168,76,0.12) calc(30% + (var(--brass-x) * 40%)),
+    rgba(255,248,220,0.10) calc(30% + (var(--brass-x) * 40%) + 6%),
+    transparent calc(30% + (var(--brass-x) * 40%) + 14%)
+  );
+  opacity: 0;
+  transition: opacity 200ms ease;
+  border-radius: inherit;
+}
+.bms-brass:hover::before {
+  opacity: 1;
+}
+
+/* ─────────────────────────────────────────
+   BMS-5: Inspector Micro-Animations
+   Content inside .bms-inspector-content
+   slides up and fades when the key changes.
+─────────────────────────────────────────── */
+@keyframes inspector-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
+.bms-inspector-enter {
+  animation: inspector-enter 220ms cubic-bezier(0.22,1,0.36,1) forwards;
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
+/* ─────────────────────────────────────────
+   BMS-6: AI Generation Pipeline
+   Extended genesis styles — scan-line pulse
+   on the active task bar.
+─────────────────────────────────────────── */
+@keyframes bms-bar-scan {
+  0%   { left: -40%; opacity: 0.6; }
+  100% { left: 120%;  opacity: 0; }
+}
+
+.bms-bar-scan::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+  animation: bms-bar-scan 1.4s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────
+   BMS-8: Character Import Scanner
+   Step-by-step import analysis rows.
+─────────────────────────────────────────── */
+@keyframes import-row-enter {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.bms-import-row {
+  opacity: 0;
+  animation: import-row-enter 220ms cubic-bezier(0.22,1,0.36,1) forwards;
+}
+
+/* ─────────────────────────────────────────
+   Theme CSS variables
+───────────────────────────────────────── */
+:root {
+  --bg-base:    #f5f0e8;
+  --bg-surface: #ede6d8;
+  --bg-raised:  #e4dccb;
+  --border:     #c8bfa8;
+  --text-base:  #2a1f0e;
+  --text-muted: #6b5c42;
+  --gold:       #8a6a1e;
+  --gold-dim:   rgba(138,106,30,0.35);
+  --cyan:       #0a7a8a;
+}
+
+.dark {
+  --bg-base:    #0a0807;
+  --bg-surface: #110e09;
+  --bg-raised:  #1a1510;
+  --border:     #2a2018;
+  --text-base:  #e8e0d0;
+  --text-muted: #a09070;
+  --gold:       #C9A84C;
+  --gold-dim:   rgba(201,168,76,0.35);
+  --cyan:       #00D4FF;
 }
 
 body {
   margin: 0;
+  background: var(--bg-base);
+  color: var(--text-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background 400ms ease, color 300ms ease;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
+/* ─────────────────────────────────────────
+   Keyframes
+───────────────────────────────────────── */
+
+/* Blueprint draw — SVG stroke-dashoffset reveal */
+@keyframes draw-line {
+  from { stroke-dashoffset: 1; }
+  to   { stroke-dashoffset: 0; }
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+/* Fill fade after draw */
+@keyframes fill-in {
+  0%   { opacity: 0; }
+  60%  { opacity: 0; }
+  100% { opacity: 1; }
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+/* Blueprint corner flash */
+@keyframes corner-flash {
+  0%, 100% { opacity: 0.2; }
+  50%       { opacity: 1; }
 }
+
+/* Studio unfold — slides up from slight offset */
+@keyframes studio-unfold {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Inspector slide content up */
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Scene list stagger */
+@keyframes scene-enter {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Card rise */
+@keyframes card-rise {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Tab morph fold */
+@keyframes tab-fold-out {
+  from { opacity: 1; transform: translateY(0) scaleY(1); }
+  to   { opacity: 0; transform: translateY(8px) scaleY(0.92); }
+}
+@keyframes tab-fold-in {
+  from { opacity: 0; transform: translateY(-8px) scaleY(0.92); }
+  to   { opacity: 1; transform: translateY(0) scaleY(1); }
+}
+
+/* Pulse gold dot */
+@keyframes pulse-gold {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--gold); }
+  50%       { opacity: 0.5; box-shadow: 0 0 14px var(--gold); }
+}
+
+/* Compass outer ring rotate */
+@keyframes compass-rotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Idle compass sway */
+@keyframes idle-sway {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(2deg); }
+  75%  { transform: rotate(-2deg); }
+  100% { transform: rotate(0deg); }
+}
+
+/* Constellation node connect */
+@keyframes node-pulse {
+  0%, 100% { opacity: 0.2; r: 2; }
+  50%       { opacity: 1;   r: 3.5; }
+}
+@keyframes line-connect {
+  from { stroke-dashoffset: 40; opacity: 0; }
+  to   { stroke-dashoffset: 0;  opacity: 0.6; }
+}
+
+/* AI generation scan */
+@keyframes scan-line {
+  from { transform: translateY(0); opacity: 0.7; }
+  to   { transform: translateY(100%); opacity: 0; }
+}
+@keyframes gold-assemble {
+  0%   { opacity: 0; transform: scale(0.95); filter: blur(6px); }
+  60%  { opacity: 0.8; filter: blur(1px); }
+  100% { opacity: 1; transform: scale(1); filter: blur(0); }
+}
+
+/* Notification slide down */
+@keyframes notif-enter {
+  from { opacity: 0; transform: translateY(-12px) translateX(8px); }
+  to   { opacity: 1; transform: translateY(0) translateX(0); }
+}
+@keyframes notif-exit {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-8px); }
+}
+
+/* Empty state blueprint draw */
+@keyframes blueprint-reveal {
+  from { opacity: 0; stroke-dashoffset: 200; }
+  to   { opacity: 1; stroke-dashoffset: 0; }
+}
+
+/* Scroll arrow bounce */
+@keyframes scroll-bounce {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(6px); }
+}
+
+/* Radial glow vignette breathe */
+@keyframes vignette-breathe {
+  0%, 100% { opacity: 0.28; }
+  50%       { opacity: 0.42; }
+}
+
+/* ─────────────────────────────────────────
+   Animation utility classes
+───────────────────────────────────────── */
+
+.anim-studio-unfold  { animation: studio-unfold 600ms cubic-bezier(0.22,1,0.36,1) forwards; }
+.anim-slide-up       { animation: slide-up 220ms cubic-bezier(0.22,1,0.36,1) forwards; }
+.anim-card-rise      { animation: card-rise 180ms cubic-bezier(0.22,1,0.36,1) forwards; }
+.anim-tab-in         { animation: tab-fold-in  400ms cubic-bezier(0.22,1,0.36,1) forwards; }
+.anim-tab-out        { animation: tab-fold-out 350ms cubic-bezier(0.4,0,1,1) forwards; }
+.anim-notif-enter    { animation: notif-enter 280ms cubic-bezier(0.22,1,0.36,1) forwards; }
+.anim-notif-exit     { animation: notif-exit  240ms ease-in forwards; }
+.anim-gold-assemble  { animation: gold-assemble 700ms cubic-bezier(0.22,1,0.36,1) forwards; }
+
+/* Staggered scene list */
+.scene-stagger > * { opacity: 0; animation: scene-enter 200ms cubic-bezier(0.22,1,0.36,1) forwards; }
+.scene-stagger > *:nth-child(1)  { animation-delay: 0ms; }
+.scene-stagger > *:nth-child(2)  { animation-delay: 40ms; }
+.scene-stagger > *:nth-child(3)  { animation-delay: 80ms; }
+.scene-stagger > *:nth-child(4)  { animation-delay: 120ms; }
+.scene-stagger > *:nth-child(5)  { animation-delay: 160ms; }
+.scene-stagger > *:nth-child(6)  { animation-delay: 200ms; }
+.scene-stagger > *:nth-child(7)  { animation-delay: 240ms; }
+.scene-stagger > *:nth-child(8)  { animation-delay: 280ms; }
+
+/* Staggered card grid */
+.card-stagger > * { opacity: 0; animation: card-rise 180ms cubic-bezier(0.22,1,0.36,1) forwards; }
+.card-stagger > *:nth-child(1)  { animation-delay: 0ms; }
+.card-stagger > *:nth-child(2)  { animation-delay: 40ms; }
+.card-stagger > *:nth-child(3)  { animation-delay: 80ms; }
+.card-stagger > *:nth-child(4)  { animation-delay: 120ms; }
+.card-stagger > *:nth-child(5)  { animation-delay: 160ms; }
+.card-stagger > *:nth-child(6)  { animation-delay: 200ms; }
+.card-stagger > *:nth-child(7)  { animation-delay: 240ms; }
+.card-stagger > *:nth-child(8)  { animation-delay: 280ms; }
+
+/* ─────────────────────────────────────────
+   Interactive element transitions
+───────────────────────────────────────── */
+
+/* Button tactile press */
+.btn-tactile {
+  transition: transform 100ms ease, box-shadow 120ms ease, border-color 150ms ease;
+}
+.btn-tactile:hover  { transform: translateY(-1px); }
+.btn-tactile:active { transform: scale(0.97); }
+
+/* Card 3D tilt on hover */
+.card-tilt {
+  transition: transform 180ms ease, box-shadow 180ms ease;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+/* Gold glow utility */
+.gold-glow {
+  box-shadow: 0 0 18px var(--gold-dim), 0 0 6px rgba(0,0,0,0.3);
+}
+.gold-glow-text {
+  text-shadow: 0 0 20px var(--gold-dim);
+}
+
+/* ─────────────────────────────────────────
+   Misc utilities
+───────────────────────────────────────── */
+
+.compass-ring { animation: compass-rotate 60s linear infinite; }
+.pulse-gold   { animation: pulse-gold 2s ease-in-out infinite; }
+
+/* Center B hover pulse — overridden by inline animation prop */
+@keyframes center-pulse {
+  0%, 100% { box-shadow: 0 0 18px var(--gold-dim), 0 0 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(201,168,76,0.2), inset 0 -1px 0 rgba(0,0,0,0.25); }
+  50%       { box-shadow: 0 0 44px rgba(201,168,76,0.55), 0 0 16px rgba(201,168,76,0.3), inset 0 1px 0 rgba(201,168,76,0.45), inset 0 -1px 0 rgba(0,0,0,0.3); }
+}
+
+/* Tab underline */
+.tab-active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; left: 0; right: 0;
+  height: 2px;
+  background: var(--gold);
+}
+
+/* Frame card hover glow */
+.frame-card-hover {
+  transition: box-shadow 150ms ease, border-color 150ms ease, transform 180ms ease;
+}
+.frame-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 1.5px var(--gold), 0 8px 24px rgba(0,0,0,0.5);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gold-dim); }
+
+/* Theme toggle transition */
+.theme-toggle-track { transition: background 300ms ease, border-color 300ms ease; }
+.theme-icon { transition: transform 500ms cubic-bezier(0.34,1.56,0.64,1), background 300ms ease, border-color 300ms ease; }
+
+/* ─────────────────────────────────────────
+   Film-grain overlay
+   Pure CSS via an inline SVG feTurbulence data-URI — no external assets.
+   Very low opacity so it reads as texture, not noise.
+───────────────────────────────────────── */
+.grain-overlay {
+  /* SVG turbulence filter baked into a data URI */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 200px 200px;
+  opacity: 0.025;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+
+/* Dark mode — slightly more visible grain for projection-room feel */
+.dark .grain-overlay {
+  opacity: 0.04;
+  mix-blend-mode: screen;
+}
+
+/* ─────────────────────────────────────────
+   Report card reveal
+───────────────────────────────────────── */
+
+@keyframes report-card-reveal {
+  0%   { opacity: 0; transform: translateY(24px) scale(0.96); }
+  60%  { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes report-bar-fill {
+  from { width: 0%; }
+  to   { width: var(--target-width, 100%); }
+}
+
+.report-card-reveal { animation: report-card-reveal 700ms cubic-bezier(0.22,1,0.36,1) forwards; }
+
+/* ─────────────────────────────────────────
+   Genesis Engine
+───────────────────────────────────────── */
+
+/* Progress bar fill — used inline via width transition */
+@keyframes genesis-bar-fill {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+
+/* Task row fade-in stagger */
+@keyframes genesis-task-enter {
+  from { opacity: 0; transform: translateX(-6px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Genesis icon glow pulse */
+@keyframes genesis-pulse {
+  0%, 100% { box-shadow: 0 0 8px var(--gold-dim); }
+  50%       { box-shadow: 0 0 22px var(--gold), 0 0 6px var(--gold); }
+}
+
+.genesis-glow { animation: genesis-pulse 2.5s ease-in-out infinite; }
+
+.genesis-task-list > * {
+  opacity: 0;
+  animation: genesis-task-enter 280ms cubic-bezier(0.22,1,0.36,1) forwards;
+}
+.genesis-task-list > *:nth-child(1) { animation-delay: 0ms; }
+.genesis-task-list > *:nth-child(2) { animation-delay: 60ms; }
+.genesis-task-list > *:nth-child(3) { animation-delay: 120ms; }
+.genesis-task-list > *:nth-child(4) { animation-delay: 180ms; }
+.genesis-task-list > *:nth-child(5) { animation-delay: 240ms; }
+.genesis-task-list > *:nth-child(6) { animation-delay: 300ms; }
+.genesis-task-list > *:nth-child(7) { animation-delay: 360ms; }
