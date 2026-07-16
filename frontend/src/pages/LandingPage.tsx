@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import logoSrc from '../assets/logo.png'
 import { useCompassNeedle } from '../hooks/useCompassNeedle'
+import { useLivingStudio } from '../hooks/useLivingStudio'
 
 interface Props {
   onNewProject: () => void
@@ -11,15 +12,36 @@ interface Props {
 
 export default function LandingPage({ onNewProject, onEnter, onDemo, idle = false }: Props) {
   const [arrowHover, setArrowHover] = useState(false)
-  const compassRef = useRef<HTMLDivElement>(null)
+  const compassRef  = useRef<HTMLDivElement>(null)
+  const canvasRef   = useRef<HTMLCanvasElement>(null)
+  const spotlightRef = useRef<HTMLDivElement>(null)
+
   // BMS-2: compass needle follows cursor, damped
   const needleAngle = useCompassNeedle(compassRef, null)
+  // Living Studio — constellation + particles + mouse spotlight
+  useLivingStudio(canvasRef, spotlightRef)
 
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden select-none"
       style={{ background: 'var(--bg-base)' }}
     >
+      {/* Layer 1 — Constellation + particles canvas */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 pointer-events-none"
+        style={{ zIndex: 0 }}
+        aria-hidden="true"
+      />
+
+      {/* Layer 2 — Mouse spotlight */}
+      <div
+        ref={spotlightRef}
+        className="absolute inset-0 pointer-events-none"
+        style={{ zIndex: 1 }}
+        aria-hidden="true"
+      />
+
       {/* Radial glow layer */}
       <div
         className="absolute inset-0 pointer-events-none"
@@ -27,6 +49,7 @@ export default function LandingPage({ onNewProject, onEnter, onDemo, idle = fals
           background: 'radial-gradient(ellipse at 50% 50%, var(--gold-dim) 0%, transparent 65%)',
           opacity: 0.3,
           animation: 'vignette-breathe 8s ease-in-out infinite',
+          zIndex: 2,
         }}
       />
 
@@ -34,6 +57,7 @@ export default function LandingPage({ onNewProject, onEnter, onDemo, idle = fals
       <div
         className="absolute inset-0 pointer-events-none grain-overlay"
         aria-hidden="true"
+        style={{ zIndex: 3 }}
       />
 
       {/* Top bar */}
@@ -218,8 +242,8 @@ export default function LandingPage({ onNewProject, onEnter, onDemo, idle = fals
 
       {/* Scroll hint with bouncing arrow */}
       <div
-        className="absolute bottom-8 flex flex-col items-center gap-2"
-        style={{ color: 'var(--gold)', opacity: 0.25, zIndex: 10 }}
+        className="flex flex-col items-center gap-2 mt-10"
+        style={{ color: 'var(--gold)', opacity: 0.25, zIndex: 10, position: 'relative' }}
       >
         <span style={{ fontSize: 10, letterSpacing: '0.3em', textTransform: 'uppercase' }}>Scroll to begin</span>
         <span
