@@ -1,4 +1,5 @@
 # BaseBoard AI
+https://drive.google.com/file/d/1qPPvrVyjubg6FgaXcdVag_3COmzipL6t/view?usp=drive_link
 
 > *Where Stories Become Worlds.*
 
