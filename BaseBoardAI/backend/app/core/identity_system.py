@@ -1,15 +1,22 @@
 """
-Character Identity System — core layer of the Creative Knowledge Graph.
+Character DNA System — core layer of the Creative Knowledge Graph.
 
-Separates a character's IDENTITY from its SPECIES, VARIANTS, and RENDERING STYLE.
-These four layers are always independent — changing one never overwrites the others.
+Separates a character's IDENTITY from its SPECIES, PHYSICAL FORM, CLASSIFICATION,
+ABILITIES, VARIANTS, and RENDERING STYLE.
+All layers are always independent — changing one never overwrites the others.
 
 Architecture
 ------------
-  Identity       — who they ARE (face, proportions, markers, signature features)
-  Species        — what anatomy they have (human, elf, wolf, dragon, robot, horse …)
-  Variants       — how they are dressed/aged/transformed at a given point
-  Rendering Style— the artistic register (anime, sketch, painterly, 3D …)
+  Identity        — who they ARE (face, proportions, markers, signature features)
+  Species         — what anatomy subtype they have (human, elf, wolf, dragon, robot …)
+  Physical Form   — structural anatomy category (humanoid, quadruped, dragon, bird …)
+                    DISTINCT from classification. Zeus: humanoid+god. Dragon God: dragon+god.
+  Classification  — narrative role (god, demon, hero, villain …)
+                    DOES NOT AFFECT anatomy — only story logic and cinematic behaviour.
+  Abilities       — powers that influence Director Engine shot selection
+                    (flight → aerial shots; fire_breath → wide or extreme close)
+  Variants        — how they are dressed/aged/transformed at a given point
+  Rendering Style — the artistic register (anime, sketch, painterly, 3D …)
 
 QA Engine (v2)
 --------------
@@ -35,8 +42,12 @@ Public API
   SPECIES_REGISTRY            — built-in species profiles (defaulting to human)
   VEHICLE_REGISTRY            — built-in vehicle type profiles
   ANIMAL_REGISTRY             — built-in animal type profiles
+  CLASSIFICATION_SHOT_HINTS   — preferred shot profiles keyed by classification
+  ABILITY_SHOT_HINTS          — shot modifiers keyed by ability name
+  PHYSICAL_FORM_ASSET_TYPE    — maps physical form to asset_type for QA dispatch
   get_species(species_id)     — returns species profile, falls back to human
-  build_identity_prompt(identity, species_id, variant, render_style) -> str
+  build_identity_prompt(identity, species_id, variant, classification, abilities, render_style) -> str
+  get_director_hints(classification, abilities, physical_form) -> dict
   compute_qa_score(
       generated_prompt, identity, species_id, variant,
       asset_type, scene_context, camera_spec
@@ -298,6 +309,147 @@ def get_species(species_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Classification → Director Engine shot hints
+# ---------------------------------------------------------------------------
+
+# Maps classification to preferred shot-type slug overrides.
+# These BIAS shot selection — they do not override the scene profile completely.
+# Weight = fractional additive increase applied on top of the base scene profile.
+CLASSIFICATION_SHOT_HINTS: dict[str, dict[str, float]] = {
+    "god":     {"establishing": 0.25, "wide": 0.20, "close": -0.10},
+    "demon":   {"close": 0.20, "insert": 0.15, "wide": -0.10},
+    "angel":   {"establishing": 0.20, "wide": 0.15, "aerial": 0.10},
+    "deity":   {"establishing": 0.30, "wide": 0.25, "medium": -0.10},
+    "monster": {"close": 0.20, "wide": 0.15, "tracking": 0.10},
+    "villain": {"close": 0.15, "medium": 0.10, "establishing": 0.10},
+    "hero":    {"wide": 0.15, "medium": 0.15, "close": 0.05},
+    "alien":   {"establishing": 0.15, "wide": 0.10, "insert": 0.10},
+    "robot":   {"medium": 0.15, "insert": 0.20, "close": 0.10},
+    "spirit":  {"establishing": 0.20, "insert": 0.15, "wide": 0.10},
+}
+
+# Maps ability name to shot-type modifier and optional prompt hint
+ABILITY_SHOT_HINTS: dict[str, dict[str, Any]] = {
+    "flight": {
+        "preferred_shots": ["aerial", "wide", "establishing"],
+        "avoid_shots":     ["close"],
+        "prompt_modifier": "aerial perspective, character in flight, ",
+    },
+    "teleportation": {
+        "preferred_shots": ["insert", "close", "medium"],
+        "avoid_shots":     [],
+        "prompt_modifier": "energy flash, motion blur, mid-teleport, ",
+    },
+    "fire_breath": {
+        "preferred_shots": ["wide", "extreme_wide", "close"],
+        "avoid_shots":     ["ots"],
+        "prompt_modifier": "fire breath, flames, dramatic orange glow, ",
+    },
+    "lightning": {
+        "preferred_shots": ["wide", "establishing", "medium"],
+        "avoid_shots":     [],
+        "prompt_modifier": "lightning bolt, electric energy, dramatic flash, ",
+    },
+    "magic": {
+        "preferred_shots": ["medium", "close", "insert"],
+        "avoid_shots":     [],
+        "prompt_modifier": "magical energy, arcane glow, ",
+    },
+    "super_strength": {
+        "preferred_shots": ["wide", "medium", "tracking"],
+        "avoid_shots":     [],
+        "prompt_modifier": "power stance, dynamic action, ",
+    },
+    "shapeshifting": {
+        "preferred_shots": ["medium", "close", "insert"],
+        "avoid_shots":     [],
+        "prompt_modifier": "mid-transformation, fluid form, ",
+    },
+    "immortality": {
+        "preferred_shots": [],
+        "avoid_shots":     [],
+        "prompt_modifier": "",
+    },
+    "healing": {
+        "preferred_shots": ["close", "insert"],
+        "avoid_shots":     [],
+        "prompt_modifier": "glowing aura, healing light, ",
+    },
+    "invisibility": {
+        "preferred_shots": ["medium", "wide"],
+        "avoid_shots":     [],
+        "prompt_modifier": "semi-transparent silhouette, shimmer effect, ",
+    },
+    "mind_control": {
+        "preferred_shots": ["close", "ots"],
+        "avoid_shots":     [],
+        "prompt_modifier": "intense eye contact, psychic energy, ",
+    },
+}
+
+# Maps Physical Form to the correct QA asset_type for validator dispatch
+PHYSICAL_FORM_ASSET_TYPE: dict[str, str] = {
+    "humanoid":  "character",
+    "quadruped": "creature",
+    "dragon":    "creature",
+    "bird":      "animal",
+    "serpent":   "creature",
+    "spirit":    "character",   # spirits use humanoid validator as fallback
+    "robot":     "robot",
+    "vehicle":   "vehicle",
+    "hybrid":    "creature",
+    "custom":    "character",   # custom falls back to character validator
+}
+
+
+def get_director_hints(
+    classification: str | None = None,
+    abilities: list[str] | None = None,
+    physical_form: str = "humanoid",
+) -> dict[str, Any]:
+    """
+    Return aggregated Director Engine hints for a character based on their
+    Classification, Abilities, and Physical Form.
+
+    Returns:
+        {
+          "shot_bias":        dict[str, float],  # per-shot-type additive bias
+          "prompt_modifiers": list[str],         # ability prompt prefixes to inject
+          "avoid_shots":      list[str],         # shot slugs to avoid for this character
+          "asset_type":       str,               # QA validator to use
+        }
+    """
+    shot_bias: dict[str, float] = {}
+    prompt_modifiers: list[str] = []
+    avoid_shots: list[str] = []
+
+    # Classification bias
+    if classification and classification in CLASSIFICATION_SHOT_HINTS:
+        for shot, delta in CLASSIFICATION_SHOT_HINTS[classification].items():
+            shot_bias[shot] = shot_bias.get(shot, 0.0) + delta
+
+    # Ability biases + prompt modifiers
+    for ability in (abilities or []):
+        hint = ABILITY_SHOT_HINTS.get(ability)
+        if not hint:
+            continue
+        for preferred in hint.get("preferred_shots", []):
+            shot_bias[preferred] = shot_bias.get(preferred, 0.0) + 0.15
+        for avoided in hint.get("avoid_shots", []):
+            if avoided not in avoid_shots:
+                avoid_shots.append(avoided)
+        if hint.get("prompt_modifier"):
+            prompt_modifiers.append(hint["prompt_modifier"])
+
+    return {
+        "shot_bias":        shot_bias,
+        "prompt_modifiers": prompt_modifiers,
+        "avoid_shots":      avoid_shots,
+        "asset_type":       PHYSICAL_FORM_ASSET_TYPE.get(physical_form, "character"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Prompt building
 # ---------------------------------------------------------------------------
 
@@ -305,6 +457,8 @@ def build_identity_prompt(
     identity: "CharacterIdentity",
     species_id: str = DEFAULT_SPECIES_ID,
     variant: "CharacterVariant | None" = None,
+    classification: str | None = None,
+    abilities: list[str] | None = None,
     render_style: str = "bw_sketch",
 ) -> str:
     """
@@ -312,9 +466,11 @@ def build_identity_prompt(
 
     Layer order:
       1. Species prefix (anatomy constraints)
-      2. Core identity (face, proportions, markers, hair, eyes)
-      3. Active variant overrides (outfit, hair colour, accessories, age)
-      4. Render style modifier (prepended by prompt_builder — not duplicated here)
+      2. Classification modifier (god → divine authority, demon → menacing, etc.)
+      3. Core identity (face, proportions, markers, hair, eyes)
+      4. Active variant overrides (outfit, hair colour, accessories, age)
+      5. Ability modifiers (flight → wings visible, fire_breath → flames, etc.)
+      6. Render style modifier (prepended by prompt_builder — not duplicated here)
 
     Only the variant layer changes per scene. Identity and species never change.
     """
@@ -325,7 +481,22 @@ def build_identity_prompt(
     if species.get("prompt_prefix"):
         parts.append(species["prompt_prefix"].rstrip(", "))
 
-    # ── Layer 2: Core Identity ────────────────────────────────────────────────
+    # ── Layer 2: Classification modifier ─────────────────────────────────────
+    _CLASSIFICATION_MODIFIERS: dict[str, str] = {
+        "god":     "divine authority, otherworldly presence",
+        "demon":   "menacing, dark energy, infernal presence",
+        "angel":   "radiant, divine light, celestial",
+        "deity":   "transcendent, immortal aura, godlike scale",
+        "monster": "terrifying, monstrous scale",
+        "villain": "dark intensity, commanding menace",
+        "hero":    "heroic bearing, determined expression",
+        "alien":   "otherworldly features, alien physiology",
+        "spirit":  "translucent, ethereal, ghost-like",
+    }
+    if classification and classification in _CLASSIFICATION_MODIFIERS:
+        parts.append(_CLASSIFICATION_MODIFIERS[classification])
+
+    # ── Layer 3: Core Identity ────────────────────────────────────────────────
     parts.append(identity.name)
 
     if identity.face_description:
@@ -343,7 +514,7 @@ def build_identity_prompt(
     for acc in (identity.signature_accessories or []):
         parts.append(acc)
 
-    # ── Layer 3: Active Variant ───────────────────────────────────────────────
+    # ── Layer 4: Active Variant ───────────────────────────────────────────────
     if variant:
         if variant.outfit:
             parts.append(f"wearing {variant.outfit}")
@@ -359,6 +530,12 @@ def build_identity_prompt(
             override_species = get_species(variant.species_override)
             if override_species.get("prompt_prefix"):
                 parts.insert(0, override_species["prompt_prefix"].rstrip(", "))
+
+    # ── Layer 5: Ability modifiers ────────────────────────────────────────────
+    for ability in (abilities or []):
+        hint = ABILITY_SHOT_HINTS.get(ability)
+        if hint and hint.get("prompt_modifier"):
+            parts.append(hint["prompt_modifier"].rstrip(", "))
 
     return ", ".join(p.strip() for p in parts if p.strip())
 

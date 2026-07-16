@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { saveAs } from 'file-saver'
-import type { CharacterProfile, StoryboardProject, StoryboardScene } from '../types/storyboard'
-import { generateImage, scanContinuityImpact, reforgeAffectedFrames } from '../api/storyboard'
+import type { CharacterProfile, RenderStyle, StoryboardProject, StoryboardScene } from '../types/storyboard'
+import { generateImage, scanContinuityImpact, reforgeAffectedFrames, updateCKGIdentity } from '../api/storyboard'
 import type { ContinuityImpactResult } from '../api/storyboard'
 import CharacterPackagePage from './CharacterPackagePage'
 import ContinuityImpactModal from '../components/ContinuityImpactModal'
@@ -12,7 +12,7 @@ const ROLE_TAGS = ['Protagonist', 'Antagonist', 'Supporting', 'Other']
 interface Props {
   characters: CharacterProfile[]
   scenes?: StoryboardScene[]
-  renderStyle?: string
+  renderStyle?: RenderStyle | 'bw_detailed'
   project?: StoryboardProject | null
   /** Called when the user uploads a replacement portrait for a character. */
   onReplacePortrait?: (charId: string, dataUrl: string) => void
@@ -87,7 +87,7 @@ function CharacterRow({
   onOpenPackage: () => void
   onReplacePortrait?: (charId: string, dataUrl: string) => void
   onEditSave?: (updated: CharacterProfile, changedField: string, oldValue: string, newValue: string) => void
-  renderStyle: string
+  renderStyle: RenderStyle | 'bw_detailed'
   isPackageReady?: boolean
   /** Number of scenes this character appears in (from characters_present) */
   sceneCount?: number
@@ -560,6 +560,22 @@ export default function CharacterDictionaryPage({
     // Immediately update local character list
     setCharacters(prev => prev.map(c => c.id === updated.id ? updated : c))
     onUpdateCharacter?.(updated)
+
+    // Fix 4: write the updated identity back to the Project Canon (CKG) so
+    // every engine reads the latest character data on next generation.
+    if (project?.db_id && updated.identity) {
+      try {
+        await updateCKGIdentity(
+          project.db_id,
+          updated.id,
+          updated.identity,
+          updated.species ?? { species_id: 'human', label: 'Human', custom_notes: null },
+          updated.variants ?? [],
+        )
+      } catch {
+        // CKG update is best-effort — a network failure must not block the UX
+      }
+    }
 
     // If no project or no scenes, nothing to propagate
     if (!project || scenes.length === 0) {

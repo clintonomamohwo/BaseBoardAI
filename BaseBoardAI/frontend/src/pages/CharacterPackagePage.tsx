@@ -16,11 +16,17 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { saveAs } from 'file-saver'
 import type {
+  RenderStyle,
   CharacterProfile,
   CharacterPackage,
   CharacterOverview,
   CharacterRelationship,
   StoryboardScene,
+  CharacterIdentity,
+  SpeciesProfile,
+  PhysicalForm,
+  CharacterVariant,
+  QARepairAction,
 } from '../types/storyboard'
 import {
   generateCharacterPackage,
@@ -29,6 +35,10 @@ import {
   generateFullCharacterPack,
 } from '../api/storyboard'
 import GalleryLightbox, { type GalleryItem } from '../components/GalleryLightbox'
+import IdentityUploader from '../components/IdentityUploader'
+import VariantManager from '../components/VariantManager'
+import VisualQAPanel from '../components/VisualQAPanel'
+import SpeciesSelector from '../components/SpeciesSelector'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -81,8 +91,8 @@ const RELATIONSHIP_COLORS: Record<string, string> = {
 }
 
 const PACKAGE_TABS = [
-  'Overview', 'Portrait', 'Turnaround', 'Expressions', 'Poses',
-  'Outfits', 'Palette', 'Props', 'Relationships', 'Scenes', 'AI Prompt', 'Versions',
+  'Overview', 'Identity', 'Variants', 'Expressions', 'Poses',
+  'Outfits', 'Abilities', 'Relationships', 'Scenes', 'Quality', 'AI Prompt', 'Versions',
 ] as const
 type PackageTab = typeof PACKAGE_TABS[number]
 
@@ -93,7 +103,21 @@ const AUTO_INIT_SECTIONS = ['portrait', 'turnaround', 'expressions', 'poses', 'o
 // Helper — build empty package state
 // ---------------------------------------------------------------------------
 
-function buildEmptyPackage(char: CharacterProfile, renderStyle: string): CharacterPackage {
+const DEFAULT_PHYSICAL_FORM: PhysicalForm = {
+  form: 'humanoid',
+  custom_description: null,
+  limb_count: null,
+  has_wings: false,
+  has_tail: false,
+}
+
+const DEFAULT_SPECIES: SpeciesProfile = {
+  species_id: 'human',
+  label: 'Human',
+  custom_notes: null,
+}
+
+function buildEmptyPackage(char: CharacterProfile, renderStyle: RenderStyle): CharacterPackage {
   const fb = char.facial_blueprint
   const basePrompt = [
     char.name,
@@ -125,6 +149,20 @@ function buildEmptyPackage(char: CharacterProfile, renderStyle: string): Charact
     versions: [],
     sceneAppearances: [],
     autoInitDone: false,
+    // ── Character DNA System ─────────────────────────────────────────────
+    identity: char.identity ?? null,
+    species: char.species ?? DEFAULT_SPECIES,
+    physicalForm: char.physical_form ?? DEFAULT_PHYSICAL_FORM,
+    classification: char.classification ?? null,
+    abilities: char.abilities ?? [],
+    visualRules: char.visual_rules ?? [],
+    variants: char.variants ?? [
+      { variant_id: 'default', label: 'Default', outfit: null, hair_override: null,
+        age_override: null, species_override: null, extra_accessories: [], scene_range: null, notes: 'Base appearance' }
+    ],
+    activeVariantId: char.active_variant_id ?? 'default',
+    qaResult: null,
+    completionScore: 0,
   }
 }
 
@@ -480,12 +518,41 @@ function RelationshipGraph({
 // ---------------------------------------------------------------------------
 // Main Page
 // ---------------------------------------------------------------------------
+// Sub-component: RuleAdder (inline text input to add a visual rule)
+// ---------------------------------------------------------------------------
+
+function RuleAdder({ onAdd }: { onAdd: (rule: string) => void }) {
+  const [draft, setDraft] = useState('')
+  return (
+    <div style={{ display:'flex', gap:8, marginTop:4 }}>
+      <input
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && draft.trim()) { onAdd(draft.trim()); setDraft('') } }}
+        placeholder="e.g. always show wings"
+        style={{ flex:1, background:'var(--bg-base)', border:'1px solid var(--border)', borderRadius:4, padding:'6px 10px', fontSize:10, color:'var(--text-base)', outline:'none', fontFamily:'inherit' }}
+        onFocus={e => (e.target.style.borderColor='var(--gold)')}
+        onBlur={e => (e.target.style.borderColor='var(--border)')}
+      />
+      <button
+        disabled={!draft.trim()}
+        onClick={() => { if (draft.trim()) { onAdd(draft.trim()); setDraft('') } }}
+        style={{ padding:'6px 14px', borderRadius:4, fontSize:9, letterSpacing:'0.15em', textTransform:'uppercase', cursor:'pointer', border:'1px solid rgba(201,168,76,0.35)', background:'transparent', color:'var(--gold)', opacity: draft.trim() ? 1 : 0.4, transition:'opacity 120ms' }}>
+        + Add
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main Page
+// ---------------------------------------------------------------------------
 
 interface Props {
   character: CharacterProfile
   allCharacters?: CharacterProfile[]
   scenes: StoryboardScene[]
-  renderStyle?: string
+  renderStyle?: RenderStyle | 'bw_detailed'
   onBack?: () => void
   /** Called when auto-init for this character completes */
   onAutoInitComplete?: (charId: string) => void
@@ -494,11 +561,11 @@ interface Props {
 // Detail level only applies when the base render style is a B&W variant.
 type DetailLevel = 'simple' | 'detailed'
 
-function resolveRenderStyle(base: string, detail: DetailLevel): string {
+function resolveRenderStyle(base: RenderStyle | 'bw_detailed', detail: DetailLevel): RenderStyle {
   if (base === 'bw_sketch' || base === 'bw_detailed') {
     return detail === 'detailed' ? 'bw_detailed' : 'bw_sketch'
   }
-  return base // flat_color / full_shaded — detail level has no effect
+  return base as RenderStyle // flat_color / full_shaded — detail level has no effect
 }
 
 export default function CharacterPackagePage({
@@ -849,7 +916,7 @@ export default function CharacterPackagePage({
         )}
         <div style={{ flex:1 }}>
           <h1 style={{ fontSize:14, fontWeight:600, color:'var(--text-base)', fontFamily:'Georgia,serif', letterSpacing:'0.04em' }}>{character.name}</h1>
-          <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--gold)', opacity:0.4, textTransform:'uppercase', marginTop:2 }}>Character Package · {character.id}</p>
+          <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--gold)', opacity:0.4, textTransform:'uppercase', marginTop:2 }}>Character DNA · {character.id}</p>
         </div>
 
         {/* Auto-init progress bar */}
@@ -977,7 +1044,126 @@ export default function CharacterPackagePage({
           />
         )}
 
-        {/* ── Portrait ─────────────────────────────────── */}
+        {/* ── Identity ─────────────────────────────────── */}
+        {activeTab === 'Identity' && (
+          <div>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
+              <div>
+                <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500 }}>Character Identity</h2>
+                <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.4, marginTop:4, lineHeight:1.6 }}>
+                  Layer 1 — who the character is. Immutable across species, outfits, and rendering styles.
+                </p>
+              </div>
+            </div>
+
+            {/* Species Selector */}
+            <div style={{ marginBottom:28 }}>
+              <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.5, marginBottom:10 }}>Species Profile</p>
+              <SpeciesSelector
+                species={pkg.species}
+                onChange={sp => setPkg(p => ({ ...p, species: sp }))}
+              />
+            </div>
+
+            {/* Physical Form */}
+            <div style={{ marginBottom:28 }}>
+              <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.5, marginBottom:10 }}>Physical Form</p>
+              <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:12 }}>
+                {(['humanoid','quadruped','dragon','bird','serpent','spirit','robot','vehicle','hybrid','custom'] as const).map(f => (
+                  <button key={f} onClick={() => setPkg(p => ({ ...p, physicalForm: { ...p.physicalForm, form: f } }))}
+                    style={{
+                      padding:'5px 12px', borderRadius:999, fontSize:9, cursor:'pointer',
+                      border:`1px solid ${pkg.physicalForm.form===f ? 'var(--gold)' : 'var(--border)'}`,
+                      background: pkg.physicalForm.form===f ? 'rgba(201,168,76,0.15)' : 'transparent',
+                      color: pkg.physicalForm.form===f ? 'var(--gold)' : 'var(--text-muted)',
+                      letterSpacing:'0.1em', textTransform:'capitalize', transition:'all 120ms',
+                    }}>
+                    {f}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display:'flex', gap:16 }}>
+                {[{key:'has_wings', label:'Has Wings'},{key:'has_tail', label:'Has Tail'}].map(({key, label}) => (
+                  <label key={key} style={{ display:'flex', alignItems:'center', gap:6, cursor:'pointer', fontSize:10, color:'var(--text-muted)', opacity:0.7 }}>
+                    <input type="checkbox"
+                      checked={pkg.physicalForm[key as 'has_wings'|'has_tail']}
+                      onChange={e => setPkg(p => ({ ...p, physicalForm: { ...p.physicalForm, [key]: e.target.checked } }))}
+                      style={{ accentColor:'var(--gold)' }} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Classification */}
+            <div style={{ marginBottom:28 }}>
+              <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.5, marginBottom:10 }}>
+                Classification — narrative role only, never affects anatomy
+              </p>
+              <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                {(['human','god','demon','angel','alien','robot','spirit','monster','hero','villain','deity','custom'] as const).map(c => (
+                  <button key={c} onClick={() => setPkg(p => ({ ...p, classification: pkg.classification === c ? null : c }))}
+                    style={{
+                      padding:'5px 12px', borderRadius:999, fontSize:9, cursor:'pointer',
+                      border:`1px solid ${pkg.classification===c ? 'var(--gold)' : 'var(--border)'}`,
+                      background: pkg.classification===c ? 'rgba(201,168,76,0.15)' : 'transparent',
+                      color: pkg.classification===c ? 'var(--gold)' : 'var(--text-muted)',
+                      letterSpacing:'0.1em', textTransform:'capitalize', transition:'all 120ms',
+                    }}>
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Reference Image Upload */}
+            {pkg.identity ? (
+              <IdentityUploader
+                identity={pkg.identity}
+                onChange={id => setPkg(p => ({ ...p, identity: id }))}
+                characterId={character.id}
+              />
+            ) : (
+              <div style={{ padding:'24px 0' }}>
+                <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.4, marginBottom:12, lineHeight:1.7 }}>
+                  No identity set yet. Fill in the fields below to establish the character's canonical identity.
+                </p>
+                <button onClick={() => setPkg(p => ({
+                  ...p, identity: {
+                    name: character.name, face_description: null, hair_description: null,
+                    eye_description: null, body_proportions: null, age: null,
+                    distinct_markers: null, signature_accessories: [],
+                    reference_primary: null, reference_front: null, reference_left: null,
+                    reference_right: null, reference_back: null,
+                  }
+                }))}
+                  style={{ padding:'8px 20px', borderRadius:4, fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', cursor:'pointer', border:'1px solid var(--gold)', background:'transparent', color:'var(--gold)' }}>
+                  + Initialise Identity
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Variants ─────────────────────────────────── */}
+        {activeTab === 'Variants' && (
+          <div>
+            <div style={{ marginBottom:20 }}>
+              <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500 }}>Appearance Variants</h2>
+              <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.4, marginTop:4, lineHeight:1.6 }}>
+                Layer 3 — how the character appears at different story points. Variants inherit identity and never modify it.
+              </p>
+            </div>
+            <VariantManager
+              variants={pkg.variants}
+              activeVariantId={pkg.activeVariantId}
+              onActivate={id => setPkg(p => ({ ...p, activeVariantId: id }))}
+              onChange={updated => setPkg(p => ({ ...p, variants: updated }))}
+            />
+          </div>
+        )}
+
+        {/* ── (old Portrait tab content mapped to Expressions now — kept below) ── */}
         {activeTab === 'Portrait' && (
           <div>
             <SectionHeader title="Hero Portrait" section="portrait" />
@@ -1177,6 +1363,112 @@ export default function CharacterPackagePage({
                 {isLoading('props') && <Spinner />}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Abilities ────────────────────────────────── */}
+        {activeTab === 'Abilities' && (
+          <div style={{ maxWidth:680 }}>
+            <div style={{ marginBottom:20 }}>
+              <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500 }}>Character Abilities</h2>
+              <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.4, marginTop:4, lineHeight:1.6 }}>
+                Abilities influence Director Engine shot selection. A flying character gets aerial shots preferred;
+                fire_breath gets wide dramatic framing. These are injected into every frame prompt at generation time.
+              </p>
+            </div>
+
+            {/* Ability chip grid */}
+            <div style={{ marginBottom:24 }}>
+              <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.5, marginBottom:10 }}>Active Abilities</p>
+              <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                {(['flight','teleportation','fire_breath','immortality','shapeshifting','magic','lightning','healing','super_strength','invisibility','mind_control'] as const).map(a => {
+                  const active = pkg.abilities.includes(a)
+                  return (
+                    <button key={a} onClick={() => setPkg(p => ({
+                      ...p, abilities: active ? p.abilities.filter(x => x !== a) : [...p.abilities, a]
+                    }))}
+                      style={{
+                        padding:'5px 12px', borderRadius:999, fontSize:9, cursor:'pointer',
+                        border:`1px solid ${active ? 'var(--gold)' : 'var(--border)'}`,
+                        background: active ? 'rgba(201,168,76,0.15)' : 'transparent',
+                        color: active ? 'var(--gold)' : 'var(--text-muted)',
+                        letterSpacing:'0.1em', textTransform:'capitalize', transition:'all 120ms',
+                      }}>
+                      {a.replace(/_/g,' ')}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Visual Rules */}
+            <div style={{ marginBottom:24 }}>
+              <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.5, marginBottom:10 }}>
+                Visual Rules — enforced by QA Engine and Director Engine
+              </p>
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                {pkg.visualRules.map((rule, i) => (
+                  <div key={i} style={{ display:'flex', alignItems:'center', gap:8, background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:4, padding:'6px 10px' }}>
+                    <span style={{ flex:1, fontSize:10, color:'var(--text-base)', opacity:0.75 }}>{rule}</span>
+                    <button onClick={() => setPkg(p => ({ ...p, visualRules: p.visualRules.filter((_,j) => j !== i) }))}
+                      style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text-muted)', opacity:0.4, fontSize:12, padding:0 }}>✕</button>
+                  </div>
+                ))}
+                <RuleAdder onAdd={rule => setPkg(p => ({ ...p, visualRules: [...p.visualRules, rule] }))} />
+              </div>
+            </div>
+
+            {/* Active ability details */}
+            {pkg.abilities.length > 0 && (
+              <div>
+                <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.5, marginBottom:10 }}>Director Engine Effect</p>
+                {pkg.abilities.map(a => {
+                  const EFFECT: Record<string, {shots: string; modifier: string}> = {
+                    flight:        { shots: 'Aerial, Wide, Establishing preferred · Close avoided', modifier: 'aerial perspective, character in flight' },
+                    teleportation: { shots: 'Insert, Close, Medium preferred', modifier: 'energy flash, motion blur, mid-teleport' },
+                    fire_breath:   { shots: 'Wide, Extreme Wide, Close preferred · OTS avoided', modifier: 'fire breath, flames, dramatic orange glow' },
+                    lightning:     { shots: 'Wide, Establishing, Medium preferred', modifier: 'lightning bolt, electric energy, dramatic flash' },
+                    magic:         { shots: 'Medium, Close, Insert preferred', modifier: 'magical energy, arcane glow' },
+                    super_strength:{ shots: 'Wide, Medium, Tracking preferred', modifier: 'power stance, dynamic action' },
+                    shapeshifting: { shots: 'Medium, Close, Insert preferred', modifier: 'mid-transformation, fluid form' },
+                    immortality:   { shots: 'No shot bias', modifier: 'none' },
+                    healing:       { shots: 'Close, Insert preferred', modifier: 'glowing aura, healing light' },
+                    invisibility:  { shots: 'Medium, Wide preferred', modifier: 'semi-transparent silhouette, shimmer' },
+                    mind_control:  { shots: 'Close, OTS preferred', modifier: 'intense eye contact, psychic energy' },
+                  }
+                  const ef = EFFECT[a]
+                  if (!ef) return null
+                  return (
+                    <div key={a} style={{ marginBottom:8, padding:'10px 14px', background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:6 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+                        <span style={{ fontSize:10, color:'var(--gold)', opacity:0.85, textTransform:'capitalize' }}>{a.replace(/_/g,' ')}</span>
+                      </div>
+                      <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.5, lineHeight:1.6 }}>Shots: {ef.shots}</p>
+                      <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.5, lineHeight:1.6 }}>Prompt: "{ef.modifier}"</p>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Quality (Visual QA) ───────────────────────── */}
+        {activeTab === 'Quality' && (
+          <div style={{ maxWidth:600 }}>
+            <div style={{ marginBottom:20 }}>
+              <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500 }}>Visual QA Engine</h2>
+              <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.4, marginTop:4, lineHeight:1.6 }}>
+                Project-Aware QA validates generated images against the character's DNA: identity, species, anatomy,
+                composition, camera, lighting, props, environment, and continuity. Pass threshold is 80%.
+              </p>
+            </div>
+            <VisualQAPanel
+              qaResult={pkg.qaResult}
+              onRunQA={() => { /* placeholder — wire to runCharacterQA API in a future step */ }}
+              onRepair={(_action: QARepairAction) => { /* placeholder — wire per-category repair endpoints */ }}
+              loading={isLoading('qa')}
+            />
           </div>
         )}
 

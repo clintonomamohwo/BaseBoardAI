@@ -9,6 +9,27 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# ---------------------------------------------------------------------------
+# Character DNA — Physical Form, Classification, and Abilities
+# These are the three new CKM layers that the previous Identity System lacked.
+# ---------------------------------------------------------------------------
+
+PHYSICAL_FORM_OPTIONS = Literal[
+    "humanoid", "quadruped", "dragon", "bird", "serpent",
+    "spirit", "robot", "vehicle", "hybrid", "custom"
+]
+
+CLASSIFICATION_OPTIONS = Literal[
+    "human", "god", "demon", "angel", "alien", "robot",
+    "spirit", "monster", "hero", "villain", "deity", "custom"
+]
+
+ABILITY_OPTIONS = Literal[
+    "flight", "teleportation", "fire_breath", "immortality",
+    "shapeshifting", "magic", "lightning", "healing",
+    "super_strength", "invisibility", "mind_control", "custom"
+]
+
 
 # ---------------------------------------------------------------------------
 # Sub-models & Domain Entities (Internal State Structures)
@@ -68,6 +89,36 @@ class CharacterIdentity(BaseModel):
     reference_left:    str | None = Field(None, description="Left-profile reference")
     reference_right:   str | None = Field(None, description="Right-profile reference")
     reference_back:    str | None = Field(None, description="Back-view reference")
+
+
+class PhysicalForm(BaseModel):
+    """
+    CKM Layer — HOW the character's anatomy is structured.
+
+    Completely separate from Classification (narrative role).
+    Zeus = PhysicalForm(form='humanoid'), Classification='god'.
+    Dragon God = PhysicalForm(form='dragon'), Classification='god'.
+
+    Physical Form determines QA anatomy validation and Director Engine
+    composition strategy (e.g., dragon → wide/aerial shots preferred).
+    """
+    form: PHYSICAL_FORM_OPTIONS = Field(
+        "humanoid",
+        description=(
+            "Structural anatomy type. Drives QA validator dispatch and Director Engine "
+            "composition strategy. 'humanoid' is the default for all human-base species."
+        )
+    )
+    custom_description: str | None = Field(
+        None,
+        description="Free-text anatomy description — required when form='custom'"
+    )
+    limb_count: int | None = Field(
+        None,
+        description="Optional explicit limb count override (for hybrid/custom forms)"
+    )
+    has_wings: bool = Field(False, description="True if this form includes wings")
+    has_tail: bool = Field(False, description="True if this form includes a tail")
 
 
 class SpeciesProfile(BaseModel):
@@ -169,16 +220,46 @@ class CharacterProfileBase(BaseModel):
     facial_blueprint: FacialBlueprint
     wardrobe_defaults: str
 
-    # ── Character Identity System (CKG) ──────────────────────────────────────
-    # All three layers are optional — absent for legacy characters created before
-    # the Identity System was introduced. Identity defaults to None (the system
-    # falls back to facial_blueprint for backwards compat).
+    # ── Character DNA System (CKG) ────────────────────────────────────────────
+    # All layers are optional — absent for legacy characters created before the
+    # DNA System was introduced. Falls back to facial_blueprint for backwards compat.
     identity: CharacterIdentity | None = Field(
-        None, description="Canonical identity — who the character is"
+        None, description="Layer 1 — canonical identity (who the character is)"
     )
     species: SpeciesProfile = Field(
         default_factory=SpeciesProfile,
-        description="Anatomy profile — what the character is. Defaults to human."
+        description="Layer 2 — anatomy profile (what the character is). Defaults to human."
+    )
+    physical_form: PhysicalForm = Field(
+        default_factory=PhysicalForm,
+        description=(
+            "CKM Layer — structural anatomy type (humanoid, quadruped, dragon…). "
+            "DISTINCT from species and classification. "
+            "Drives QA validator dispatch and Director Engine composition strategy."
+        )
+    )
+    classification: CLASSIFICATION_OPTIONS | None = Field(
+        None,
+        description=(
+            "Narrative role classification (god, demon, hero, villain…). "
+            "Does NOT affect anatomy — only influences story logic, world building, "
+            "and cinematic behaviour (e.g. god → dramatic establishing shot preference)."
+        )
+    )
+    abilities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Character abilities that influence storyboard generation. "
+            "e.g. ['flight', 'fire_breath']. "
+            "A flying character gets aerial shots preferred; fire_breath → extreme wide or close insert."
+        )
+    )
+    visual_rules: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Per-character visual rules enforced by the QA Engine and Director Engine. "
+            "e.g. ['always show wings', 'never show without crown', 'light from above only']"
+        )
     )
     variants: list[CharacterVariant] = Field(
         default_factory=list,
@@ -304,7 +385,28 @@ class StoryboardFrameBase(BaseModel):
     )
     locked_fields: list[str] = Field(
         default_factory=list,
-        description="Fields locked by user — never overwritten during regeneration. e.g. ['face','camera']"
+        description="Fields locked by user — never overwritten during regeneration. e.g. ['shot_type', 'camera_angle', 'lighting_notes']"
+    )
+
+    # ── Cinematic Brain auto-decision tracking ────────────────────────────────
+    auto_selected: dict[str, bool] = Field(
+        default_factory=dict,
+        description=(
+            "Tracks which cinematic fields were auto-selected by the Cinematic Brain "
+            "vs. explicitly set by the LLM or user. "
+            "e.g. {'shot_type': True, 'lighting_notes': True, 'camera_angle': False}. "
+            "Frontend uses this to show 'AI chosen' badges. "
+            "Setting a field to False means it was user-supplied or LLM-supplied."
+        )
+    )
+    director_rationale: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Per-field rationale from the Cinematic Brain. "
+            "e.g. {'shot_type': 'Emotional moment — close-up registers facial performance.', "
+            "'lighting_notes': 'Night horror — low key reinforces dread.'}. "
+            "Displayed in the Studio Inspector director notes panel."
+        )
     )
 
 class ScriptSceneBase(BaseModel):
@@ -500,6 +602,11 @@ class CreativeKnowledgeGraph(BaseModel):
     character_variants: dict[str, Any] = Field(
         default_factory=dict,
         description="char_id → list of CharacterVariant dicts"
+    )
+    # char_id → list[str] of ability slugs — consumed by prompt_builder and Director Engine
+    character_abilities: dict[str, Any] = Field(
+        default_factory=dict,
+        description="char_id → list of ability slugs, e.g. ['flight', 'fire_breath']"
     )
     # Backwards-compat: char_id → flat appearance summary used by prompt_builder
     approved_characters: dict[str, Any] = Field(

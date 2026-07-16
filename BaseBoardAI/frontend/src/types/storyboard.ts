@@ -77,11 +77,19 @@ export interface CharacterPackage {
   // Auto-init status — tracks if default sections have been kicked off
   autoInitDone: boolean
 
-  // ── Character Identity System ────────────────────────────────────────────
+  // ── Character DNA System ──────────────────────────────────────────────────
   /** Layer 1 — who the character is. Populated from reference image upload or manual entry. */
   identity: CharacterIdentity | null
   /** Layer 2 — anatomy type. Defaults to human. */
   species: SpeciesProfile
+  /** CKM — structural anatomy (humanoid, dragon, quadruped…). Distinct from species/classification. */
+  physicalForm: PhysicalForm
+  /** Narrative classification (god, demon, hero…). Story logic only — never affects anatomy. */
+  classification: ClassificationType | null
+  /** Abilities that influence Director Engine shot selection (e.g. 'flight' → aerial shots). */
+  abilities: string[]
+  /** Per-character visual rules enforced by QA Engine and Director Engine. */
+  visualRules: string[]
   /** Layer 3 — appearance variants (Default, Battle Armor, Elf Form, etc.) */
   variants: CharacterVariant[]
   /** Which variant is currently active for generation. */
@@ -92,7 +100,7 @@ export interface CharacterPackage {
   qaResult: QAScoreResult | null
 
   // ── Completion tracking ───────────────────────────────────────────────────
-  /** 0–100 completion score across all CIS layers + generated asset sections. */
+  /** 0–100 completion score across all DNA layers + generated asset sections. */
   completionScore: number
 }
 
@@ -105,8 +113,38 @@ export interface FacialBlueprint {
 }
 
 // ---------------------------------------------------------------------------
-// Character Identity System — four independent layers
+// Character DNA System — all independent layers
 // ---------------------------------------------------------------------------
+
+// Physical Form options (anatomy structure — NOT the same as classification)
+export type PhysicalFormType =
+  | 'humanoid' | 'quadruped' | 'dragon' | 'bird' | 'serpent'
+  | 'spirit' | 'robot' | 'vehicle' | 'hybrid' | 'custom'
+
+// Narrative classification — story logic only, NEVER affects anatomy
+export type ClassificationType =
+  | 'human' | 'god' | 'demon' | 'angel' | 'alien' | 'robot'
+  | 'spirit' | 'monster' | 'hero' | 'villain' | 'deity' | 'custom'
+
+// Known abilities that influence Director Engine shot selection
+export type AbilityType =
+  | 'flight' | 'teleportation' | 'fire_breath' | 'immortality'
+  | 'shapeshifting' | 'magic' | 'lightning' | 'healing'
+  | 'super_strength' | 'invisibility' | 'mind_control' | 'custom'
+
+/**
+ * CKM Physical Form — the structural anatomy of the character.
+ * DISTINCT from species and classification.
+ * Zeus: form='humanoid', classification='god'
+ * Dragon God: form='dragon', classification='god'
+ */
+export interface PhysicalForm {
+  form: PhysicalFormType
+  custom_description: string | null
+  limb_count: number | null
+  has_wings: boolean
+  has_tail: boolean
+}
 
 /** Layer 1 — WHO the character is. Immutable across species and rendering styles. */
 export interface CharacterIdentity {
@@ -180,9 +218,17 @@ export interface CharacterProfile {
   wardrobe_defaults: string
   /** User-uploaded reference image (base64 data URL). Not stored in DB — frontend only. */
   reference_image?: string
-  // ── Character Identity System layers (CKG) ───────────────────────────────
+  // ── Character DNA System layers (CKG) ────────────────────────────────────
   identity?: CharacterIdentity | null
   species?: SpeciesProfile
+  /** Structural anatomy — distinct from species/classification */
+  physical_form?: PhysicalForm
+  /** Narrative classification — story logic only, never affects anatomy */
+  classification?: ClassificationType | null
+  /** Abilities that influence Director Engine shot selection */
+  abilities?: string[]
+  /** Per-character visual rules for QA and Director Engine */
+  visual_rules?: string[]
   variants?: CharacterVariant[]
   active_variant_id?: string | null
 }
@@ -241,7 +287,19 @@ export interface StoryboardFrame {
   lens?: string | null
   focal_length?: string | null
   depth_style?: string | null
+  /** Fields explicitly locked by the user — Cinematic Brain never overwrites these. */
   locked_fields?: string[]
+  /**
+   * Tracks which cinematic fields were auto-selected by the Cinematic Brain.
+   * e.g. { shot_type: true, lighting_notes: true, camera_angle: false }
+   * Frontend uses this to show "AI ✦" badges on auto-selected fields.
+   */
+  auto_selected?: Record<string, boolean>
+  /**
+   * Per-field rationale from the Cinematic Brain, shown in the Director Notes panel.
+   * e.g. { shot_type: 'Emotional moment — close-up registers facial performance.' }
+   */
+  director_rationale?: Record<string, string>
 }
 
 export interface StoryboardScene {
@@ -266,6 +324,8 @@ export interface CreativeKnowledgeGraph {
   character_identities: Record<string, CharacterIdentity & { _canonical_prompt?: string }>
   character_species: Record<string, SpeciesProfile>
   character_variants: Record<string, CharacterVariant[]>
+  /** char_id → ability slug list — consumed by Prompt Builder and Director Engine */
+  character_abilities: Record<string, string[]>
 
   // ── Backwards-compat flat summaries ──────────────────────────────────────
   approved_characters: Record<string, {

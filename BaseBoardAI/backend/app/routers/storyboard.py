@@ -404,6 +404,9 @@ def _build_canon(
     character_identities: dict[str, dict] = {}
     character_species_map: dict[str, dict] = {}
     character_variants_map: dict[str, list] = {}
+    # Fix 2: abilities map so prompt_builder._get_ability_modifiers() and
+    # director_engine.apply_character_shot_bias() actually receive data.
+    character_abilities_map: dict[str, list] = {}
 
     for char in characters:
         fb = char.facial_blueprint
@@ -426,6 +429,9 @@ def _build_canon(
             "age": fb.estimated_age,
             "distinct_markers": fb.distinct_markers,
         }
+
+        # ── Abilities node (Fix 2) ─────────────────────────────────────────
+        character_abilities_map[char.id] = list(char.abilities or [])
 
         # ── Full Identity node ─────────────────────────────────────────────
         # If the CharacterProfile already carries a CharacterIdentity (from the
@@ -519,6 +525,7 @@ def _build_canon(
         character_identities=character_identities,
         character_species=character_species_map,
         character_variants=character_variants_map,
+        character_abilities=character_abilities_map,
         world_bible_summary=world_bible_summary,
         locations=locations_map,
         style_guide=style_guide,
@@ -594,6 +601,9 @@ def _build_scene_orm(scene_data: ScriptSceneBase) -> ScriptSceneORM:
                 focal_length=frame.focal_length,
                 depth_style=frame.depth_style,
                 locked_fields=frame.locked_fields or [],
+                # Cinematic Brain decisions (Fix 3)
+                auto_selected=frame.auto_selected or {},
+                director_rationale=frame.director_rationale or {},
             )
         )
     return scene
@@ -661,6 +671,9 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
                         focal_length=f.focal_length,
                         depth_style=f.depth_style,
                         locked_fields=f.locked_fields or [],
+                        # Cinematic Brain decisions (Fix 3)
+                        auto_selected=f.auto_selected or {},
+                        director_rationale=f.director_rationale or {},
                     )
                     for f in s.frames
                 ],
@@ -719,8 +732,22 @@ def forge_storyboard_pipeline(
         characters, environments, payload.raw_script_text, payload.global_aesthetic,
         payload.render_style,
     )
+
+    # ── Build character hints for the Director Engine from the CKM ────────
+    # Fix 1: extract classification + abilities for every character so the
+    # Director Engine can apply shot biases before image generation.
+    from app.core.identity_system import get_director_hints
+    character_hints: dict[str, dict] = {
+        char.id: get_director_hints(
+            classification=char.classification,
+            abilities=list(char.abilities or []),
+            physical_form=(char.physical_form.form if char.physical_form else "humanoid"),
+        )
+        for char in characters
+    }
+
     # ── Director Engine: plan compositions + lenses before image generation ──
-    scenes = direct_storyboard(scenes)
+    scenes = direct_storyboard(scenes, character_hints=character_hints)
 
     # ── Build Project Canon from pipeline outputs ──────────────────────────
     # The canon is constructed silently here — it encodes every approved fact

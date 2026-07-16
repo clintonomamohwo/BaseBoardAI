@@ -162,6 +162,12 @@ class StoryboardFrameORM(Base):
     depth_style: Mapped[str | None] = mapped_column(Text, nullable=True)
     locked_fields: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
+    # ── Cinematic Brain decisions (Fix 3) ─────────────────────────────────────
+    # Persisting these means the Director Notes panel in the Studio Inspector
+    # continues to show AI badges and rationale after a page reload.
+    auto_selected: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    director_rationale: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
     scene_id: Mapped[int] = mapped_column(
         ForeignKey("script_scenes.id"), nullable=False
     )

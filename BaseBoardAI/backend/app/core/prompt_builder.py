@@ -118,6 +118,40 @@ def _get_canon_constraints(
     return ", ".join(c for c in constraints if c)
 
 
+def _get_ability_modifiers(
+    char_ids_in_action: list[str],
+    canon_context: dict[str, Any] | None,
+) -> str:
+    """
+    Build ability-derived prompt modifiers for characters present in this frame.
+
+    Reads the 'abilities' list from each character's CKG node and returns
+    the corresponding prompt_modifier strings from ABILITY_SHOT_HINTS.
+
+    e.g. a frame with a flying character gets: "aerial perspective, character in flight"
+    """
+    if not canon_context or not char_ids_in_action:
+        return ""
+
+    from app.core.identity_system import ABILITY_SHOT_HINTS
+
+    char_abilities_map = canon_context.get("character_abilities", {})
+    if not char_abilities_map:
+        return ""
+
+    modifiers: list[str] = []
+    seen: set[str] = set()
+    for char_id in char_ids_in_action:
+        abilities = char_abilities_map.get(char_id, [])
+        for ability in abilities:
+            hint = ABILITY_SHOT_HINTS.get(ability)
+            if hint and hint.get("prompt_modifier") and ability not in seen:
+                seen.add(ability)
+                modifiers.append(hint["prompt_modifier"].rstrip(", "))
+
+    return ", ".join(m for m in modifiers if m)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -145,7 +179,8 @@ def build_frame_prompt(
 
     # Detect any CHAR_ID tokens in the action text for canon lookup
     char_ids = re.findall(r"\bCHAR_[A-Z]+\b", frame.action_breakdown)
-    canon_str = _get_canon_constraints(char_ids, canon_context)
+    canon_str   = _get_canon_constraints(char_ids, canon_context)
+    ability_str = _get_ability_modifiers(char_ids, canon_context)
 
     body = (
         f"{frame.shot_type}, {frame.camera_angle}. "
@@ -154,6 +189,8 @@ def build_frame_prompt(
         f"{frame.action_breakdown}. "
         f"{frame.lighting_notes}"
     )
+    if ability_str:
+        body += f", {ability_str}"
     if canon_str:
         body += f", {canon_str}"
 
