@@ -52,31 +52,214 @@ Baseboard AI solves this by treating the entire pre-visualization workflow as a 
 
 ### User Workflow
 
-1. **Upload** — The user drops a screenplay, novel, script, game design document, or Markdown file (PDF, DOCX, TXT, FDX, or `.md`) onto the **New Project** screen.
+1. **Upload** — The user drops a screenplay, novel, script, game design document, or Markdown file (PDF, DOCX, TXT, FDX, or `.md`) onto the **New Project** screen. Three creation paths exist: Upload Story, Use Template (downloads a structured Markdown scaffold), or Start Blank.
 2. **Genesis Engine** — The platform extracts the full document text client-side and runs it through a three-stage IBM watsonx AI pipeline. A 12-card animated progress screen shows each analysis step completing in real time.
-3. **Creative Director's Report** — When the pipeline completes, an AI-generated summary card shows detected genre, estimated runtime, scene count, character count, emotional themes, and unique locations — before the user even enters the Studio.
-4. **Studio** — The main editing environment presents a three-column layout: Scene Index (left), Storyboard Canvas (centre), and Studio Inspector (right). Users browse scenes, review and lock individual frames, open the Animatic Player to preview the visual sequence, and export their cut as a production ZIP.
-5. **Character Dictionary** — A searchable list of every character in the production bible, each expandable to reveal their facial blueprint, estimated age, bone structure, distinct markers, and AI-generated portrait. One click opens the full **Character Package** — a multi-tab reference suite that generates portrait, turnaround (5-angle), expression grid (9 states), pose library (7 poses), outfit variants (7 looks), prop reference, and a 360° premium turnaround sheet on demand.
-6. **World Bible** — Every detected location listed with its emotional tone, color palette, environmental type, time-of-day descriptor, and all storyboard frames that were shot there — with a clickable lightbox gallery and ZIP download.
+3. **Director Engine** — Before any image is generated, the Director Engine analyzes the full storyboard output, enforces shot composition diversity, assigns cinematic lenses per frame, and enriches every frame with production metadata (mood, purpose, camera movement, dialogue, director notes).
+4. **Creative Director's Report** — When the pipeline completes, an AI-generated summary card shows detected genre, estimated runtime, scene count, character count, emotional themes, and unique locations — before the user even enters the Studio.
+5. **Compass Navigation** — A gold compass interface allows navigation between the four studio sections (Storyboard, Characters, World Bible, Inspector).
+6. **Studio** — The main editing environment presents a three-column layout: Scene Index (left), Storyboard Canvas (centre), and Studio Inspector (right). Users browse scenes, review and lock individual frames, open the Animatic Player to preview the visual sequence, and export their cut as a production ZIP.
+7. **Production Sheet** — Every frame card expands to reveal a full production sheet: Narrative Action (Level 1 — author's words), Visual Action (Level 2 — AI staging), Camera Movement, Lens, Lighting, Mood, Purpose, Characters Present, Frame Emotion, Dialogue, Sound Cue, Director's Notes, and Animation Beats (Level 3).
+8. **Action Timeline** — A collapsible per-scene beat sheet below the frame grid shows running timestamps, shot type distribution, and dialogue indicators across all frames.
+9. **Character Dictionary** — A searchable list of every character in the production bible, each expandable to reveal their facial blueprint, estimated age, bone structure, distinct markers, and AI-generated portrait. One click opens the full **Character Package** suite.
+10. **World Bible** — Every detected location listed with its emotional tone, color palette, environmental type, time-of-day descriptor, and all storyboard frames that were shot there — with a clickable lightbox gallery and ZIP download.
 
 ### Key Features
 
-- **Genesis Engine** — One-click full pipeline: characters → world → storyboard → images
-- **Three-Stage LLM Pipeline** — Sequential IBM watsonx inference: Character Standardizer → World Architect → Storyboard Orchestrator
-- **Automatic Model Fallback** — On 429 rate-limit, the backend automatically walks a chain of four watsonx models until one succeeds
+- **Genesis Engine** — One-click full pipeline: characters → world → storyboard → Director Engine → images
+- **Three-Stage LLM Pipeline** — Sequential IBM watsonx inference: Character Standardizer → World Architect → Storyboard Orchestrator (Hollywood Director persona)
+- **Director Engine** — Cinematic planning layer between LLM output and image generation: shot balancing, lens assignment, rhythm enforcement, continuity tracking
+- **Shot Balancer** — Tracks 10 shot-type categories (Wide, Medium, Close, Extreme Close, OTS, POV, Drone, Tracking, Insert, Establishing), computes a Composition Diversity Score, and injects missing shot types when any category exceeds its threshold
+- **Lens Planner** — 13 focal length profiles mapped to scene type and shot category (24mm Anamorphic for establishing shots, 85mm Portrait for intimate close-ups, 35mm Tracking for action, etc.)
+- **Continuity Engine** — Scans the entire project for dependency impact when any canonical asset changes; surfaces affected frames, character references, and environments before regeneration
+- **Three-Level Action System** — `narrative_action` (author's words, read-only) / `visual_action` (AI staging, independently regeneratable) / `animation_beats` (granular cues for Maya/Unreal)
+- **Regenerate Visual Action** — Regenerate only the Level-2 staging direction for a single frame without touching the image
+- **Director's Notes** — AI rationale for every compositional choice, displayed in a gold-tinted callout on each frame's production sheet
+- **Asset Locking** — `is_manual_override` flag on frames prevents artist-uploaded artwork from being overwritten on re-run; `locked_fields` at the Director Engine level protects face, outfit, environment, camera, and lighting independently
+- **Automatic LLM Fallback** — On 429 rate-limit, the backend automatically walks a chain of four watsonx models until one succeeds
 - **AI Frame Image Generation** — Every storyboard frame gets a generated thumbnail via Pollinations.ai (Flux model) or Hugging Face Inference API
 - **Reference Style Image (img2img)** — Users upload a visual reference; all frame images are generated via img2img with configurable strength
 - **Three Render Styles** — B&W Sketch (sparse line art), Flat Color (cel-shaded), and Full Shaded (cinematic volumetric)
 - **Character Package System** — Complete character reference suite: portrait, 5-angle turnaround, 9 expressions, 7 poses, 7 outfits, props, 360° premium turnaround, premium poses, material close-ups
+- **Character Package Versions** — Version history tracked per character package; users can roll back to any previous generated state
+- **Character Relationship Graph** — Visual SVG node graph of inter-character relationships (ally, enemy, romantic, mentor, family, rival) derived from shared scenes
 - **LLM Character Overview** — AI-generated biography, personality, goals, fears, strengths, weaknesses, occupation, nationality, and role for every character
+- **Character Import Scanner** — Step-by-step animated analysis workflow when importing external character artwork (portrait, expressions, poses, outfits, props, metadata)
+- **Continuity Impact Modal** — Before any canonical asset change regenerates frames, shows the exact list of affected storyboards, character references, and environments with a YES/NO confirmation
+- **Global Update Panel** — Dependency-aware impact summary for any multi-asset update; lets creators choose to update all, selectively, or skip
+- **Gallery Lightbox** — Full-screen scene gallery with keyboard navigation across all rendered frames in a scene
+- **Action Timeline** — Per-scene collapsible beat sheet: running timestamps, colour-coded shot track, dialogue indicators
 - **Locked Cut** — Users flag individual frames to build a curated export selection
 - **Batch ZIP Export** — Export selected frames as PNG files + a production manifest Markdown file
 - **Animatic Player** — Step through frames with action descriptions and sound cues
-- **Studio Re-run** — Re-execute the pipeline with a different render style or global aesthetic without re-uploading the script
+- **Studio Re-run** — Re-execute the pipeline with a different render style or global aesthetic without re-uploading the script; artist overrides are preserved
 - **Project Library** — Persisted project list loaded from the backend database
-- **Dark / Light Theme** — System-aware with persistent preference
+- **Compass Navigation** — Gold compass interface for navigating between Storyboard, Characters, World Bible, and Inspector
+- **BMS — BaseBoard Motion System** — "Modern Heritage" motion design (Director's Light, Focus Motion, Brass Reflection, Inspector micro-animations, AI Pipeline animations, Import Scanner staggered reveals)
+- **Idle State Animations** — Cinematic ambient animations activate after 10 seconds of user inactivity
+- **Dark / Light Theme** — System-aware with persistent localStorage preference
 - **Drag & Drop Upload** — PDF, DOCX, TXT, FDX, and Markdown extracted client-side before sending to backend
-- **Cinematic UI** — Film-grain overlay, gold compass compass navigation, idle-state animations, pulse effects
+- **Cinematic UI** — Film-grain overlay, gold compass navigation, idle-state animations, pulse effects
+- **Downloadable Story Template** — Structured Markdown format optimised for Genesis Engine accuracy
+- **Per-frame and per-scene JSON export** — Download raw structured data for any character or location
+
+---
+
+## Cinematic Director Engine — Problem & Solution
+
+### The Problem: AI Storyboards Are Cinematically Repetitive
+
+The first version of BaseBoard generated storyboards that were visually functional but cinematically flat. The root cause is structural: Large Language Models and diffusion models share the same compositional bias. When asked to illustrate a scene without explicit visual direction, both systems independently gravitate toward the same answer — a medium-close-up of the speaking character.
+
+The result is a storyboard that looks like this:
+
+```
+Frame 01 — Medium Close-Up, Emma at doorway
+Frame 02 — Medium Close-Up, Kai responds
+Frame 03 — Medium Close-Up, Emma reacts
+Frame 04 — Medium Close-Up, Kai advances
+```
+
+This is not a storyboard. It is a transcript illustrated with the same camera position twelve times in a row.
+
+**Specific failures observed:**
+
+| Issue | Root Cause |
+|---|---|
+| 70–80% of frames were medium or close shots | LLM defaults to dialogue framing because most training data is dialogue-heavy |
+| No establishing shots injected automatically | The model had no mechanism to plan shot sequences across a scene |
+| No lens or focal length information | Prompts requested shot types, not optics |
+| Character changes propagated nowhere | Each frame was generated independently with no memory of prior assets |
+| No director rationale recorded | Compositional choices were opaque — the system could not explain why it picked a shot |
+
+### The Solution: Separate Directing from Generating
+
+The fix is architectural. Generating an image and *directing* an image are two different cognitive tasks. We separated them completely.
+
+**Before:**
+
+```
+Script Text → Single LLM Prompt → [shot_type, action, image]
+```
+
+Every frame received the same single-pass treatment. The LLM was being asked to simultaneously parse narrative, plan cinematography, maintain continuity, and describe an image — all in one prompt. It failed at all four.
+
+**After:**
+
+```
+Script Text
+    │
+    ▼
+Narrative Parser          — What happens in the story?
+    │
+    ▼
+Director Engine           — How do we photograph this?
+    ├── Shot Balancer      — Tracks composition distribution across all frames
+    ├── Lens Planner       — Assigns focal length per scene type
+    └── Continuity Engine  — Propagates character/asset changes across the project
+    │
+    ▼
+Prompt Builder            — Assembles a cinematography-aware generation prompt
+    │
+    ▼
+Image Generator           — Generates only; receives a fully-formed brief
+```
+
+**How each component solves a specific failure:**
+
+#### Shot Balancer
+Replaces the implicit "whatever the LLM chooses" distribution with a weighted scoring system across ten shot types: Wide, Medium, Close, Extreme Close, OTS, POV, Drone, Tracking, Insert, and Establishing.
+
+A **Composition Diversity Score** is computed for the entire storyboard. If any single shot type exceeds its threshold — for example, Close shots exceeding 40% of a scene — the Shot Balancer forces the next frames toward underrepresented types. The model no longer decides the distribution; the Director Engine does.
+
+Example balanced output:
+```
+Wide            18%
+Medium          35%
+Close           39%
+Extreme Close    8%
+```
+
+#### Lens Planner
+Every frame receives an explicit cinematic lens recommendation before image generation begins. The LLM no longer has to infer focal length from context — it is told directly.
+
+```
+Establishing shot     →  24mm Anamorphic
+Dialogue              →  50mm
+Intimate / emotional  →  85mm Portrait
+Action / kinetic      →  35mm Tracking
+Epic / environment    →  18mm Ultra Wide
+```
+
+This gives the image model a concrete optical constraint that produces distinctly different depth-of-field, compression, and spatial relationships in the output.
+
+#### Scene-Type Profiles
+The Director Engine auto-detects scene category (Dialogue, Action, Romance, Horror, Mystery, Fantasy, Sci-Fi, Adventure) and applies the corresponding preferred composition ratios. A dialogue scene and an action sequence now have different shot budgets enforced before a single frame is generated.
+
+#### Continuity Engine
+Character and world changes no longer exist in isolation. When a character's appearance changes — hair colour, costume, age — the Continuity Engine scans the entire project for every frame, character reference, poster, and promotional asset that contains that character and surfaces the full impact list before regeneration begins.
+
+The user sees:
+```
+Emma — hair changed from Black → White
+
+Affected assets:
+  18 Storyboard frames
+   6 Character references
+   2 Posters
+   1 Cover
+   3 Promotional images
+
+Regenerate all affected assets? YES / NO
+```
+
+Only impacted assets are regenerated. Nothing else changes.
+
+#### Three-Level Action System
+The original `action_breakdown` field was doing the work of three distinct concepts simultaneously. We split it:
+
+| Level | Field | Owner | Purpose |
+|---|---|---|---|
+| 1 | `narrative_action` | Author | Verbatim script description — locked, never AI-modified |
+| 2 | `visual_action` | Director Engine | AI-directed staging — the primary image-driving field, independently regeneratable |
+| 3 | `animation_beats` | Future (Maya / Unreal) | Granular timing cues — empty until requested |
+
+Level 2 can be regenerated without touching the image, and the image can be regenerated without touching Level 2. They are decoupled.
+
+#### Creative Knowledge Graph (CKG)
+Every project maintains an authoritative node graph — the **Creative Knowledge Graph (CKG)** — that every AI generation consults before producing output. It is the single source of truth for everything BaseBoard knows about a project.
+
+The CKG is structured, not flat. It separates creative facts into typed nodes:
+
+```
+CreativeKnowledgeGraph
+├── character_identities    — WHO each character is (face, proportions, reference images)
+├── character_species       — WHAT each character is (anatomy + QA rules)
+├── character_variants      — HOW each character looks at each story point
+├── expression_sheets       — per-character expression reference images
+├── pose_libraries          — per-character pose reference images
+├── outfit_libraries        — per-character outfit reference images
+├── world_bible_summary     — condensed lore for prompt injection
+├── locations               — location slug → EnvironmentProfile
+├── style_guide             — render style + aesthetic rules
+├── camera_language         — scene_type → preferred shot distribution
+├── director_profile        — 'Kubrickian symmetry', 'Handheld verité', etc.
+└── visual_rules            — hard constraints: ['no dutch angle in dialogue']
+```
+
+### What Changed in the Codebase
+
+| Module | Responsibility |
+|---|---|
+| `backend/app/core/director_engine.py` | Orchestrates cinematic planning — pacing analysis, lens progression, rhythm, balance |
+| `backend/app/core/shot_balancer.py` | Maintains composition distribution statistics, injects missing shot types |
+| `backend/app/core/lens_planner.py` | 13 focal length profiles mapped to scene type and shot category |
+| `backend/app/core/continuity_engine.py` | Scans project for dependency impact when any canonical asset changes |
+| `backend/app/core/identity_system.py` | Character Identity System — `build_identity_prompt()` and `compute_qa_score()` |
+| `backend/app/core/prompt_builder.py` | 8-step assembly: CKG identity → species → variant → style → lens → action → lighting → negatives |
+| `backend/app/core/image.py` | Image generation only — no longer responsible for any compositional decisions |
+| `backend/app/core/prompts.py` | `STORYBOARD_PROMPT` rewritten as a Hollywood director persona; `VISUAL_ACTION_PROMPT` added for Level-2 regeneration |
+
+The Director Engine is extensible by design. Director presets, camera movement planning, shot list optimization, and animatic timing can all plug into the same orchestration layer without touching the image generation pipeline.
 
 ---
 
@@ -110,7 +293,7 @@ Baseboard AI solves this by treating the entire pre-visualization workflow as a 
 | **Pollinations.ai** | Text-to-image and img2img frame generation | Flux (via `image.pollinations.ai`) — zero config, no API key |
 | **Hugging Face Inference API** | Optional alternative image provider | `stabilityai/stable-diffusion-xl-base-1.0` (t2i), `sdxl-refiner-1.0` (img2img) |
 
-### Three-Stage LLM Pipeline
+### Four-Stage Pipeline
 
 ```
 Stage 1 — Character Standardizer
@@ -126,19 +309,29 @@ Stage 2 — World Architect
           and lighting keys
   Output: list[EnvironmentProfileBase]
 
-Stage 3 — Storyboard Orchestrator
+Stage 3 — Storyboard Orchestrator (Hollywood Director persona)
   Input:  characters + environments (as JSON context) + raw_script_text
   Prompt: STORYBOARD_PROMPT — Hollywood director persona, injects
-          character and world context, applies cinematography rules
-          (over-the-shoulder for dialogue, establishing wide for
-          entrances, close-up for dramatic beats), outputs per-scene
-          color palettes and per-frame shot/angle/action/lighting/sound
+          character and world context, applies cinematography rules,
+          enforces shot sequencing, outputs per-frame three-level actions,
+          camera movement, mood, purpose, dialogue, director_notes
   Output: list[ScriptSceneBase]
+
+Stage 4 — Director Engine (post-LLM, pre-image)
+  Input:  list[ScriptSceneBase] from Stage 3
+  Steps:  Detect scene type → Apply composition profile →
+          Shot Balancer (diversity enforcement) →
+          Lens Planner (focal length per frame) →
+          Rhythm check (no N consecutive identical shots)
+  Output: Enriched list[ScriptSceneBase] with lens, focal_length,
+          depth_style, and rebalanced shot_types
 ```
 
 ### Prompt Engineering
 
-All three prompts enforce strict JSON-only output with no prose wrapping. The response parser strips markdown code fences and falls back to regex extraction of the first `[...]` or `{...}` block if a model prepends prose despite instructions. Temperature is set to `0.2` with greedy decoding for reliable, consistent structured output.
+All three LLM prompts enforce strict JSON-only output with no prose wrapping. The response parser strips markdown code fences and falls back to regex extraction of the first `[...]` or `{...}` block if a model prepends prose despite instructions. Temperature is set to `0.2` with greedy decoding for reliable, consistent structured output.
+
+A dedicated `VISUAL_ACTION_PROMPT` handles Level-2 staging regeneration independently — it takes a single frame's context (scene, characters, shot type, lens) and returns a new `visual_action` + `director_notes` without touching the image.
 
 ### Image Generation
 
@@ -148,7 +341,25 @@ All generated images are stored as self-contained `data:image/png;base64,...` st
 2. **other style + reference** → img2img with `strength=0.55`
 3. **no reference** → text-to-image
 
-Style prefixes are prepended to every prompt to enforce the correct visual register (line art, cel-shaded, or cinematic) regardless of scene content.
+Style prefixes are prepended to every prompt to enforce the correct visual register (line art, cel-shaded, or cinematic) regardless of scene content. The Prompt Builder assembles each prompt in 8 steps: base description + render style prefix + lens/optics + character tokens + environment textures + mood/lighting + camera movement + continuity anchors.
+
+### REST API Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/storyboard/forge-pipeline` | Run full Genesis Engine pipeline |
+| `GET` | `/storyboard/` | List all saved projects |
+| `GET` | `/storyboard/{db_id}` | Load a specific project |
+| `DELETE` | `/storyboard/{db_id}` | Delete a project |
+| `POST` | `/storyboard/generate-image` | Generate a single image from a prompt |
+| `POST` | `/storyboard/character-package/overview` | Generate LLM character biography |
+| `POST` | `/storyboard/character-package/generate` | Generate character package sections |
+| `POST` | `/storyboard/character-package/generate-one` | Regenerate a single package section |
+| `POST` | `/storyboard/character-package/generate-full-pack` | Generate premium pack (360°, premium poses, material close-ups) |
+| `POST` | `/storyboard/continuity/scan` | Scan project for continuity impact of an asset change |
+| `POST` | `/storyboard/frame/reforge-composition` | Regenerate only the image for a frame |
+| `POST` | `/storyboard/frame/regenerate-visual-action` | Regenerate only the Level-2 staging (no image change) |
+| `POST` | `/storyboard/world-bible/import` | Import a World Bible document |
 
 ### Backend Technologies
 
@@ -177,7 +388,7 @@ Style prefixes are prepended to every prompt to enforce the correct visual regis
 
 ### State Management
 
-The application uses a view-state machine pattern in [`App.tsx`](BaseBoardAI/frontend/src/App.tsx): a single `AppView` union type controls which top-level component renders. Project state (`StoryboardProject`) is held in a single root-level `useState` and passed down via props. This keeps the state model simple enough to follow without a global store while supporting all navigation transitions.
+The application uses a view-state machine pattern in [`App.tsx`](frontend/src/App.tsx): a single `AppView` union type controls which top-level component renders (`landing`, `compass`, `new-project`, `genesis-running`, `report`, `studio`, `library`). Project state (`StoryboardProject`) is held at root level and passed down via props. A `GenesisState` intermediate holds file + title + render style while the pipeline is running. An idle timer (10 seconds of no mouse/keyboard activity) triggers ambient BMS animations across the UI.
 
 ### Performance Optimisations
 
@@ -185,6 +396,7 @@ The application uses a view-state machine pattern in [`App.tsx`](BaseBoardAI/fro
 - Document text extraction uses dynamic imports (`import('pdfjs-dist')`, `import('mammoth')`) so heavy parsing libraries are code-split and loaded only when a file is uploaded.
 - Image generation is non-fatal — failures return `None` and the pipeline continues, ensuring a partial storyboard is always returned even if an image service is unavailable.
 - Character Package images are fetched lazily per tab: only the sections the user navigates to are requested from the backend.
+- `reforgeAffectedFrames` runs all affected frame regenerations in parallel via `Promise.all`, minimising total wait time for continuity propagation.
 
 ---
 
@@ -198,31 +410,6 @@ The platform also compresses the **idea-to-decision window** — the time betwee
 
 ---
 
-## Features
-
-- **Genesis Engine** — Upload one document, receive a complete production bible
-- **3-Stage IBM watsonx AI pipeline** — Character extraction, world building, storyboard generation
-- **Automatic LLM fallback chain** — 429-safe; walks four models until one succeeds
-- **AI-generated storyboard frame thumbnails** — Every frame illustrated via Pollinations.ai Flux or Hugging Face
-- **Reference style image (img2img)** — Upload a reference to guide the visual style of all generated frames
-- **Three render modes** — B&W Sketch, Flat Color, Full Shaded
-- **Character Package System** — Portrait, 5-angle turnaround, 9 expressions, 7 poses, 7 outfits, props, premium 360° turnaround, material close-ups
-- **LLM character biographies** — AI-written backstory, personality, goals, fears, strengths, weaknesses per character
-- **Character relationship graph** — Visual SVG node graph of inter-character relationships derived from shared scenes
-- **Animatic Player** — Step through a scene's frames with action and sound cue annotations
-- **Locked Cut** — Curate a selection of frames for export
-- **Batch ZIP export** — PNG frames + production manifest Markdown in one download
-- **World Bible** — Location index with color palettes, emotional tones, and frame lightbox
-- **Studio Re-run** — Re-execute the pipeline with new render style or aesthetic
-- **Project Library** — Persisted project history from the SQLite database
-- **Drag & Drop file upload** — PDF, DOCX, TXT, FDX, Markdown
-- **Creative Director's Report** — Post-analysis summary card before entering Studio
-- **Dark / Light theme** — Persistent user preference
-- **Downloadable story template** — Structured Markdown format optimised for Genesis Engine accuracy
-- **Per-frame and per-scene JSON export** — Download raw structured data for any character or location
-
----
-
 ## Project Structure
 
 ```
@@ -232,52 +419,76 @@ baseboard/
     │   ├── app/
     │   │   ├── main.py           FastAPI app entry point, CORS, lifespan
     │   │   ├── core/
-    │   │   │   ├── config.py     Pydantic-settings env loader
-    │   │   │   ├── llm.py        IBM watsonx orchestration + 3-stage pipeline
-    │   │   │   ├── image.py      Image generation (Pollinations / HF), t2i + img2img
-    │   │   │   └── prompts.py    All LLM prompt templates
+    │   │   │   ├── config.py           Pydantic-settings env loader
+    │   │   │   ├── llm.py              IBM watsonx orchestration + 3-stage pipeline + fallback chain
+    │   │   │   ├── image.py            Image generation (Pollinations / HF), t2i + img2img
+    │   │   │   ├── prompts.py          All LLM prompt templates (STORYBOARD, VISUAL_ACTION, etc.)
+    │   │   │   ├── director_engine.py  Cinematic planning orchestrator (post-LLM, pre-image)
+    │   │   │   ├── shot_balancer.py    10-type composition scoring + diversity enforcement
+    │   │   │   ├── lens_planner.py     13 focal length profiles mapped to scene/shot type
+    │   │   │   ├── continuity_engine.py Asset change → dependency scan → impact list
+    │   │   │   └── prompt_builder.py   8-step cinematography-aware prompt assembly
     │   │   ├── db/
-    │   │   │   ├── models.py     SQLAlchemy ORM models
+    │   │   │   ├── models.py     SQLAlchemy ORM models (all new Director Engine fields included)
     │   │   │   └── session.py    SQLite / Postgres session factory
     │   │   ├── routers/
-    │   │   │   └── storyboard.py All REST endpoints (pipeline, CRUD, character package)
+    │   │   │   └── storyboard.py All REST endpoints (13 routes)
     │   │   └── schemas/
-    │   │       └── storyboard.py Pydantic v2 request/response schemas
+    │   │       └── storyboard.py Pydantic v2 request/response schemas (three-level action system)
     │   ├── requirements.txt
     │   ├── .env.example
     │   └── baseboard.db          SQLite database (auto-created on first run)
     │
     └── frontend/                 React 19 / TypeScript / Vite
         └── src/
-            ├── App.tsx           View-state machine, top-level routing
+            ├── App.tsx           View-state machine (7 views), idle timer, BMS Director's Light
             ├── api/
-            │   └── storyboard.ts All fetch calls to the backend API
+            │   └── storyboard.ts All fetch calls (13 endpoints + continuity helpers)
+            ├── hooks/
+            │   ├── useDirectorsLight.ts  BMS-1: ambient light tracking across the app
+            │   ├── useCompassNeedle.ts   BMS-2: cursor-driven compass needle rotation
+            │   └── useBrassReflection.ts BMS-4: specular reflection on brass UI elements
             ├── pages/
-            │   ├── LandingPage.tsx
-            │   ├── NewProjectPage.tsx
-            │   ├── GenesisEnginePage.tsx
-            │   ├── CreativeDirectorReport.tsx
-            │   ├── StudioPage.tsx         Main 3-column editor
-            │   ├── CharacterDictionaryPage.tsx
-            │   ├── CharacterPackagePage.tsx  Full character reference suite
-            │   ├── WorldBiblePage.tsx
-            │   └── ProjectLibraryPage.tsx
-            ├── components/               Reusable UI building blocks
-            │   ├── PipelineForm.tsx       Manual pipeline input form
-            │   ├── StoryboardCanvas.tsx   Frame grid view
-            │   ├── AnimaticPlayer.tsx     Frame-by-frame player
-            │   ├── VaultGrid.tsx          Full-project image grid
-            │   ├── LockedCutFolder.tsx    Selected frame export view
-            │   ├── BatchExportBar.tsx     ZIP export controls
-            │   ├── SceneIndex.tsx         Left-column scene list
-            │   ├── StudioInspector.tsx    Right-column metadata panel
-            │   ├── ShotPlanner.tsx        Per-frame shot planning
-            │   ├── ConstellationLoader.tsx Loading animation
-            │   └── GraniteNotification.tsx Toast notifications
+            │   ├── LandingPage.tsx             Entry screen with idle animations
+            │   ├── CompassNavPage.tsx           Gold compass navigation between studio sections
+            │   ├── NewProjectPage.tsx           3-path creation: Upload / Template / Blank
+            │   ├── GenesisUploadPage.tsx        File upload zone + render style selector
+            │   ├── GenesisEnginePage.tsx        12-task animated pipeline progress screen
+            │   ├── CreativeDirectorReport.tsx   Post-pipeline summary before Studio
+            │   ├── StudioPage.tsx               Main 3-column editor (storyboard view)
+            │   ├── CharacterDictionaryPage.tsx  Character list + inline edit + continuity scan
+            │   ├── CharacterPackagePage.tsx     Full character reference suite (multi-tab)
+            │   ├── WorldBiblePage.tsx           Location index + image upload + propagation
+            │   └── ProjectLibraryPage.tsx       Saved project browser
+            ├── components/
+            │   ├── PipelineForm.tsx             Manual pipeline input form
+            │   ├── StoryboardCanvas.tsx         Frame grid + BMS-3 cursor tracking + ActionTimeline
+            │   ├── FrameCard.tsx                Frame card + Production Sheet + Regenerate Visual Action
+            │   ├── ActionTimeline.tsx           Per-scene beat sheet with running timestamps
+            │   ├── AnimaticPlayer.tsx           Frame-by-frame player
+            │   ├── GalleryLightbox.tsx          Full-screen scene gallery with keyboard navigation
+            │   ├── VaultGrid.tsx                Full-project image grid
+            │   ├── LockedCutFolder.tsx          Selected frame export view
+            │   ├── BatchExportBar.tsx           ZIP export controls
+            │   ├── SceneIndex.tsx               Left-column scene list (drag-to-reorder)
+            │   ├── StudioInspector.tsx          Right-column metadata panel
+            │   ├── ContinuityImpactModal.tsx    Pre-regeneration impact confirmation dialog
+            │   ├── GlobalUpdatePanel.tsx        Multi-asset dependency update panel
+            │   ├── CharacterImportScanner.tsx   Step-by-step artwork import analyzer
+            │   ├── RenderStyleSelector.tsx      Render style picker component
+            │   ├── StyleReferenceUploader.tsx   Reference image upload for img2img
+            │   ├── ConstellationLoader.tsx      Animated loading indicator
+            │   ├── GraniteNotification.tsx      Toast notification system
+            │   ├── ThemeToggle.tsx              Dark/light theme switcher
+            │   ├── ShotPlanner.tsx              Per-frame shot planning UI
+            │   ├── EmptyBlueprintState.tsx      Empty state for new projects
+            │   ├── SceneList.tsx                Simplified scene list (legacy workspace)
+            │   ├── FrameStream.tsx              Frame stream view (legacy workspace)
+            │   └── InspectorPanel.tsx           Inspector panel (legacy workspace)
             ├── types/
-            │   └── storyboard.ts         TypeScript interfaces (mirrors backend schemas)
+            │   └── storyboard.ts       TypeScript interfaces (mirrors backend schemas exactly)
             └── utils/
-                ├── extractDocumentText.ts  PDF/DOCX/TXT/FDX/MD extraction
+                ├── extractDocumentText.ts  PDF/DOCX/TXT/FDX/MD extraction (dynamic imports)
                 └── exportFrames.ts         ZIP and manifest generation
 ```
 
@@ -369,31 +580,38 @@ npm run dev
 
 1. Open `http://localhost:5173` in your browser.
 2. Click **New Project** on the landing screen.
-3. Drag and drop your screenplay, novel, or story document onto the upload zone (PDF, DOCX, TXT, FDX, or Markdown). Alternatively, click **Use Template** to download a structured Markdown template, fill it in, and upload it — this produces the highest AI accuracy.
-4. Confirm the file details on the preview card and click **Analyse Script →**.
-5. Watch the Genesis Engine process 12 analysis tasks in real time. The actual IBM watsonx pipeline runs in parallel with the animated UI.
-6. Review the **Creative Director's Report** — genre, runtime estimate, character count, scene count, and detected themes.
-7. Click **Enter Studio →**.
+3. Choose a creation path:
+   - **Upload Story** — Drag and drop your screenplay, novel, or story document (PDF, DOCX, TXT, FDX, or Markdown), select a render style, and click **Analyse Script →**.
+   - **Use Template** — Download a structured Markdown template, fill it in, and upload it — this produces the highest AI accuracy.
+   - **Start Blank** — Opens the Studio with an empty project and the manual pipeline form.
+4. Watch the Genesis Engine process 12 analysis tasks in real time.
+5. Review the **Creative Director's Report** — genre, runtime estimate, character count, scene count, and detected themes.
+6. Click **Enter Studio →**.
 
 ### Working in the Studio
 
 - **Scene Index** (left column): Click any scene to load its frames on the canvas. Drag to reorder. Delete scenes you do not need.
-- **Storyboard Canvas** (centre column): Each frame card shows the generated image, shot type, camera angle, duration, and action description. Click a frame to select/lock it. Click the image for a full-screen lightbox.
+- **Storyboard Canvas** (centre column): Each frame card shows the generated image, shot type, camera movement, duration, and visual action. Hover over a card to apply the BMS Focus Motion highlight. Click the image for a full-screen gallery lightbox. Use **▼ Full Sheet** to expand the complete production sheet per frame.
+- **Action Timeline**: Click the **Action Timeline** toggle below the frame grid to reveal the per-scene beat sheet with running timestamps and dialogue indicators.
+- **Regenerate Visual Action**: In any expanded production sheet, click **↺ Regenerate Visual Action** to get a new Level-2 staging direction without regenerating the image.
 - **Studio Inspector** (right column): Scene metadata, color palette, emotional tone, lighting notes, and a reference image uploader for img2img generation.
 - **Animatic Player**: Click the **Player** tab to step through frames with action breakdowns as captions.
 - **Vault**: The **Vault** tab shows every frame in every scene in a gallery grid.
-- **Locked Cut**: Toggle frames to lock them, then open the **Locked Cut** tab to see your curated selection. Use **Batch Export** to download as a ZIP.
+- **Locked Cut**: Toggle frames (★) to lock them, then open the **Locked Cut** tab to see your curated selection. Use **Batch Export** to download as a ZIP.
+- **Re-run**: Click **↺ Re-run** to re-execute the pipeline with a new render style or aesthetic. All frames you've manually uploaded (artist overrides — marked ◈) are preserved.
 
 ### Character Dictionary
 
 1. Navigate to the **CHARACTERS** tab in the top bar.
 2. Each character is listed with an AI-generated portrait thumbnail (generated on first expand).
 3. Click any character to expand their facial blueprint, wardrobe, and portrait.
-4. Click **✦ Full Package** to open the Character Package suite.
+4. Edit character fields inline — the Continuity Engine will automatically scan for affected frames and show the **Continuity Impact Modal** before regenerating.
+5. Click **✦ Full Package** to open the Character Package suite.
 
 ### Character Package
 
 On the Character Package screen, tabs provide access to:
+- **Identity** — Upload up to 5 canonical reference images (Primary, Front, Left, Right, Back). BaseBoard extracts identity fields automatically from every upload. A single portrait is enough.
 - **Overview** — LLM-generated biography, personality, goals, and fears.
 - **Portrait** — Hero portrait image.
 - **Turnaround** — 5-angle character sheet (front, ¾ front, side, ¾ back, back).
@@ -401,9 +619,31 @@ On the Character Package screen, tabs provide access to:
 - **Poses** — 7 standard poses (standing, walking, running, sitting, pointing, holding object, hero pose).
 - **Outfits** — 7 outfit variants (default, casual, formal, travel, combat, winter, summer).
 - **Props** — Auto-detected prop references from wardrobe description.
-- **Relationships** — SVG node graph of connections to other characters, derived from shared scene appearances.
+- **Species** — Select the character's anatomy type (Human, Elf, Wolf, Dragon, Robot, Vampire, Custom). Species controls QA Engine anatomy validation and injects the appropriate prompt prefix.
+- **Variants** — Manage appearance variants: Default, Battle Armor, Winter Outfit, Elf Form, Vampire Form, Future Version, or create custom variants. Each variant inherits the base identity — only outfit, hair, accessories, species, and age change.
+- **Relationships** — SVG node graph of connections to other characters (ally, enemy, romantic, mentor, family, rival), derived from shared scene appearances.
+- **Quality** — Visual QA Engine: overall confidence score (0–100%) and per-category breakdown (Identity, Species, Anatomy, Composition, Lighting, Props, Continuity). Run any time after generating an image.
 
-Click **Full Pack** to generate the premium 360° turnaround (8 angles), premium poses (T-pose, A-pose, fighting stance, etc.), and material close-ups (face, hair, fabric, hands, eyes).
+Click **Full Pack** to generate the premium 360° turnaround (8 angles), premium poses (T-pose, A-pose, fighting stance, etc.), and material close-ups (face, hair, fabric, hands, eyes). All generated sections are version-tracked so you can roll back to any previous state.
+
+### Character Identity System
+
+BaseBoard separates a character into four independent layers that are always stored and evaluated independently:
+
+| Layer | What it controls | Can it change? |
+|---|---|---|
+| **Identity** | Face, hair, eyes, body proportions, distinct markers, signature accessories, reference images | Never — immutable across all variants and styles |
+| **Species** | Anatomy type, anatomy QA rules, prompt prefix | Per-variant (via species_override) |
+| **Variants** | Outfit, hair override, accessories, species form, age | Per story point |
+| **Rendering Style** | Artistic register (anime, sketch, painterly, realistic, 3D) | Freely switchable |
+
+When you upload a reference photo, BaseBoard:
+1. Stores it as the canonical identity reference for that view slot
+2. Sends it through the LLM to extract structured identity fields (face, hair, eyes, distinct markers)
+3. Updates the Creative Knowledge Graph so every future generation reads from the extracted identity
+4. Runs the Visual QA Engine on any subsequently generated image to verify the identity was preserved
+
+The identity layer is the only thing BaseBoard guarantees across art styles. A character in anime style, comic style, and realistic style should all look like the same person — the rendering changes, the identity does not.
 
 ---
 
@@ -434,11 +674,15 @@ Click **Full Pack** to generate the premium 360° turnaround (8 angles), premium
 
 ## Challenges
 
-**LLM JSON reliability** — Large language models do not always return pure JSON despite explicit instructions. The response parser in [`llm.py`](BaseBoardAI/backend/app/core/llm.py) implements a two-pass strategy: strip markdown code fences first; if that fails, use a regex fallback to extract the first complete `[...]` or `{...}` block from the raw output. This handles models that prepend prose summaries before the JSON array.
+**LLM JSON reliability** — Large language models do not always return pure JSON despite explicit instructions. The response parser in [`llm.py`](backend/app/core/llm.py) implements a two-pass strategy: strip markdown code fences first; if that fails, use a regex fallback to extract the first complete `[...]` or `{...}` block from the raw output. This handles models that prepend prose summaries before the JSON array.
 
 **Model rate limiting** — IBM watsonx enforces consumption limits per model. Rather than failing the entire pipeline on a 429, the `_invoke_with_fallback` function walks a four-model chain (Llama 3.3 70B → Mistral Small 3.1 → Mistral Medium → Mistral Large) automatically. The fallback token detection is case-insensitive and also catches model deprecation errors (`"model_no_support_for_function"`, `"not supported"`, `"resource not found"`).
 
 **Image generation consistency across styles** — Getting an image model to respect style directives (line art vs. cel-shaded vs. cinematic) without careful prompt engineering produces noisy results. The solution was style-prefix injection: a fixed prefix string for each render mode is prepended to every prompt before it is sent to the image provider. The `bw_sketch` mode additionally appends explicit negative constraints (no shading, no crosshatch, no color) and caps the combined prompt at 500 characters to stay within URL-length limits for the Pollinations GET endpoint.
+
+**LLM compositional bias** — The Storyboard Orchestrator LLM, left to its own devices, generates 70–80% medium/close shots. The fix required introducing the Director Engine as a post-LLM planning layer that rebalances shot distributions before images are generated. This separated the concerns of "what happens narratively" from "how we photograph it" into distinct pipeline stages.
+
+**Three-level action decoupling** — The original `action_breakdown` field conflated the author's intent (narrative), the director's plan (visual staging), and future animation cues into a single string. Splitting these into `narrative_action` / `visual_action` / `animation_beats` required schema migration, backwards-compatible ORM fields, and a separate `VISUAL_ACTION_PROMPT` that can regenerate only Level 2 without disturbing the source text or the image.
 
 **Base64 data URLs for images** — Storing image URLs as external links creates cross-origin and availability problems. All generated images are converted to `data:image/png;base64,...` strings immediately on receipt and stored as TEXT in SQLite. The SQLAlchemy column is marked `deferred` so large blobs are not loaded on list queries — only when a specific project is fetched.
 
@@ -451,17 +695,23 @@ Click **Full Pack** to generate the premium 360° turnaround (8 angles), premium
 ---
 
 ## Future Improvements
-- **Editable Character Packages** — Allow users to upload or replace individual character assets (portraits, expressions, outfits, poses, and turnaround sheets) while preserving AI-generated consistency across the project.
-- **Artwork Replacement & Synchronization** — Enable users to replace any AI-generated storyboard image or artwork with their own custom artwork. Once an image is updated, Baseboard AI will automatically propagate the change across every scene, frame, and reference where that artwork or character appears, ensuring visual consistency throughout the storyboard.
-- **User authentication** — Multi-user support with per-user project libraries, using JWT or OAuth
+
+- **Director Presets** — Named director styles (e.g. "Kubrick: wide symmetrical", "Nolan: intercutting timelines") that configure the Director Engine's shot profiles, lens preferences, and rhythm rules
+- **Camera Movement Planning** — Extend `animation_beats` to include camera choreography (dolly path, crane arc, handheld shake intensity) exportable to Maya/Unreal
+- **Shot List Export** — One-click export of the Director Engine's full shot plan as a production-ready PDF or CSV for physical production use
+- **Animatic to Video** — Render the frame sequence as an MP4 with per-frame durations from the AI timing estimates
+- **Comic / Graphic Novel Layout** — Alternative output renderer that arranges frames into comic page grids (2×3, 3×3, splash panels) instead of storyboard strips
+- **Character Timeline** — Age-variant generation across key story stages (e.g. Age 12 → 18 → 32 → 65) with identity preservation across stages
+- **World Bible Import** — Import DOCX, PDF, Markdown, Notion Export, or JSON to auto-populate locations, lore, timeline, factions, and architecture
+- **Pose Library UI** — Visual pose picker (Standing, Walking, Running, Sitting, Jumping, Custom) so creators choose from a library instead of editing prompts manually
+- **Emotion Library UI** — Per-character reusable emotion states (Happy, Sad, Angry, Fear, Confident, Neutral, Surprised) that update generation prompts without manual editing
+- **Character Completion Score** — Visual progress indicator (e.g. 82%) tracking which package sections (portrait, turnarounds, expressions, outfits, props, relationships) have been generated
+- **Character Consistency Score** — AI confidence score (Face / Hair / Body / Costume / Colors / Accessories) with a pre-generation warning if continuity may decrease
 - **Real-time streaming** — Stream Genesis Engine stages via Server-Sent Events so the UI reflects actual pipeline progress rather than animated simulation
-- **Shot Planner AI** — Auto-suggest optimal shot sequences for a scene based on dramatic tension and character positions
-- **Export to PDF** — Export the complete production bible (storyboard + character sheets + world bible) as a formatted PDF for pitch decks
-- **Shot continuity checker** — Flag frames where character appearance or location details contradict earlier frames in the same scene
+- **User authentication** — Multi-user support with per-user project libraries, using JWT or OAuth
 - **Collaborative editing** — Real-time multi-user editing of scenes and frames (WebSocket-based)
 - **PostgreSQL migration** — Swap from SQLite to PostgreSQL for production deployment (already supported via `DATABASE_URL` env var)
 - **Version history** — Timeline of project re-runs with diffing between versions
-- **Video animatic export** — Render the frame sequence as an MP4 with per-frame durations from the AI timing estimates
 - **Custom model fine-tuning** — Fine-tune a watsonx model on structured screenplay data for higher storyboarding accuracy
 
 ---

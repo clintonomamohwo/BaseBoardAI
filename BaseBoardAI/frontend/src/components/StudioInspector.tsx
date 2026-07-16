@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { StoryboardScene } from '../types/storyboard'
+import type { ProjectCanon, StoryboardScene } from '../types/storyboard'
 import StyleReferenceUploader from './StyleReferenceUploader'
 import ShotPlanner from './ShotPlanner'
 
@@ -9,9 +9,10 @@ const VALENCE_OPTIONS   = ['High-Contrast', 'Muted', 'Saturated', 'Monochrome']
 interface Props {
   scene: StoryboardScene | null
   onReferenceChange: (url: string | null) => void
+  canon?: ProjectCanon | null
 }
 
-export default function StudioInspector({ scene, onReferenceChange }: Props) {
+export default function StudioInspector({ scene, onReferenceChange, canon }: Props) {
   const [swatchOverrides, setSwatchOverrides] = useState<Record<number, string>>({})
   const [lightingMood, setLightingMood]       = useState(LIGHTING_OPTIONS[0])
   const [colorValence, setColorValence]       = useState(VALENCE_OPTIONS[0])
@@ -24,15 +25,20 @@ export default function StudioInspector({ scene, onReferenceChange }: Props) {
 
   const selectClass = 'w-full bg-[var(--bg-surface)] border border-[var(--border)] rounded px-2 py-1.5 text-[10px] text-[var(--text-base)]/70 focus:outline-none focus:border-[var(--gold)]/50 transition-all'
 
+  // BMS-5: key changes when scene changes so the content re-mounts and plays
+  // the slide-up entrance animation
+  const sceneKey = scene?.scene_number ?? 'empty'
+
   return (
     <div className="h-full overflow-y-auto">
-      {/* Header */}
+      {/* Header — stays fixed */}
       <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
         <span className="text-[9px] tracking-[0.3em] uppercase text-[var(--gold)]/50">Inspector</span>
         <button className="text-[var(--text-base)]/20 hover:text-[var(--text-base)]/60 text-xs transition-all">∧</button>
       </div>
 
-      <div className="p-4 space-y-6">
+      {/* BMS-5: content slides up + fades when the scene key changes */}
+      <div key={sceneKey} className="p-4 space-y-6 bms-inspector-enter">
 
         {/* Current Lighting */}
         <section>
@@ -119,6 +125,75 @@ export default function StudioInspector({ scene, onReferenceChange }: Props) {
         <section className="border-t border-[var(--border)] pt-4">
           <StyleReferenceUploader onReferenceChange={onReferenceChange} />
         </section>
+
+        {/* Project Settings — Canon surface (user-facing name for Project Canon) */}
+        {canon && (
+          <section className="border-t border-[var(--border)] pt-4">
+            <p className="text-[9px] tracking-[0.3em] uppercase text-[var(--gold)]/40 mb-3">Project Settings</p>
+
+            {/* Style guide */}
+            {canon.style_guide && (
+              <p style={{ fontSize: 10, color: 'var(--text-muted)', opacity: 0.7, lineHeight: 1.6, marginBottom: 10 }}>
+                {canon.style_guide}
+              </p>
+            )}
+
+            {/* Approved characters */}
+            {Object.keys(canon.approved_characters).length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <p style={{ fontSize: 8, letterSpacing: '0.2em', color: 'var(--gold)', opacity: 0.45, textTransform: 'uppercase', marginBottom: 6 }}>
+                  Approved Characters
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {Object.values(canon.approved_characters).map(ch => (
+                    <div key={ch.name} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={{ fontSize: 9, color: 'var(--gold)', opacity: 0.7, minWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {ch.name}
+                      </span>
+                      <span style={{ fontSize: 8, color: 'var(--text-muted)', opacity: 0.55, lineHeight: 1.4, flex: 1 }}>
+                        {ch.wardrobe}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Camera language */}
+            {Object.keys(canon.camera_language).length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <p style={{ fontSize: 8, letterSpacing: '0.2em', color: 'var(--gold)', opacity: 0.45, textTransform: 'uppercase', marginBottom: 6 }}>
+                  Camera Language
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {Object.entries(canon.camera_language).map(([type, rule]) => (
+                    <div key={type} style={{ display: 'flex', gap: 6 }}>
+                      <span style={{ fontSize: 8, color: 'var(--gold)', opacity: 0.5, textTransform: 'capitalize', minWidth: 68, flexShrink: 0 }}>{type}</span>
+                      <span style={{ fontSize: 8, color: 'var(--text-muted)', opacity: 0.6 }}>{rule}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Visual rules */}
+            {canon.visual_rules.length > 0 && (
+              <div>
+                <p style={{ fontSize: 8, letterSpacing: '0.2em', color: 'var(--gold)', opacity: 0.45, textTransform: 'uppercase', marginBottom: 6 }}>
+                  Visual Rules
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {canon.visual_rules.map((rule, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                      <span style={{ fontSize: 8, color: 'var(--gold)', opacity: 0.4, flexShrink: 0, marginTop: 1 }}>—</span>
+                      <span style={{ fontSize: 8, color: 'var(--text-muted)', opacity: 0.65, lineHeight: 1.5 }}>{rule}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Shot Planner */}
         <section className="border-t border-[var(--border)] pt-4">

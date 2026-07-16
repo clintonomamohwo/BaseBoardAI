@@ -40,15 +40,19 @@ export default function FrameStream({ scene, renderStyleLabel, selectedKeys, onT
 
       {/* Frame scroll */}
       <div className="flex gap-4 overflow-x-auto pb-4 flex-1">
-        {scene.frames.map((frame) => (
-          <FrameCard
-            key={frame.frame_number}
-            frame={frame}
-            scene={scene}
-            isSelected={selectedKeys.get(`s${scene.scene_number}_f${frame.frame_number}`) ?? false}
-            onToggleSelect={onToggleSelect}
-          />
-        ))}
+        {scene.frames.map((frame) => {
+          const fk = `s${scene.scene_number}_f${frame.frame_number}`
+          return (
+            <FrameCard
+              key={fk}
+              frameKey={fk}
+              frame={frame}
+              scene={scene}
+              isSelected={selectedKeys.get(fk) ?? false}
+              onToggleSelect={onToggleSelect}
+            />
+          )
+        })}
         {scene.frames.length === 0 && (
           <div className="flex-1 flex items-center justify-center text-slate-400 dark:text-slate-600 text-sm">
             No frames in this scene.

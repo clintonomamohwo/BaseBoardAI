@@ -12,10 +12,10 @@ Design decisions:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import ForeignKey, JSON, String, Text, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, deferred, undefer
+from sqlalchemy.orm import DeclarativeBase, Mapped, deferred, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -34,6 +34,10 @@ class StoryboardProjectORM(Base):
     project_title: Mapped[str] = mapped_column(Text, nullable=False)
     global_aesthetic: Mapped[str] = mapped_column(Text, nullable=False)
     render_style: Mapped[str] = mapped_column(String, nullable=False, default='bw_sketch')
+
+    # Project Canon — the single source of truth for all AI generation in this project.
+    # Stored as a JSON blob alongside the project; nullable for backwards compatibility.
+    canon: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     # relationships
     characters: Mapped[list[CharacterProfileORM]] = relationship(
@@ -118,14 +122,45 @@ class StoryboardFrameORM(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     frame_number: Mapped[int] = mapped_column(nullable=False)
+
+    # ── Three-level action system (nullable for backwards compatibility) ──────
+    narrative_action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    visual_action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    animation_beats: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
+    # ── Legacy (kept for backwards compat) ───────────────────────────────────
+    action_breakdown: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # ── Shot & camera ─────────────────────────────────────────────────────────
     shot_type: Mapped[str] = mapped_column(Text, nullable=False)
     camera_angle: Mapped[str] = mapped_column(Text, nullable=False)
+    camera_movement: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Timing ────────────────────────────────────────────────────────────────
     duration_seconds: Mapped[float] = mapped_column(nullable=False)
-    action_breakdown: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # ── Lighting & mood ───────────────────────────────────────────────────────
     lighting_notes: Mapped[str] = mapped_column(Text, nullable=False)
-    sound_cue: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    mood: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Production metadata ───────────────────────────────────────────────────
+    purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    characters_present: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    frame_emotion: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dialogue: Mapped[str | None] = mapped_column(Text, nullable=True)
+    director_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Audio ─────────────────────────────────────────────────────────────────
+    sound_cue: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Deferred: excluded from SELECT on list queries; loaded only on individual project fetch
-    generated_image_url: Mapped[Optional[str]] = deferred(mapped_column(Text, nullable=True))
+    generated_image_url: Mapped[str | None] = deferred(mapped_column(Text, nullable=True))
+
+    # ── Director Engine metadata (nullable for backwards compatibility) ───────
+    lens: Mapped[str | None] = mapped_column(Text, nullable=True)
+    focal_length: Mapped[str | None] = mapped_column(Text, nullable=True)
+    depth_style: Mapped[str | None] = mapped_column(Text, nullable=True)
+    locked_fields: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     scene_id: Mapped[int] = mapped_column(
         ForeignKey("script_scenes.id"), nullable=False

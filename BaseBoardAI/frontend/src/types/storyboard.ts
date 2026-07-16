@@ -45,7 +45,7 @@ export interface CharacterPackage {
   charId: string
   overview: CharacterOverview | null
   prompt: string                               // editable AI prompt used for generation
-  renderStyle: string
+  renderStyle: RenderStyle
 
   // Generated images — null = not yet generated
   portrait: string | null
@@ -76,6 +76,24 @@ export interface CharacterPackage {
 
   // Auto-init status — tracks if default sections have been kicked off
   autoInitDone: boolean
+
+  // ── Character Identity System ────────────────────────────────────────────
+  /** Layer 1 — who the character is. Populated from reference image upload or manual entry. */
+  identity: CharacterIdentity | null
+  /** Layer 2 — anatomy type. Defaults to human. */
+  species: SpeciesProfile
+  /** Layer 3 — appearance variants (Default, Battle Armor, Elf Form, etc.) */
+  variants: CharacterVariant[]
+  /** Which variant is currently active for generation. */
+  activeVariantId: string
+
+  // ── Visual QA Engine ─────────────────────────────────────────────────────
+  /** Latest QA score from the Visual QA Engine. Null until first check. */
+  qaResult: QAScoreResult | null
+
+  // ── Completion tracking ───────────────────────────────────────────────────
+  /** 0–100 completion score across all CIS layers + generated asset sections. */
+  completionScore: number
 }
 
 export interface FacialBlueprint {
@@ -86,25 +104,133 @@ export interface FacialBlueprint {
   fixed_seed_reference: number | null
 }
 
+// ---------------------------------------------------------------------------
+// Character Identity System — four independent layers
+// ---------------------------------------------------------------------------
+
+/** Layer 1 — WHO the character is. Immutable across species and rendering styles. */
+export interface CharacterIdentity {
+  name: string
+  face_description: string | null
+  hair_description: string | null
+  eye_description: string | null
+  body_proportions: string | null
+  age: number | null
+  distinct_markers: string | null
+  signature_accessories: string[]
+  // Canonical reference images (base64 data URLs; null = not yet uploaded)
+  reference_primary: string | null
+  reference_front: string | null
+  reference_left: string | null
+  reference_right: string | null
+  reference_back: string | null
+}
+
+/** Layer 2 — WHAT the character is (anatomy type). Default = human. */
+export interface SpeciesProfile {
+  species_id: string       // e.g. 'human' | 'elf' | 'wolf' | 'dragon' | 'robot' | 'vampire' | 'custom'
+  label: string
+  custom_notes: string | null
+}
+
+/** Layer 3 — HOW the character appears at a given story point. */
+export interface CharacterVariant {
+  variant_id: string       // e.g. 'default' | 'battle_armor' | 'elf_form'
+  label: string
+  outfit: string | null
+  hair_override: string | null
+  age_override: number | null
+  species_override: string | null
+  extra_accessories: string[]
+  scene_range: [number, number] | null
+  notes: string | null
+}
+
+/** QA Engine result for a single generation. */
+export interface QAScoreResult {
+  overall: number          // 0.0–1.0
+  breakdown: {
+    identity: number
+    species: number
+    anatomy: number
+    composition: number
+    lighting: number
+    props: number
+    continuity: number
+  }
+  warning: string | null
+  passed: boolean
+}
+
 export interface CharacterProfile {
   id: string
   name: string
   facial_blueprint: FacialBlueprint
   wardrobe_defaults: string
+  /** User-uploaded reference image (base64 data URL). Not stored in DB — frontend only. */
+  reference_image?: string
+  // ── Character Identity System layers (CKG) ───────────────────────────────
+  identity?: CharacterIdentity | null
+  species?: SpeciesProfile
+  variants?: CharacterVariant[]
+  active_variant_id?: string | null
 }
 
 export interface StoryboardFrame {
   frame_number: number
+
+  // ── Three-level action system ──────────────────────────────────────────
+  /** Level 1 — verbatim screenplay excerpt. Read-only anchor; never AI-modified. */
+  narrative_action: string | null
+  /** Level 2 — AI-directed staging interpretation. The primary field driving the image. */
+  visual_action: string | null
+  /** Level 3 — granular animation cues. Empty until explicitly requested. */
+  animation_beats: string[]
+
+  /** Legacy field — kept for backwards compatibility. Mirrors visual_action. */
+  action_breakdown: string
+
+  // ── Shot & camera ──────────────────────────────────────────────────────
   shot_type: string
   camera_angle: string
+  /** e.g. 'Slow Dolly Forward', 'Static', 'Handheld Push', 'Pan Right' */
+  camera_movement: string | null
+
+  // ── Timing ────────────────────────────────────────────────────────────
   duration_seconds: number
-  action_breakdown: string
+
+  // ── Lighting & mood ───────────────────────────────────────────────────
   lighting_notes: string
+  /** Frame-level atmosphere — distinct from scene-level emotional_tone */
+  mood: string | null
+
+  // ── Production metadata ───────────────────────────────────────────────
+  /** Director's intent: 'Introduce location', 'Reveal character', 'Hold silence' */
+  purpose: string | null
+  /** Names of characters visible in this frame */
+  characters_present: string[]
+  /** Dominant emotion of the central character in this frame */
+  frame_emotion: string | null
+  /** Spoken line, or null if none */
+  dialogue: string | null
+  /** AI rationale for compositional choices */
+  director_notes: string | null
+
+  // ── Audio ─────────────────────────────────────────────────────────────
   sound_cue: string | null
+
+  // ── Output ────────────────────────────────────────────────────────────
   generated_image_url: string | null
+
   /** True when the user has uploaded their own artwork for this frame.
    *  Re-run skips locked frames so artist overrides are never overwritten. */
   is_manual_override?: boolean
+
+  // ── Director Engine ───────────────────────────────────────────────────
+  lens?: string | null
+  focal_length?: string | null
+  depth_style?: string | null
+  locked_fields?: string[]
 }
 
 export interface StoryboardScene {
@@ -117,13 +243,63 @@ export interface StoryboardScene {
   frames: StoryboardFrame[]
 }
 
+// ---------------------------------------------------------------------------
+// Creative Knowledge Graph (CKG) — was ProjectCanon
+// The single authoritative source of truth for every AI generation.
+// ---------------------------------------------------------------------------
+
+export interface CreativeKnowledgeGraph {
+  project_id?: number | null
+
+  // ── Character Identity nodes ─────────────────────────────────────────────
+  character_identities: Record<string, CharacterIdentity & { _canonical_prompt?: string }>
+  character_species: Record<string, SpeciesProfile>
+  character_variants: Record<string, CharacterVariant[]>
+
+  // ── Backwards-compat flat summaries ──────────────────────────────────────
+  approved_characters: Record<string, {
+    name: string
+    appearance_summary: string
+    canonical_prompt: string
+    wardrobe?: string
+    age?: number | null
+    distinct_markers?: string | null
+  }>
+
+  // ── Asset libraries ───────────────────────────────────────────────────────
+  expression_sheets: Record<string, unknown>
+  pose_libraries: Record<string, unknown>
+  outfit_libraries: Record<string, unknown>
+  accessory_libraries: Record<string, unknown>
+
+  // ── World nodes ───────────────────────────────────────────────────────────
+  world_bible_summary: string
+  locations: Record<string, unknown>
+  props: Record<string, unknown>
+  timeline: unknown[]
+  relationships: Record<string, unknown>
+
+  // ── Style & direction nodes ───────────────────────────────────────────────
+  style_guide: string
+  color_palette: string[]
+  camera_language: Record<string, string>
+  director_profile: string
+  visual_rules: string[]
+}
+
+/** Backwards-compatibility alias. */
+export type ProjectCanon = CreativeKnowledgeGraph
+
 export interface StoryboardProject {
   db_id: number | null
   project_title: string
   global_aesthetic: string
-  render_style: string
+  render_style: RenderStyle
   characters: CharacterProfile[]
   scenes: StoryboardScene[]
+  /** Creative Knowledge Graph — the single source of truth for all AI generation.
+   *  Populated automatically by forge-pipeline. Null for legacy projects. */
+  canon: CreativeKnowledgeGraph | null
 }
 
 export interface FrameExportItem {

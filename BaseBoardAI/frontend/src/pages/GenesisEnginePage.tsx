@@ -7,7 +7,7 @@
  */
 import { useEffect, useState, useRef } from 'react'
 import logoSrc from '../assets/logo.png'
-import type { StoryboardProject } from '../types/storyboard'
+import type { RenderStyle, StoryboardProject } from '../types/storyboard'
 import { forgePipeline } from '../api/storyboard'
 import { extractDocumentText } from '../utils/extractDocumentText'
 
@@ -36,9 +36,18 @@ const TASKS: TaskDef[] = [
 
 type TaskStatus = 'pending' | 'running' | 'done'
 
+/** Labels that get updated with real counts once the pipeline resolves */
+interface TaskCounts {
+  chars: number
+  locations: number
+  scenes: number
+  frames: number
+}
+
 interface Props {
   file: File | null
   projectTitle: string
+  renderStyle: RenderStyle
   onComplete: (project: StoryboardProject) => void
   onNotify?: (msg: string, type?: 'success' | 'info') => void
   onBack: () => void
@@ -46,7 +55,7 @@ interface Props {
 }
 
 export default function GenesisEnginePage({
-  file, projectTitle, onComplete, onNotify, onBack, onLanding,
+  file, projectTitle, renderStyle, onComplete, onNotify, onBack, onLanding,
 }: Props) {
   const [taskStatus,   setTaskStatus]   = useState<Record<string, TaskStatus>>(
     Object.fromEntries(TASKS.map(t => [t.id, 'pending' as TaskStatus]))
@@ -54,6 +63,7 @@ export default function GenesisEnginePage({
   const [taskProgress, setTaskProgress] = useState<Record<string, number>>(
     Object.fromEntries(TASKS.map(t => [t.id, 0]))
   )
+  const [counts,    setCounts]    = useState<TaskCounts | null>(null)
   const [error,     setError]     = useState<string | null>(null)
   const [started,   setStarted]   = useState(false)
   const [countdown, setCountdown] = useState<number | null>(null)
@@ -105,17 +115,25 @@ export default function GenesisEnginePage({
       const project = await forgePipeline({
         project_title:         projectTitle || (file ? file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Genesis Project'),
         global_aesthetic:      'Cinematic High-Contrast',
-        render_style:          'bw_sketch',
+        render_style:          renderStyle,
         reference_style_image: null,
         raw_character_notes:   docText,
         raw_world_notes:       docText,
         raw_script_text:       docText,
       })
 
-      // Flash all tasks to done
+      // Flash all tasks to done and inject real counts into labels
       setTaskStatus(Object.fromEntries(TASKS.map(t => [t.id, 'done'])))
       setTaskProgress(Object.fromEntries(TASKS.map(t => [t.id, 1])))
       timers.forEach(clearInterval)
+      const uniqueLocations = new Set(project.scenes.map(s => s.location_heading)).size
+      const totalFrames     = project.scenes.reduce((s, sc) => s + sc.frames.length, 0)
+      setCounts({
+        chars:     project.characters.length,
+        locations: uniqueLocations,
+        scenes:    project.scenes.length,
+        frames:    totalFrames,
+      })
       onNotify?.('Genesis Engine complete ✓')
 
       // Countdown before report
@@ -154,6 +172,16 @@ export default function GenesisEnginePage({
 
   const totalDone  = Object.values(taskStatus).filter(s => s === 'done').length
   const overallPct = Math.round((totalDone / TASKS.length) * 100)
+
+  /** Resolve a task's display label — appends real counts once the pipeline resolves */
+  function resolveLabel(task: TaskDef): string {
+    if (!counts) return task.label
+    if (task.id === 'chars')     return `${counts.chars} Character${counts.chars !== 1 ? 's' : ''} Extracted`
+    if (task.id === 'locations') return `${counts.locations} Location${counts.locations !== 1 ? 's' : ''} Detected`
+    if (task.id === 'scenes')    return `${counts.scenes} Scene${counts.scenes !== 1 ? 's' : ''} Identified`
+    if (task.id === 'storyboard') return `${counts.frames} Frame${counts.frames !== 1 ? 's' : ''} Generated`
+    return task.label
+  }
 
   return (
     <div
@@ -294,7 +322,7 @@ export default function GenesisEnginePage({
                         color: isDone ? 'var(--text-base)' : isRun ? 'var(--gold)' : 'var(--text-muted)',
                         transition: 'color 250ms ease',
                       }}>
-                        {task.label}
+                        {resolveLabel(task)}
                       </span>
                       {/* Status circle */}
                       <div style={{

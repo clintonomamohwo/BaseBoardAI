@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import logoSrc from '../assets/logo.png'
+import { useCompassNeedle } from '../hooks/useCompassNeedle'
 
 type Section = 'storyboard' | 'characters' | 'world-bible' | 'inspector'
 
@@ -50,6 +51,9 @@ export default function CompassNavPage({ onSelect, entering = false, onEntered }
   const [hoveredId,  setHoveredId]  = useState<Section | null>(null)
   const [centerHover, setCenterHov] = useState(false)
   const [ringAngle,   setRingAngle] = useState(0)  // degrees — driven by hover direction
+  const compassContainerRef = useRef<HTMLDivElement>(null)
+  // BMS-2: needle follows cursor, pinned to hovered section when hovering a card
+  const needleAngle = useCompassNeedle(compassContainerRef, hoveredId)
 
   const [phase, setPhase] = useState<'center' | 'rings' | 'nodes' | 'bloom' | 'done'>(
     entering ? 'center' : 'done'
@@ -109,7 +113,7 @@ export default function CompassNavPage({ onSelect, entering = false, onEntered }
       </p>
 
       {/* ── Compass container ─────────────────────────────────────────────── */}
-      <div className="relative" style={{ width: 480, height: 480 }}>
+      <div ref={compassContainerRef} className="relative" style={{ width: 480, height: 480 }}>
 
         {/* ── Rotating outer tick ring ─────────────────────────────────── */}
         <svg
@@ -148,6 +152,11 @@ export default function CompassNavPage({ onSelect, entering = false, onEntered }
             strokeDasharray={C_OUTER} strokeDashoffset={ringsVisible ? 0 : C_OUTER}
             style={{ transition: 'stroke-dashoffset 600ms cubic-bezier(0.4,0,0.2,1)' }}
           />
+          {/* BMS-2: Compass needle — rotates via needleAngle */}
+          <g transform={`rotate(${needleAngle} 240 240)`} style={{ transition: 'none' }}>
+            <polygon points="240,100 236,238 240,252 244,238" fill="var(--gold)" fillOpacity="0.9" />
+            <polygon points="240,380 236,242 240,252 244,242" fill="var(--border)" />
+          </g>
           {/* Inner ring — expands on center hover */}
           <circle cx="240" cy="240" r={centerHover ? 148 : 140}
             stroke="var(--gold)" strokeWidth={centerHover ? 0.8 : 0.4}
@@ -236,6 +245,7 @@ export default function CompassNavPage({ onSelect, entering = false, onEntered }
           return (
             <button
               key={s.id}
+              className="bms-brass"
               onClick={() => onSelect(s.id)}
               onMouseEnter={() => setHoveredId(s.id)}
               onMouseLeave={() => setHoveredId(null)}

@@ -2,12 +2,19 @@ import { useState, useCallback } from 'react'
 import logoSrc from '../assets/logo.png'
 import type { DragEvent, ChangeEvent } from 'react'
 import { detectFormat, titleFromFilename } from '../utils/extractDocumentText'
+import type { RenderStyle } from '../types/storyboard'
 
 const ACCEPTED = '.pdf,.docx,.txt,.fdx,.md,.markdown'
 const FORMAT_LABELS = ['PDF', 'DOCX', 'TXT', 'FDX', 'Markdown']
 
+const STYLE_OPTIONS: { value: RenderStyle; label: string; description: string }[] = [
+  { value: 'bw_sketch',   label: 'B&W Sketch',    description: 'Clean line art, no shading' },
+  { value: 'flat_color',  label: 'Flat Color',     description: 'Cel-shaded, solid fills' },
+  { value: 'full_shaded', label: 'Full Shaded',    description: 'Cinematic, volumetric light' },
+]
+
 interface Props {
-  onFileReady: (file: File, title: string) => void
+  onFileReady: (file: File, title: string, renderStyle: RenderStyle) => void
   onStartBlank: () => void
   onLanding: () => void
 }
@@ -17,6 +24,7 @@ export default function GenesisUploadPage({ onFileReady, onStartBlank, onLanding
   const [error, setError]               = useState<string | null>(null)
   const [hovering, setHovering]         = useState(false)
   const [confirmed, setConfirmed]       = useState<{ file: File; title: string } | null>(null)
+  const [renderStyle, setRenderStyle]   = useState<RenderStyle>('bw_sketch')
 
   function validateAndAccept(file: File) {
     setError(null)
@@ -45,8 +53,8 @@ export default function GenesisUploadPage({ onFileReady, onStartBlank, onLanding
 
   const onFileChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    e.target.value = '' // reset before processing so same file can be re-selected
     if (file) validateAndAccept(file)
-    e.target.value = '' // reset so same file can be re-selected
   }, [])
 
   // ── Confirmation card ─────────────────────────────────────────────────────
@@ -125,9 +133,54 @@ export default function GenesisUploadPage({ onFileReady, onStartBlank, onLanding
 
               <div style={{ height: 1, background: 'var(--border)', margin: '16px 0', opacity: 0.6 }} />
 
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, opacity: 0.7, textAlign: 'center' }}>
-                Genesis Engine will extract characters, build the world bible, and generate your storyboard automatically.
-              </p>
+              {/* Render style selector */}
+              <div style={{ marginBottom: 4 }}>
+                <p style={{ fontSize: 9, letterSpacing: '0.3em', color: 'var(--gold)', textTransform: 'uppercase', opacity: 0.6, marginBottom: 10 }}>
+                  Render Style
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                  {STYLE_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setRenderStyle(opt.value)}
+                      style={{
+                        padding: '10px 8px',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                        textAlign: 'center',
+                        transition: 'all 150ms ease',
+                        border: renderStyle === opt.value
+                          ? '1px solid var(--gold)'
+                          : '1px solid var(--border)',
+                        background: renderStyle === opt.value
+                          ? 'rgba(201,168,76,0.08)'
+                          : 'var(--bg-raised)',
+                        color: renderStyle === opt.value ? 'var(--gold)' : 'var(--text-muted)',
+                      }}
+                      onMouseEnter={e => {
+                        if (renderStyle !== opt.value) {
+                          e.currentTarget.style.borderColor = 'rgba(201,168,76,0.4)'
+                          e.currentTarget.style.color = 'var(--text-base)'
+                        }
+                      }}
+                      onMouseLeave={e => {
+                        if (renderStyle !== opt.value) {
+                          e.currentTarget.style.borderColor = 'var(--border)'
+                          e.currentTarget.style.color = 'var(--text-muted)'
+                        }
+                      }}
+                    >
+                      <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 3, letterSpacing: '0.02em' }}>
+                        {opt.label}
+                      </div>
+                      <div style={{ fontSize: 10, opacity: 0.6, lineHeight: 1.3 }}>
+                        {opt.description}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               <div style={{ height: 1, background: 'var(--border)', margin: '16px 0', opacity: 0.6 }} />
             </div>
@@ -135,7 +188,7 @@ export default function GenesisUploadPage({ onFileReady, onStartBlank, onLanding
             {/* Actions */}
             <div style={{ padding: '0 28px 28px', display: 'flex', flexDirection: 'column', gap: 10 }}>
               <button className="btn-tactile gold-glow"
-                onClick={() => onFileReady(confirmed.file, confirmed.title)}
+                onClick={() => onFileReady(confirmed.file, confirmed.title, renderStyle)}
                 style={{
                   padding: '14px 24px', borderRadius: 4,
                   border: '1px solid var(--gold)', background: 'var(--gold)',

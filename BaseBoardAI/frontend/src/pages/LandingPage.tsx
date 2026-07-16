@@ -1,14 +1,19 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import logoSrc from '../assets/logo.png'
+import { useCompassNeedle } from '../hooks/useCompassNeedle'
 
 interface Props {
   onNewProject: () => void
   onEnter: () => void
+  onDemo: () => void
   idle?: boolean
 }
 
-export default function LandingPage({ onNewProject, onEnter, idle = false }: Props) {
+export default function LandingPage({ onNewProject, onEnter, onDemo, idle = false }: Props) {
   const [arrowHover, setArrowHover] = useState(false)
+  const compassRef = useRef<HTMLDivElement>(null)
+  // BMS-2: compass needle follows cursor, damped
+  const needleAngle = useCompassNeedle(compassRef, null)
 
   return (
     <div
@@ -39,13 +44,10 @@ export default function LandingPage({ onNewProject, onEnter, idle = false }: Pro
             BASEBOARD AI
           </span>
         </div>
-        <span style={{ fontSize: 10, letterSpacing: '0.25em', color: 'var(--text-muted)', opacity: 0.5, textTransform: 'uppercase' }}>
-          Modern Heritage
-        </span>
       </div>
 
-      {/* Compass — idle sway after 10s */}
-      <div className="relative mb-10 z-10" style={{ width: 280, height: 280 }}>
+      {/* Compass — idle sway after 10s, BMS-2 needle */}
+      <div ref={compassRef} className="relative mb-10 z-10" style={{ width: 280, height: 280 }}>
 
         <svg
           className="compass-ring absolute inset-0"
@@ -68,8 +70,12 @@ export default function LandingPage({ onNewProject, onEnter, idle = false }: Pro
         <svg className="absolute inset-0" width="280" height="280" viewBox="0 0 280 280" fill="none">
           <circle cx="140" cy="140" r="100" stroke="var(--gold)" strokeWidth="0.5" strokeOpacity="0.2" />
           <circle cx="140" cy="140" r="56"  stroke="var(--gold)" strokeWidth="0.8" strokeOpacity="0.4" />
+          {/* BMS-2: needle group rotates toward cursor */}
+          <g transform={`rotate(${needleAngle} 140 140)`}
+             style={{ transition: 'none' }}>
           <polygon points="140,58 136,138 140,148 144,138"  fill="var(--gold)"   fillOpacity="0.9" />
           <polygon points="140,222 136,142 140,148 144,142" fill="var(--border)" />
+          </g>
           <text x="140" y="46"  textAnchor="middle" fill="var(--gold)" fontSize="9" fontWeight="bold" letterSpacing="2" fontFamily="Georgia,serif">N</text>
           <text x="140" y="244" textAnchor="middle" fill="var(--gold)" fontSize="9" fontWeight="bold" letterSpacing="2" fontFamily="Georgia,serif">S</text>
           <text x="236" y="145" textAnchor="middle" fill="var(--gold)" fontSize="9" fontWeight="bold" letterSpacing="2" fontFamily="Georgia,serif">E</text>
@@ -116,10 +122,10 @@ export default function LandingPage({ onNewProject, onEnter, idle = false }: Pro
         characters, world, storyboard, and production bible automatically.
       </p>
 
-      {/* Primary CTA — New Project */}
+      {/* Primary CTA — New Project — BMS-4: brass reflection */}
       <button
         onClick={onNewProject}
-        className="btn-tactile gold-glow mb-4"
+        className="btn-tactile gold-glow bms-brass mb-3"
         style={{
           position: 'relative', zIndex: 10,
           padding: '13px 44px', borderRadius: 999,
@@ -139,6 +145,34 @@ export default function LandingPage({ onNewProject, onEnter, idle = false }: Pro
         }}
       >
         ⊕ &nbsp; New Project
+      </button>
+
+      {/* Demo CTA */}
+      <button
+        onClick={onDemo}
+        className="btn-tactile mb-4"
+        style={{
+          position: 'relative', zIndex: 10,
+          padding: '9px 32px', borderRadius: 999,
+          border: '1px solid rgba(201,168,76,0.35)',
+          background: 'transparent',
+          color: 'var(--gold)',
+          fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase',
+          cursor: 'pointer', opacity: 0.7,
+          transition: 'opacity 200ms ease, border-color 200ms ease, background 200ms ease',
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.opacity = '1'
+          e.currentTarget.style.borderColor = 'var(--gold)'
+          e.currentTarget.style.background = 'rgba(201,168,76,0.08)'
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.opacity = '0.7'
+          e.currentTarget.style.borderColor = 'rgba(201,168,76,0.35)'
+          e.currentTarget.style.background = 'transparent'
+        }}
+      >
+        ▶ &nbsp; Demo Project
       </button>
 
       {/* Secondary CTA — Enter Studio with arrow shift on hover */}

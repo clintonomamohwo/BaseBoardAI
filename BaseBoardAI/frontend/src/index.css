@@ -3,6 +3,154 @@
 
 * { box-sizing: border-box; }
 
+/* ═══════════════════════════════════════════
+   BaseBoard Motion System (BMS) — v1
+   Four pillars:
+     Ambient Motion   – Director's Light, compass breathing
+     Focus Motion     – Storyboard Focus, Inspector updates
+     AI Motion        – Genesis pipeline, dependency scan
+     Transition Motion– tab morphs, view transitions
+   ═══════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────
+   BMS-1: Director's Light
+   A single radial gradient pinned to the
+   cursor position, applied as a body::after
+   pseudo-element at 4% white opacity.
+   Never affects text; large blur radius.
+─────────────────────────────────────────── */
+:root {
+  --directors-light-pos: 50% 50%;
+}
+
+/* Only active on non-touch, non-reduced-motion (JS adds the class) */
+body.bms-light-active::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  background: radial-gradient(
+    600px circle at var(--directors-light-pos),
+    rgba(255,255,255,0.04) 0%,
+    transparent 70%
+  );
+}
+
+/* Dark mode — slightly warmer tint to match the gold palette */
+body.bms-light-active.dark::after {
+  background: radial-gradient(
+    600px circle at var(--directors-light-pos),
+    rgba(201,168,76,0.035) 0%,
+    transparent 70%
+  );
+}
+
+/* ─────────────────────────────────────────
+   BMS-3: Storyboard Focus
+   The frame nearest the cursor glows.
+   .bms-frame-focus is toggled via JS.
+─────────────────────────────────────────── */
+.bms-frame-focus {
+  outline: none !important;
+  box-shadow:
+    0 0 0 1.5px var(--gold),
+    0 4px 16px rgba(0,0,0,0.45) !important;
+  transform: translateY(-2px) !important;
+  filter: brightness(1.06);
+  transition:
+    box-shadow 160ms cubic-bezier(0.22,1,0.36,1),
+    transform   160ms cubic-bezier(0.22,1,0.36,1),
+    filter      160ms ease !important;
+}
+
+/* ─────────────────────────────────────────
+   BMS-4: Brass Reflection
+   Applied to elements with class .bms-brass.
+   Uses --brass-x / --brass-y CSS props written
+   by useBrassReflection() hook.
+   Simulates a polished-metal highlight.
+─────────────────────────────────────────── */
+.bms-brass {
+  --brass-x: 0.5;
+  --brass-y: 0;
+  position: relative;
+  overflow: hidden;
+}
+.bms-brass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    calc(90deg + (var(--brass-x) - 0.5) * 60deg),
+    transparent 30%,
+    rgba(201,168,76,0.12) calc(30% + (var(--brass-x) * 40%)),
+    rgba(255,248,220,0.10) calc(30% + (var(--brass-x) * 40%) + 6%),
+    transparent calc(30% + (var(--brass-x) * 40%) + 14%)
+  );
+  opacity: 0;
+  transition: opacity 200ms ease;
+  border-radius: inherit;
+}
+.bms-brass:hover::before {
+  opacity: 1;
+}
+
+/* ─────────────────────────────────────────
+   BMS-5: Inspector Micro-Animations
+   Content inside .bms-inspector-content
+   slides up and fades when the key changes.
+─────────────────────────────────────────── */
+@keyframes inspector-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.bms-inspector-enter {
+  animation: inspector-enter 220ms cubic-bezier(0.22,1,0.36,1) forwards;
+}
+
+/* ─────────────────────────────────────────
+   BMS-6: AI Generation Pipeline
+   Extended genesis styles — scan-line pulse
+   on the active task bar.
+─────────────────────────────────────────── */
+@keyframes bms-bar-scan {
+  0%   { left: -40%; opacity: 0.6; }
+  100% { left: 120%;  opacity: 0; }
+}
+
+.bms-bar-scan::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+  animation: bms-bar-scan 1.4s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────
+   BMS-8: Character Import Scanner
+   Step-by-step import analysis rows.
+─────────────────────────────────────────── */
+@keyframes import-row-enter {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.bms-import-row {
+  opacity: 0;
+  animation: import-row-enter 220ms cubic-bezier(0.22,1,0.36,1) forwards;
+}
+
 /* ─────────────────────────────────────────
    Theme CSS variables
 ───────────────────────────────────────── */

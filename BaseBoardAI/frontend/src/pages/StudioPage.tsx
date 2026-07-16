@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { RenderStyle, StoryboardProject, StoryboardScene } from '../types/storyboard'
+import type { RenderStyle, StoryboardFrame, StoryboardProject, StoryboardScene } from '../types/storyboard'
 import { forgePipeline } from '../api/storyboard'
 import PipelineForm from '../components/PipelineForm'
 import EmptyBlueprintState from '../components/EmptyBlueprintState'
@@ -18,13 +18,12 @@ const RENDER_OPTIONS: { value: RenderStyle; label: string }[] = [
   { value: 'full_shaded', label: 'Full Shaded' },
 ]
 
-const RENDER_STYLE_LABELS: Record<string, string> = {
-  bw_sketch: 'B&W Sketch',
-  flat_color: 'Flat Color',
-  full_shaded: 'Full Shaded',
-}
+const RENDER_STYLE_LABELS: Record<string, string> = Object.fromEntries(
+  RENDER_OPTIONS.map(o => [o.value, o.label])
+)
 
-type ViewMode = 'storyboard' | 'player' | 'vault' | 'locked'
+const VIEW_MODES = ['storyboard', 'player', 'vault', 'locked'] as const
+type ViewMode = typeof VIEW_MODES[number]
 
 interface Props {
   initialProject?: StoryboardProject | null
@@ -125,7 +124,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
   /** Replace a single frame's image and mark it as an artist override.
    *  Marked frames are skipped by re-run so the artwork is never overwritten. */
   function handleReplaceFrameImage(sceneNumber: number, frameNumber: number, dataUrl: string) {
-    const patch = (f: import('../types/storyboard').StoryboardFrame) =>
+    const patch = (f: StoryboardFrame) =>
       f.frame_number === frameNumber
         ? { ...f, generated_image_url: dataUrl, is_manual_override: true }
         : f
@@ -143,6 +142,27 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
     setActiveScene(prev => {
       if (!prev || prev.scene_number !== sceneNumber) return prev
       return { ...prev, frames: prev.frames.map(patch) }
+    })
+  }
+
+  /** Patch a frame's visual action fields after regeneration.
+   *  Only the returned fields are overwritten — image and overrides are untouched. */
+  function handleVisualActionUpdate(sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) {
+    const applyPatch = (f: StoryboardFrame) =>
+      f.frame_number === frameNumber ? { ...f, ...patch } : f
+
+    setProject(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        scenes: prev.scenes.map(s =>
+          s.scene_number !== sceneNumber ? s : { ...s, frames: s.frames.map(applyPatch) }
+        ),
+      }
+    })
+    setActiveScene(prev => {
+      if (!prev || prev.scene_number !== sceneNumber) return prev
+      return { ...prev, frames: prev.frames.map(applyPatch) }
     })
   }
 
@@ -187,7 +207,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
     <div className="flex-1 flex flex-col overflow-hidden anim-studio-unfold" style={{ background: 'var(--bg-base)' }}>
       {/* View mode tabs */}
       <div className="flex items-center gap-1 px-4 pt-3 pb-0 border-b border-[var(--border)] flex-shrink-0">
-        {(['storyboard', 'player', 'vault', 'locked'] as ViewMode[]).map((m) => (
+        {VIEW_MODES.map((m) => (
           <button
             key={m}
             onClick={() => setViewMode(m)}
@@ -374,13 +394,14 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
           <main className="col-span-7 overflow-hidden flex flex-col border-r border-[var(--border)]">
             {displayScene && (
               <StoryboardCanvas
-                scene={displayScene}
-                renderStyleLabel={renderStyleLabel}
-                selectedKeys={selectedKeys}
-                onToggleSelect={handleToggleSelect}
-                onOpenPlayer={() => setViewMode('player')}
-                onReplaceImage={handleReplaceFrameImage}
-              />
+                  scene={displayScene}
+                  renderStyleLabel={renderStyleLabel}
+                  selectedKeys={selectedKeys}
+                  onToggleSelect={handleToggleSelect}
+                  onOpenPlayer={() => setViewMode('player')}
+                  onReplaceImage={handleReplaceFrameImage}
+                  onVisualActionUpdate={handleVisualActionUpdate}
+                />
             )}
           </main>
 
@@ -389,11 +410,11 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
             <StudioInspector
               scene={displayScene}
               onReferenceChange={setReferenceImage}
+              canon={project?.canon ?? null}
             />
           </aside>
         </div>
       )}
-      {referenceImage && <></>}
     </div>
   )
 }

@@ -11,6 +11,9 @@ Provider is selected by settings.IMAGE_PROVIDER:
 
 generate_frame_image() is the sole public entry point. It is non-fatal:
 any failure is logged and returns None so the pipeline continues uninterrupted.
+
+Prompt assembly is delegated entirely to prompt_builder.py (Director Engine).
+This module is responsible for image generation only.
 """
 
 from __future__ import annotations
@@ -19,16 +22,28 @@ import base64
 import logging
 import time
 import urllib.parse
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from app.core.config import settings
+# _STYLE_PREFIXES re-exported so router code can import from one location.
+# build_frame_prompt is the sole prompt-assembly entry point for frame images.
+from app.core.prompt_builder import STYLE_PREFIXES as _STYLE_PREFIXES, build_frame_prompt
 
 if TYPE_CHECKING:
     from app.schemas.storyboard import ScriptSceneBase, StoryboardFrameBase
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_STYLE_PREFIX = _STYLE_PREFIXES["bw_sketch"]
+
+_BW_SKETCH_NEGATIVE_CONSTRAINTS = (
+    ", simple outlines only, no shading, no crosshatch, no texture, no color, no photo"
+)
+_BW_DETAILED_NEGATIVE_CONSTRAINTS = (
+    ", black and white only, no color, no photo realism, no gradients"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -45,58 +60,29 @@ def _strip_data_url_header(data_url: str) -> str:
     return data_url.split(',', 1)[1]
 
 
-# ---------------------------------------------------------------------------
-# BW sketch negative constraints (load-bearing — do not inline)
-# ---------------------------------------------------------------------------
-
-# Style prefix injected at the start of every prompt so the image model
-# produces the correct visual register regardless of action content.
-_STYLE_PREFIXES: dict[str, str] = {
-    # Sparse construction lines — artist adds their own shading on top
-    "bw_sketch":   "clean minimal black and white line art, simple outline only, no shading, no cross-hatching, no fill, no texture, loose gestural sketch, artist rough, white background. ",
-    # Fully inked with rendered shading — ready to study as a finished reference
-    "bw_detailed": "black and white ink illustration, bold clean outlines, detailed crosshatch shading, high contrast shadows, no color, professional comic book art, white background. ",
-    "flat_color":  "2D animation cel, cartoon illustration, flat solid color fills, clean vector outlines, no gradients, no photo realism, Studio Ghibli style. ",
-    "full_shaded": "2D animated film frame, cinematic cartoon, volumetric lighting, expressive character art, no photo realism. ",
-}
-_DEFAULT_STYLE_PREFIX = _STYLE_PREFIXES["bw_sketch"]
-
-_BW_SKETCH_NEGATIVE_CONSTRAINTS = (
-    ", simple outlines only, no shading, no crosshatch, no texture, no color, no photo"
-)
-
-_BW_DETAILED_NEGATIVE_CONSTRAINTS = (
-    ", black and white only, no color, no photo realism, no gradients"
-)
-
-
 def _inject_sketch_constraints(prompt: str) -> str:
     """Append bw_sketch constraints and cap at 500 chars."""
     return (prompt + _BW_SKETCH_NEGATIVE_CONSTRAINTS)[:500]
 
 
 # ---------------------------------------------------------------------------
-# Prompt builder
+# Prompt assembly — delegate to prompt_builder (Director Engine)
 # ---------------------------------------------------------------------------
 
 def _build_image_prompt(
     frame: "StoryboardFrameBase",
     scene: "ScriptSceneBase",
     render_style: str = "bw_sketch",
+    canon_context: dict[str, Any] | None = None,
 ) -> str:
     """
-    Assemble an image generation prompt from frame and scene fields.
-    Prefixes a render-style directive so the model outputs the correct
-    visual register (cartoon/animation, not photorealism).
-    Capped at 450 characters.
+    Build a cinematic image generation prompt by delegating to prompt_builder.
+    Scene type is inferred from the director engine cache on the scene object,
+    or re-detected live.
     """
-    style_prefix = _STYLE_PREFIXES.get(render_style, _DEFAULT_STYLE_PREFIX)
-    prompt = (
-        f"{frame.shot_type}, {frame.camera_angle}. "
-        f"{frame.action_breakdown}. "
-        f"{frame.lighting_notes}."
-    )
-    return (style_prefix + prompt)[:450]
+    from app.core.director_engine import get_scene_type
+    scene_type = get_scene_type(scene)
+    return build_frame_prompt(frame, scene, render_style, scene_type, canon_context)
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +203,7 @@ def generate_frame_image(
     scene: "ScriptSceneBase",
     reference_style_image: str | None = None,
     render_style: str = 'bw_sketch',
+    canon_context: dict[str, Any] | None = None,
 ) -> str | None:
     """
     Generate a thumbnail image for a storyboard frame.
@@ -230,7 +217,7 @@ def generate_frame_image(
     Never raises — image generation is non-fatal to the pipeline.
     """
     try:
-        prompt = _build_image_prompt(frame, scene, render_style)
+        prompt = _build_image_prompt(frame, scene, render_style, canon_context)
         ref_b64 = _strip_data_url_header(reference_style_image) if reference_style_image else None
 
         # Branch 1: bw_sketch + reference → sketch-intersection path

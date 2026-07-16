@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import logoSrc from './assets/logo.png'
-import type { StoryboardProject } from './types/storyboard'
+import type { RenderStyle, StoryboardProject } from './types/storyboard'
+import { useDirectorsLight } from './hooks/useDirectorsLight'
+import { DEMO_PROJECT } from './data/demoProject'
 import LandingPage            from './pages/LandingPage'
 import CompassNavPage         from './pages/CompassNavPage'
 import NewProjectPage         from './pages/NewProjectPage'
@@ -26,7 +28,7 @@ type StudioTab = 'storyboard' | 'characters' | 'world-bible'
 
 interface Notif { id: number; message: string; type?: 'success' | 'info' }
 
-interface GenesisState { file: File | null; title: string }
+interface GenesisState { file: File | null; title: string; renderStyle: RenderStyle }
 
 function getInitialDark(): boolean {
   const stored = localStorage.getItem('theme')
@@ -35,6 +37,9 @@ function getInitialDark(): boolean {
 }
 
 export default function App() {
+  // BMS-1: Director's Light — activate once for the whole app
+  useDirectorsLight()
+
   const [view, setView]              = useState<AppView>('landing')
   const [studioTab, setStudioTab]    = useState<StudioTab>('storyboard')
   const [project, setProject]        = useState<StoryboardProject | null>(null)
@@ -43,7 +48,7 @@ export default function App() {
   const [notifs, setNotifs]          = useState<Notif[]>([])
   const [notifId, setNotifId]        = useState(0)
   const [idle, setIdle]              = useState(false)
-  const [genesisState, setGenesisSt] = useState<GenesisState>({ file: null, title: '' })
+  const [genesisState, setGenesisState] = useState<GenesisState>({ file: null, title: '', renderStyle: 'bw_sketch' })
   // Completed project held for the Report screen before entering Studio
   const [pendingProject, setPending] = useState<StoryboardProject | null>(null)
 
@@ -84,6 +89,12 @@ export default function App() {
     pushNotif('Genesis Engine complete — your project is ready ✓')
   }
 
+  function handleLoadDemo() {
+    setPending(DEMO_PROJECT)
+    setView('report')
+    pushNotif('Demo project loaded — The Last Broadcast ✓', 'info')
+  }
+
   function handleStartBlank() {
     // Start Blank skips Genesis Engine entirely — goes straight to Studio
     // with a null project so the user sees the empty PipelineForm.
@@ -92,8 +103,8 @@ export default function App() {
     setView('studio')
   }
 
-  function handleFileReady(file: File, title: string) {
-    setGenesisSt({ file, title })
+  function handleFileReady(file: File, title: string, renderStyle: RenderStyle = 'bw_sketch') {
+    setGenesisState({ file, title, renderStyle })
     setView('genesis-running')
   }
 
@@ -121,6 +132,7 @@ export default function App() {
     <LandingPage
       onNewProject={() => setView('new-project')}
       onEnter={() => setView('compass')}
+      onDemo={handleLoadDemo}
       idle={idle}
     />
   )
@@ -147,6 +159,7 @@ export default function App() {
     <GenesisEnginePage
       file={genesisState.file}
       projectTitle={genesisState.title}
+      renderStyle={genesisState.renderStyle}
       onComplete={handleGenesisComplete}
       onNotify={pushNotif}
       onLanding={() => setView('landing')}
@@ -251,17 +264,32 @@ export default function App() {
             characters={project?.characters ?? []}
             scenes={project?.scenes ?? []}
             renderStyle={project?.render_style ?? 'bw_sketch'}
+            project={project}
             onReplacePortrait={(_charId, _dataUrl) => {
-              // Portrait URLs live in CharacterRow local state; callback is a
-              // hook for future persistence (e.g. saving to the project record).
-              // Nothing to do at App level today — the row re-renders itself.
+              // Portrait URLs live in CharacterRow local state — no App-level action needed.
             }}
+            onUpdateCharacter={(updated) => {
+              setProject(p => p ? {
+                ...p,
+                characters: p.characters.map(c => c.id === updated.id ? updated : c),
+              } : p)
+            }}
+            onUpdateSceneFrames={(updatedScenes) => {
+              setProject(p => p ? { ...p, scenes: updatedScenes } : p)
+            }}
+            onNotify={pushNotif}
           />
         )}
         {studioTab === 'world-bible' && (
           <WorldBiblePage
             scenes={project?.scenes ?? []}
+            project={project}
+            renderStyle={project?.render_style ?? 'bw_sketch'}
             onDeleteScene={handleDeleteScene}
+            onUpdateSceneFrames={(updatedScenes) => {
+              setProject(p => p ? { ...p, scenes: updatedScenes } : p)
+            }}
+            onNotify={pushNotif}
           />
         )}
       </div>

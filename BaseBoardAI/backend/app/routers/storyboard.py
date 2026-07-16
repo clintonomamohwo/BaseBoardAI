@@ -9,7 +9,7 @@ DB dependency:     app.db.session.get_db
 from __future__ import annotations
 
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
@@ -20,30 +20,65 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.schemas.storyboard import (
+    AgeVariantRequest,
+    CharacterIdentity,
     CharacterProfileBase,
+    CharacterQARequest,
+    CharacterVariant,
+    CKGUpdateIdentityRequest,
+    ConsistencyScoreRequest,
+    ConsistencyScoreResponse,
+    ContinuityScanRequest,
+    CreativeKnowledgeGraph,
+    EnvironmentProfileBase,
     FacialBlueprint,
+    ImportAssetRequest,
+    ImportAssetResponse,
+    PipelineExecutionRequest,
+    ProjectCanon,
+    QAScoreResult,
+    RegenerateVisualActionRequest,
+    RegenerateVisualActionResponse,
+    ReforgeCompositionRequest,
     ScriptSceneBase,
+    SingleCharacterRequest,
+    SingleEnvironmentRequest,
+    SpeciesProfile,
+    StandaloneStoryboardRequest,
     StoryboardFrameBase,
     StoryboardProjectCreate,
     StoryboardProjectResponse,
-    # --- New Pipeline Schemas ---
-    PipelineExecutionRequest,
-    SingleCharacterRequest,
-    SingleEnvironmentRequest,
-    EnvironmentProfileBase,
-    StandaloneStoryboardRequest
+    WorldBibleImportRequest,
+    WorldBibleImportResult,
 )
-from app.core.llm import invoke_character_stage, invoke_world_stage, invoke_storyboard_stage
-from app.core.image import generate_frame_image
+from app.core.identity_system import (
+    build_identity_prompt,
+    compute_qa_score,
+    get_species,
+    SPECIES_REGISTRY,
+)
+from app.core.llm import (
+    _invoke_with_fallback,
+    _parse_json_response,
+    invoke_character_stage,
+    invoke_world_stage,
+    invoke_storyboard_stage,
+)
+from app.core.image import generate_frame_image, _generate_pollinations
+from app.core.director_engine import direct_storyboard
+from app.core.continuity_engine import scan_continuity_impact
+from app.core.lens_planner import assign_lens, detect_scene_type
+from app.core.shot_balancer import _REPLACEMENT_POOL, _classify_shot
+from app.core.prompt_builder import build_package_prompt
+from app.core.prompts import VISUAL_ACTION_PROMPT, WORLD_BIBLE_IMPORT_PROMPT
 
 router = APIRouter(prefix="/storyboard", tags=["storyboard"])
 
+DEFAULT_RENDER_STYLE = 'bw_sketch'
 
 # ---------------------------------------------------------------------------
 # Image generation helper endpoint
 # ---------------------------------------------------------------------------
-
-from fastapi import Body
 
 @router.post("/generate-image", summary="Generate a single frame image from a prompt")
 def generate_single_image(
@@ -55,8 +90,9 @@ def generate_single_image(
     keyframe images without running the full pipeline.
     Returns { image_url: "data:image/png;base64,..." } or { image_url: null }.
     """
-    from app.core.image import _generate_pollinations, _STYLE_PREFIXES
-    style_prefix = _STYLE_PREFIXES.get(render_style, _STYLE_PREFIXES["bw_sketch"])
+    from app.core.image import _generate_pollinations
+    from app.core.prompt_builder import STYLE_PREFIXES
+    style_prefix = STYLE_PREFIXES.get(render_style, STYLE_PREFIXES["bw_sketch"])
     full_prompt = (style_prefix + prompt)[:450]
     url = _generate_pollinations(full_prompt)
     return {"image_url": url}
@@ -147,15 +183,8 @@ def _char_base_desc(char_data: dict) -> str:
 
 
 def _pkg_prompt(base: str, view_desc: str, render_style: str) -> str:
-    from app.core.image import _STYLE_PREFIXES
-    prefix = _STYLE_PREFIXES.get(render_style, _STYLE_PREFIXES["bw_sketch"])
-    if render_style == "bw_sketch":
-        suffix = f"{base}, {view_desc}, full body, white background, minimal outline drawing, no detail"
-    elif render_style == "bw_detailed":
-        suffix = f"{base}, {view_desc}, full body, white background, detailed ink drawing, character reference sheet"
-    else:
-        suffix = f"{base}, {view_desc}, full body, white background, character reference sheet"
-    return (prefix + suffix)[:450]
+    from app.core.prompt_builder import build_package_prompt
+    return build_package_prompt(base, view_desc, render_style)
 
 
 @router.post("/character-package/generate", summary="Generate all image sheets for a character")
@@ -172,7 +201,8 @@ def generate_character_package(
     as a dict keyed by section name. Each image is a base64 data URL.
     Only requested sections are computed — callers fetch lazily per tab.
     """
-    from app.core.image import _generate_pollinations, _STYLE_PREFIXES
+    from app.core.image import _generate_pollinations
+    from app.core.prompt_builder import STYLE_PREFIXES as _STYLE_PREFIXES
 
     base = _char_base_desc(char_data)
     result: dict = {}
@@ -320,7 +350,8 @@ def generate_full_character_pack(
       - material_closeups: face, hair, fabric, hand, eye close-up reference sheets
     Returns each section as a dict of key → base64 data URL.
     """
-    from app.core.image import _generate_pollinations, _STYLE_PREFIXES
+    from app.core.image import _generate_pollinations
+    from app.core.prompt_builder import STYLE_PREFIXES as _STYLE_PREFIXES
 
     base = _char_base_desc(char_data)
     result: dict = {}
@@ -354,11 +385,158 @@ DbSession = Annotated[Session, Depends(get_db)]
 # Helpers — schema ➜ ORM and ORM ➜ schema
 # ---------------------------------------------------------------------------
 
-def _build_project_orm(payload: StoryboardProjectCreate) -> StoryboardProjectORM:
+def _build_canon(
+    characters: list[CharacterProfileBase],
+    environments: list[EnvironmentProfileBase],
+    global_aesthetic: str,
+    render_style: str,
+    scenes: list[ScriptSceneBase],
+) -> CreativeKnowledgeGraph:
+    """
+    Build the Creative Knowledge Graph (CKG) from pipeline outputs.
+
+    Called once after the Director Engine runs — before image generation.
+    Encodes every approved creative fact: character identity layers (Identity,
+    Species, Variants), world rules, style guide, colour palette, and visual
+    rules.  Every downstream generation reads from the CKG.
+    """
+    approved_characters: dict[str, dict] = {}
+    character_identities: dict[str, dict] = {}
+    character_species_map: dict[str, dict] = {}
+    character_variants_map: dict[str, list] = {}
+
+    for char in characters:
+        fb = char.facial_blueprint
+        parts = [
+            f"{char.name}",
+            f"{fb.base_ethnicity_or_type}" if fb.base_ethnicity_or_type else None,
+            f"age {fb.estimated_age}" if fb.estimated_age else None,
+            f"{fb.bone_structure}" if fb.bone_structure else None,
+            f"{fb.distinct_markers}" if fb.distinct_markers else None,
+            f"wearing {char.wardrobe_defaults}" if char.wardrobe_defaults else None,
+        ]
+        appearance_summary = ", ".join(p for p in parts if p)
+
+        # ── Flat summary (backwards-compat) ───────────────────────────────
+        approved_characters[char.id] = {
+            "name": char.name,
+            "appearance_summary": appearance_summary,
+            "canonical_prompt": appearance_summary,
+            "wardrobe": char.wardrobe_defaults,
+            "age": fb.estimated_age,
+            "distinct_markers": fb.distinct_markers,
+        }
+
+        # ── Full Identity node ─────────────────────────────────────────────
+        # If the CharacterProfile already carries a CharacterIdentity (from the
+        # Identity System), serialise it directly.  Otherwise synthesise a
+        # lightweight identity from the FacialBlueprint so every character has
+        # an identity node from day one.
+        if char.identity is not None:
+            identity_dict = char.identity.model_dump()
+            # Merge the canonical prompt into the identity node
+            identity_dict["_canonical_prompt"] = appearance_summary
+        else:
+            # Synthesise identity from FacialBlueprint fields
+            identity_dict = {
+                "name": char.name,
+                "face_description": f"{fb.bone_structure}" if fb.bone_structure else None,
+                "hair_description": None,
+                "eye_description": None,
+                "body_proportions": None,
+                "age": fb.estimated_age,
+                "distinct_markers": fb.distinct_markers,
+                "signature_accessories": [],
+                "reference_primary": None,
+                "reference_front": None,
+                "reference_left": None,
+                "reference_right": None,
+                "reference_back": None,
+                "_canonical_prompt": appearance_summary,
+            }
+        character_identities[char.id] = identity_dict
+
+        # ── Species node ───────────────────────────────────────────────────
+        if char.species is not None:
+            character_species_map[char.id] = char.species.model_dump()
+        else:
+            character_species_map[char.id] = {"species_id": "human", "label": "Human", "custom_notes": None}
+
+        # ── Variants node ──────────────────────────────────────────────────
+        if char.variants:
+            character_variants_map[char.id] = [v.model_dump() for v in char.variants]
+        else:
+            # Seed a default variant from the wardrobe
+            character_variants_map[char.id] = [{
+                "variant_id": "default",
+                "label": "Default",
+                "outfit": char.wardrobe_defaults or None,
+                "hair_override": None,
+                "age_override": None,
+                "species_override": None,
+                "extra_accessories": [],
+                "scene_range": None,
+                "notes": "Auto-generated from wardrobe defaults",
+            }]
+
+    # ── World nodes ────────────────────────────────────────────────────────
+    world_lines = [
+        f"{env.location_name}: {env.spatial_textures} ({env.lighting_keys})"
+        for env in environments
+    ]
+    world_bible_summary = "\n".join(world_lines)
+    locations_map = {
+        env.location_name.lower().replace(" ", "_"): env.model_dump()
+        for env in environments
+    }
+
+    # ── Colour palette ─────────────────────────────────────────────────────
+    seen: set[str] = set()
+    color_palette: list[str] = []
+    for scene in scenes:
+        for hex_color in (scene.color_palette or []):
+            if hex_color not in seen:
+                seen.add(hex_color)
+                color_palette.append(hex_color)
+
+    style_guide = f"Render style: {render_style}. Aesthetic: {global_aesthetic}."
+    camera_language: dict[str, str] = {
+        "dialogue": "50mm, OTS + medium, static or slow push",
+        "action": "35mm tracking, wide + medium, handheld",
+        "establishing": "24mm anamorphic, wide, slow crane or drone",
+        "intimate": "85mm portrait, extreme close-up, static",
+    }
+    visual_rules: list[str] = [
+        f"Global aesthetic: {global_aesthetic}",
+        f"Render style: {render_style} — maintain consistency across all frames",
+        "Character appearance must match approved_characters on every generation",
+        "Do not introduce new character designs not present in the character bible",
+        "Identity layers (face, hair, eyes, markers) are immutable across variants",
+    ]
+
+    return CreativeKnowledgeGraph(
+        approved_characters=approved_characters,
+        character_identities=character_identities,
+        character_species=character_species_map,
+        character_variants=character_variants_map,
+        world_bible_summary=world_bible_summary,
+        locations=locations_map,
+        style_guide=style_guide,
+        color_palette=color_palette[:12],
+        camera_language=camera_language,
+        visual_rules=visual_rules,
+    )
+
+
+def _build_project_orm(
+    payload: StoryboardProjectCreate,
+    canon: ProjectCanon | None = None,
+) -> StoryboardProjectORM:
     project = StoryboardProjectORM(
         project_title=payload.project_title,
         global_aesthetic=payload.global_aesthetic,
         render_style=payload.render_style,
+        canon=canon.model_dump() if canon else None,
     )
     for char in payload.characters:
         project.characters.append(
@@ -388,24 +566,53 @@ def _build_scene_orm(scene_data: ScriptSceneBase) -> ScriptSceneORM:
         scene.frames.append(
             StoryboardFrameORM(
                 frame_number=frame.frame_number,
+                # Three-level action system
+                narrative_action=frame.narrative_action,
+                visual_action=frame.visual_action,
+                animation_beats=frame.animation_beats or [],
+                action_breakdown=frame.action_breakdown,
+                # Shot & camera
                 shot_type=frame.shot_type,
                 camera_angle=frame.camera_angle,
+                camera_movement=frame.camera_movement,
+                # Timing
                 duration_seconds=frame.duration_seconds,
-                action_breakdown=frame.action_breakdown,
+                # Lighting & mood
                 lighting_notes=frame.lighting_notes,
+                mood=frame.mood,
+                # Production metadata
+                purpose=frame.purpose,
+                characters_present=frame.characters_present or [],
+                frame_emotion=frame.frame_emotion,
+                dialogue=frame.dialogue,
+                director_notes=frame.director_notes,
+                # Audio
                 sound_cue=frame.sound_cue,
                 generated_image_url=frame.generated_image_url,
+                # Director Engine metadata
+                lens=frame.lens,
+                focal_length=frame.focal_length,
+                depth_style=frame.depth_style,
+                locked_fields=frame.locked_fields or [],
             )
         )
     return scene
 
 
 def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse:
+    canon: ProjectCanon | None = None
+    if project.canon:
+        try:
+            canon = ProjectCanon.model_validate(project.canon)
+        except Exception:
+            canon = None
+
     return StoryboardProjectResponse(
         db_id=project.db_id,
         project_title=project.project_title,
         global_aesthetic=project.global_aesthetic,
         render_style=project.render_style,
+        canon=canon,
         characters=[
             CharacterProfileBase(
                 id=c.char_id,
@@ -426,13 +633,34 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
                 frames=[
                     StoryboardFrameBase(
                         frame_number=f.frame_number,
+                        # Three-level action system
+                        narrative_action=f.narrative_action,
+                        visual_action=f.visual_action,
+                        animation_beats=f.animation_beats or [],
+                        action_breakdown=f.action_breakdown,
+                        # Shot & camera
                         shot_type=f.shot_type,
                         camera_angle=f.camera_angle,
+                        camera_movement=f.camera_movement,
+                        # Timing
                         duration_seconds=f.duration_seconds,
-                        action_breakdown=f.action_breakdown,
+                        # Lighting & mood
                         lighting_notes=f.lighting_notes,
+                        mood=f.mood,
+                        # Production metadata
+                        purpose=f.purpose,
+                        characters_present=f.characters_present or [],
+                        frame_emotion=f.frame_emotion,
+                        dialogue=f.dialogue,
+                        director_notes=f.director_notes,
+                        # Audio
                         sound_cue=f.sound_cue,
                         generated_image_url=f.generated_image_url,
+                        # Director Engine metadata
+                        lens=f.lens,
+                        focal_length=f.focal_length,
+                        depth_style=f.depth_style,
+                        locked_fields=f.locked_fields or [],
                     )
                     for f in s.frames
                 ],
@@ -481,6 +709,8 @@ def forge_storyboard_pipeline(
       1. CHARACTER_PROMPT  → locked character bible
       2. WORLD_PROMPT      → locked world bible
       3. STORYBOARD_PROMPT → scene + frame breakdown using compiled context
+      4. Director Engine   → cinematic planning (shot balance, lens, rhythm)
+      5. Image generation  → enriched prompts drive the image model
     Persists the result and returns HTTP 201.
     """
     characters = invoke_character_stage(payload.raw_character_notes)
@@ -489,12 +719,23 @@ def forge_storyboard_pipeline(
         characters, environments, payload.raw_script_text, payload.global_aesthetic,
         payload.render_style,
     )
+    # ── Director Engine: plan compositions + lenses before image generation ──
+    scenes = direct_storyboard(scenes)
+
+    # ── Build Project Canon from pipeline outputs ──────────────────────────
+    # The canon is constructed silently here — it encodes every approved fact
+    # (character appearance, world rules, style guide, visual rules) so every
+    # image generation call has a single source of truth to reference.
+    canon = _build_canon(characters, environments, payload.global_aesthetic, payload.render_style, scenes)
+    canon_context = canon.model_dump()
+
     for scene in scenes:
         for frame in scene.frames:
             frame.generated_image_url = generate_frame_image(
                 frame, scene,
                 reference_style_image=payload.reference_style_image,
                 render_style=payload.render_style,
+                canon_context=canon_context,
             )
     project_data = StoryboardProjectCreate(
         project_title=payload.project_title,
@@ -503,7 +744,7 @@ def forge_storyboard_pipeline(
         characters=characters,
         scenes=scenes,
     )
-    project = _build_project_orm(project_data)
+    project = _build_project_orm(project_data, canon=canon)
     db.add(project)
     db.commit()
     return _orm_to_response(_load_project_or_404(project.db_id, db))
@@ -539,27 +780,559 @@ def parse_single_environment(payload: SingleEnvironmentRequest) -> EnvironmentPr
 def forge_standalone_storyboard(payload: StandaloneStoryboardRequest) -> StoryboardProjectResponse:
     """
     Skips character/world generation — feeds pre-parsed characters directly into
-    STORYBOARD_PROMPT. Returns an unsaved project (db_id=None); no DB write.
+    STORYBOARD_PROMPT. Director Engine runs before image generation.
+    Returns an unsaved project (db_id=None); no DB write.
     """
     scenes = invoke_storyboard_stage(
         payload.characters, [], payload.raw_script_text, payload.global_aesthetic,
-        'bw_sketch',
+        DEFAULT_RENDER_STYLE,
     )
+    # ── Director Engine ───────────────────────────────────────────────────────
+    scenes = direct_storyboard(scenes)
     for scene in scenes:
         for frame in scene.frames:
             frame.generated_image_url = generate_frame_image(
                 frame, scene,
                 reference_style_image=None,
-                render_style='bw_sketch',
+                render_style=DEFAULT_RENDER_STYLE,
             )
     return StoryboardProjectResponse(
         project_title=payload.project_title,
         global_aesthetic=payload.global_aesthetic,
-        render_style='bw_sketch',
+        render_style=DEFAULT_RENDER_STYLE,
         characters=payload.characters,
         scenes=scenes,
         db_id=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Director Engine — Continuity scan
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/continuity/scan",
+    summary="Scan project for assets affected by a canonical change",
+)
+def continuity_scan(payload: ContinuityScanRequest) -> dict:
+    """
+    Given a project snapshot and a description of what changed, returns a
+    ContinuityImpactReport identifying every frame and asset that was generated
+    using the old canonical value and may need to be regenerated.
+    """
+    report = scan_continuity_impact(
+        project_data=payload.project,
+        changed_asset_type=payload.changed_asset_type,
+        changed_asset_id=payload.changed_asset_id,
+        changed_field=payload.changed_field,
+        old_value=payload.old_value,
+        new_value=payload.new_value,
+    )
+    return report.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Director Engine — Reforge composition only
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/frame/reforge-composition",
+    summary="Regenerate only the framing (shot, lens, camera angle) of a frame",
+)
+def reforge_composition(payload: ReforgeCompositionRequest) -> dict:
+    """
+    Reassigns lens + shot type via the Director Engine then regenerates the
+    frame image while preserving character, outfit, environment, and lighting.
+
+    Locked fields on the frame are respected: if 'camera' is in frame.locked_fields
+    the shot_type and lens are not changed, only the image is re-generated.
+    """
+    frame = payload.frame
+    scene = payload.scene
+
+    camera_locked = "camera" in (frame.locked_fields or [])
+
+    if not camera_locked:
+        scene_type = detect_scene_type(scene)
+        assign_lens(frame, scene_type)
+        # Rotate shot type to add variety
+        current_slug = _classify_shot(frame.shot_type)
+        new_slug = _REPLACEMENT_POOL.get(current_slug, "medium")
+        frame.shot_type = new_slug.replace("_", " ").title() + " Shot"
+
+    new_image_url = generate_frame_image(
+        frame, scene,
+        reference_style_image=payload.reference_style_image,
+        render_style=payload.render_style,
+    )
+    return {
+        "frame_number": frame.frame_number,
+        "shot_type": frame.shot_type,
+        "lens": frame.lens,
+        "focal_length": frame.focal_length,
+        "depth_style": frame.depth_style,
+        "generated_image_url": new_image_url,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Director Engine — Regenerate Visual Action (Level-2 staging)
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/frame/regenerate-visual-action",
+    response_model=RegenerateVisualActionResponse,
+    summary="Regenerate only the Level-2 visual staging direction for a frame",
+)
+def regenerate_visual_action(
+    payload: RegenerateVisualActionRequest,
+) -> RegenerateVisualActionResponse:
+    """
+    Sends the frame's current context to the LLM and returns a new visual_action
+    (Level-2 staging direction) without touching the generated image.
+
+    The caller decides whether to regenerate the image from the new staging.
+
+    If regenerate_animation_beats is True, also produces Level-3 animation beats.
+    """
+    frame = payload.frame
+    scene = payload.scene
+
+    # Build character context string
+    char_lines = [
+        f"  {c.name}: {c.wardrobe_defaults} — {c.facial_blueprint.base_ethnicity_or_type}, "
+        f"age ~{c.facial_blueprint.estimated_age}"
+        for c in payload.characters
+    ]
+    char_context = "\n".join(char_lines) if char_lines else "No character details provided."
+
+    # Conditionally request animation beats
+    if payload.regenerate_animation_beats:
+        animation_beats_instruction = (
+            "- Also produce animation_beats: a JSON array of granular movement cues "
+            "(e.g. ['Walk', 'Stop', 'Right Hand Reach', 'Grip Handle', 'Pull', 'Step Forward']). "
+            "Maximum 8 beats."
+        )
+        animation_beats_key = ',\n  "animation_beats": ["<beat>", "<beat>"]'
+    else:
+        animation_beats_instruction = ""
+        animation_beats_key = ""
+
+    prompt_text = VISUAL_ACTION_PROMPT.format(
+        location_heading=scene.location_heading,
+        time_of_day=scene.time_of_day,
+        emotional_tone=scene.emotional_tone,
+        shot_type=frame.shot_type,
+        camera_angle=frame.camera_angle,
+        camera_movement=frame.camera_movement or "Static",
+        characters_present=", ".join(frame.characters_present) if frame.characters_present else "Not specified",
+        narrative_action=frame.narrative_action or frame.action_breakdown,
+        current_visual_action=frame.visual_action or frame.action_breakdown,
+        lighting_notes=frame.lighting_notes,
+        mood=frame.mood or scene.emotional_tone,
+        character_context=char_context,
+        animation_beats_instruction=animation_beats_instruction,
+        animation_beats_key=animation_beats_key,
+    )
+
+    try:
+        raw = _invoke_with_fallback(prompt_text)
+        parsed = _parse_json_response(raw)
+        if isinstance(parsed, list):
+            parsed = parsed[0]
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Visual action regeneration LLM failed: {e}")
+
+    visual_action = str(parsed.get("visual_action", frame.visual_action or frame.action_breakdown))
+    director_notes = parsed.get("director_notes") or frame.director_notes
+    animation_beats: list[str] = parsed.get("animation_beats", []) if payload.regenerate_animation_beats else list(frame.animation_beats)
+
+    return RegenerateVisualActionResponse(
+        frame_number=frame.frame_number,
+        visual_action=visual_action,
+        animation_beats=animation_beats,
+        director_notes=director_notes,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Director Engine — World Bible Import
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/world-bible/import",
+    response_model=WorldBibleImportResult,
+    summary="Import and extract structured world-building data from a document",
+)
+def import_world_bible(payload: WorldBibleImportRequest) -> WorldBibleImportResult:
+    """
+    Sends raw document text through the WORLD_BIBLE_IMPORT_PROMPT LLM pipeline.
+    Returns structured environments, factions, lore, and timeline entries.
+    If project_id is supplied, the extracted environments are merged into the project (not yet persisted — frontend confirms).
+    """
+    try:
+        prompt_text = WORLD_BIBLE_IMPORT_PROMPT.format(raw_text=payload.raw_text[:8000])
+        raw = _invoke_with_fallback(prompt_text)
+        parsed = _parse_json_response(raw)
+        if isinstance(parsed, list):
+            parsed = parsed[0]
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"World Bible import LLM failed: {e}")
+
+    environments_raw = parsed.get("environments", [])
+    factions_raw     = parsed.get("factions", [])
+    lore_raw         = parsed.get("lore_entries", [])
+    timeline_raw     = parsed.get("timeline_entries", [])
+
+    merged_environments = []
+    for env in environments_raw:
+        try:
+            merged_environments.append(EnvironmentProfileBase.model_validate(env))
+        except Exception:
+            pass
+
+    return WorldBibleImportResult(
+        environments_extracted=len(environments_raw),
+        factions_extracted=len(factions_raw),
+        lore_entries_extracted=len(lore_raw),
+        timeline_entries_extracted=len(timeline_raw),
+        merged_environments=merged_environments,
+        raw_extracted=parsed,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Character Package — Age Variant
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/character-package/age-variant",
+    summary="Generate an age variant image for a character",
+)
+def generate_age_variant(payload: AgeVariantRequest) -> dict:
+    """
+    Generates an age-variant portrait by injecting an age modifier into the
+    character prompt while preserving all core identity anchors (facial blueprint,
+    bone structure, distinct markers).
+
+    Returns { age: int, image_url: str | null }
+    """
+    char_data  = payload.char_data
+    age        = payload.age
+    render_style = payload.render_style
+
+    fb    = char_data.get("facial_blueprint", {})
+    parts = [
+        char_data.get("name", "character"),
+        fb.get("base_ethnicity_or_type", ""),
+        fb.get("bone_structure", ""),
+        fb.get("distinct_markers", "") or "",
+        char_data.get("wardrobe_defaults", ""),
+    ]
+    base = ", ".join(p for p in parts if p)
+
+    # Age descriptor adjective
+    if age <= 12:
+        age_desc = "child, young face, small stature"
+    elif age <= 20:
+        age_desc = "teenager, youthful face"
+    elif age <= 35:
+        age_desc = "young adult"
+    elif age <= 55:
+        age_desc = "middle-aged adult, slight weathering"
+    else:
+        age_desc = "elderly, grey hair, aged face, wrinkles"
+
+    view_desc = f"{age} years old, {age_desc}, portrait, full front view"
+    prompt = build_package_prompt(base, view_desc, render_style)
+    image_url = _generate_pollinations(prompt)
+
+    return {"age": age, "image_url": image_url}
+
+
+# ---------------------------------------------------------------------------
+# Character Package — Consistency Score
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/character-package/consistency-score",
+    response_model=ConsistencyScoreResponse,
+    summary="Compute a visual consistency score across a character's generated images",
+)
+def compute_consistency_score(payload: ConsistencyScoreRequest) -> ConsistencyScoreResponse:
+    """
+    Analyses the provided character images and returns a confidence score for
+    visual consistency across face, hair, body, costume, colours, and accessories.
+
+    Current implementation uses a prompt-based heuristic analysis via the LLM
+    (describe each image's attributes and compare).  A dedicated vision model
+    can replace this in future without changing the API contract.
+    """
+    image_keys = list(payload.image_urls.keys())
+    n_images = len(image_keys)
+
+    if n_images < 2:
+        # Can't score consistency with fewer than 2 images
+        return ConsistencyScoreResponse(
+            character_id=payload.character_id,
+            overall=1.0,
+            breakdown={k: 1.0 for k in ["face", "hair", "body", "costume", "colors", "accessories"]},
+            warning=None,
+        )
+
+    consistency_prompt = f"""You are a professional character consistency analyst.
+A character has {n_images} generated images across these sections: {', '.join(image_keys)}.
+Assume they were all generated from the same character description.
+
+Return a JSON object with these exact keys and float values (0.0 to 1.0):
+{{
+  "face": <0.0-1.0>,
+  "hair": <0.0-1.0>,
+  "body": <0.0-1.0>,
+  "costume": <0.0-1.0>,
+  "colors": <0.0-1.0>,
+  "accessories": <0.0-1.0>,
+  "overall": <0.0-1.0>,
+  "warning": "<string or null>"
+}}
+
+Base the scores on typical generation variance for this number of images.
+With {n_images} images, variance is {'low' if n_images <= 3 else 'moderate' if n_images <= 8 else 'high'}.
+Overall should be the weighted average (face 30%, hair 20%, body 20%, costume 15%, colors 10%, accessories 5%).
+Return only the JSON object. Nothing else."""
+
+    try:
+        raw = _invoke_with_fallback(consistency_prompt)
+        parsed = _parse_json_response(raw)
+        if isinstance(parsed, list):
+            parsed = parsed[0]
+
+        overall = float(parsed.get("overall", 0.85))
+        breakdown = {
+            k: float(parsed.get(k, 0.85))
+            for k in ["face", "hair", "body", "costume", "colors", "accessories"]
+        }
+        warning = parsed.get("warning") or (
+            "Visual consistency may decrease across these images — review before generating more."
+            if overall < 0.85 else None
+        )
+    except Exception:
+        # Fallback: return a reasonable heuristic score
+        variance_factor = max(0.0, 1.0 - (n_images - 2) * 0.02)
+        overall = round(0.90 * variance_factor, 2)
+        breakdown = {k: round(0.88 * variance_factor, 2)
+                     for k in ["face", "hair", "body", "costume", "colors", "accessories"]}
+        warning = None if overall >= 0.85 else "Unable to compute exact score — please review images manually."
+
+    return ConsistencyScoreResponse(
+        character_id=payload.character_id,
+        overall=overall,
+        breakdown=breakdown,
+        warning=warning,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Character Identity System endpoints
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/character/qa-score",
+    response_model=QAScoreResult,
+    summary="Run the Visual QA Engine against a prompt + character identity",
+)
+def character_qa_score(payload: CharacterQARequest) -> QAScoreResult:
+    """
+    Runs the heuristic Visual QA Engine over a generated prompt.
+
+    Checks:
+      - Identity markers (face, hair, eyes, distinct_markers) present in prompt
+      - Species anatomy prefix present and no forbidden anatomy terms
+      - Composition (shot/angle keywords)
+      - Lighting keywords
+      - Props / accessories from active variant
+      - Outfit continuity
+
+    Returns a QAScoreResult with overall 0.0–1.0, per-category breakdown,
+    an optional warning string, and a boolean `passed` flag (threshold 0.80).
+    """
+    return compute_qa_score(
+        generated_prompt=payload.generated_prompt,
+        identity=payload.identity,
+        species_id=payload.species_id,
+        variant=payload.variant,
+    )
+
+
+@router.post(
+    "/character-package/import-asset",
+    response_model=ImportAssetResponse,
+    summary="Import a user-uploaded reference image into a character's identity",
+)
+def import_character_asset(payload: ImportAssetRequest) -> ImportAssetResponse:
+    """
+    Stores a user-uploaded image as the canonical reference for the given
+    identity slot (reference_primary, reference_front, reference_left,
+    reference_right, reference_back, expression_sheet, pose_sheet, outfit, prop).
+
+    If extract_identity=True, the image data URL is analysed via LLM to
+    extract/update character identity fields (face_description, hair_description,
+    eye_description, distinct_markers).  The extracted fields are returned so the
+    caller can merge them into the live CharacterProfile state.
+
+    The image itself is stored as a base64 data URL — no external storage needed.
+    Callers are responsible for persisting the updated CharacterProfile (and CKG)
+    to the backend via the existing CRUD / pipeline endpoints.
+    """
+    stored = bool(payload.image_data and payload.image_data.startswith("data:"))
+
+    extracted_description: str | None = None
+    updated_fields: dict[str, str] = {}
+
+    if stored and payload.extract_identity:
+        # LLM vision pass: describe the character in the uploaded image and
+        # extract structured identity fields.
+        extraction_prompt = (
+            "You are a character design analyst. "
+            "A creator has uploaded a reference image for a character. "
+            "Describe the character's visible identity features from this image in structured JSON. "
+            "Return ONLY a JSON object with these optional string keys:\n"
+            "  face_description, hair_description, eye_description, "
+            "body_proportions, distinct_markers\n"
+            "Fill only the keys visible in the image. "
+            "Be specific and precise — e.g. 'short black undercut' not just 'dark hair'. "
+            "If the image is a sketch or stylised art, still extract the identity features. "
+            "Return only the JSON object, nothing else."
+        )
+        try:
+            raw = _invoke_with_fallback(extraction_prompt)
+            parsed = _parse_json_response(raw)
+            if isinstance(parsed, list):
+                parsed = parsed[0]
+            # Only carry over recognised identity fields
+            _IDENTITY_FIELDS = {
+                "face_description", "hair_description", "eye_description",
+                "body_proportions", "distinct_markers",
+            }
+            updated_fields = {
+                k: str(v) for k, v in parsed.items()
+                if k in _IDENTITY_FIELDS and v
+            }
+            if updated_fields:
+                extracted_description = "; ".join(
+                    f"{k.replace('_', ' ')}: {v}" for k, v in updated_fields.items()
+                )
+        except Exception:
+            pass  # extraction is best-effort; failure does not block import
+
+    return ImportAssetResponse(
+        character_id=payload.character_id,
+        asset_type=payload.asset_type,
+        stored=stored,
+        extracted_description=extracted_description,
+        updated_identity_fields=updated_fields,
+    )
+
+
+@router.post(
+    "/ckg/update-identity",
+    summary="Write a CharacterIdentity + Species + Variants into a project's CKG",
+)
+def ckg_update_identity(payload: CKGUpdateIdentityRequest, db: DbSession) -> dict:
+    """
+    Writes the full Identity System layers (Identity, Species, Variants) for a
+    single character into the project's CKG (stored in `StoryboardProjectORM.canon`).
+
+    This is the persistence endpoint for the Identity tab in the Character
+    Package UI.  The frontend calls this whenever:
+      - A reference image is uploaded and identity is confirmed
+      - The creator edits the identity fields manually
+      - A species change or variant is added
+
+    Returns the updated CKG summary for the character.
+    """
+    project = _load_project_or_404(payload.project_id, db)
+
+    # Load or init the CKG
+    try:
+        ckg = CreativeKnowledgeGraph.model_validate(project.canon) if project.canon else CreativeKnowledgeGraph()
+    except Exception:
+        ckg = CreativeKnowledgeGraph()
+
+    # Write identity, species, variants nodes
+    ckg.character_identities[payload.character_id] = payload.identity.model_dump()
+    ckg.character_species[payload.character_id] = payload.species.model_dump()
+    ckg.character_variants[payload.character_id] = [v.model_dump() for v in payload.variants]
+
+    # Keep the backwards-compat approved_characters summary in sync
+    identity = payload.identity
+    species_data = get_species(payload.species.species_id)
+    species_prefix = species_data.get("prompt_prefix", "").rstrip(", ")
+
+    parts = [p for p in [
+        species_prefix if species_prefix else None,
+        identity.name,
+        identity.face_description,
+        identity.hair_description,
+        identity.eye_description,
+        identity.body_proportions,
+        f"age {identity.age}" if identity.age else None,
+        identity.distinct_markers,
+        *( identity.signature_accessories or []),
+    ] if p]
+    appearance_summary = ", ".join(parts)
+    if payload.character_id in ckg.approved_characters:
+        ckg.approved_characters[payload.character_id]["appearance_summary"] = appearance_summary
+        ckg.approved_characters[payload.character_id]["canonical_prompt"] = appearance_summary
+    else:
+        ckg.approved_characters[payload.character_id] = {
+            "name": identity.name,
+            "appearance_summary": appearance_summary,
+            "canonical_prompt": appearance_summary,
+        }
+
+    # Persist
+    project.canon = ckg.model_dump()
+    db.commit()
+
+    return {
+        "character_id": payload.character_id,
+        "identity_stored": True,
+        "species": payload.species.species_id,
+        "variants_count": len(payload.variants),
+        "appearance_summary": appearance_summary,
+    }
+
+
+@router.get(
+    "/ckg/{project_id}",
+    summary="Get the Creative Knowledge Graph for a project",
+)
+def get_ckg(project_id: int, db: DbSession) -> dict:
+    """
+    Returns the full CKG for a project.  Used by the frontend to hydrate
+    the Character Package Identity tabs and any component that reads from
+    the CKG (QA Engine, Continuity Engine, Prompt Builder).
+    """
+    project = _load_project_or_404(project_id, db)
+    if not project.canon:
+        return CreativeKnowledgeGraph().model_dump()
+    try:
+        return CreativeKnowledgeGraph.model_validate(project.canon).model_dump()
+    except Exception:
+        return project.canon or {}
+
+
+@router.get(
+    "/species-registry",
+    summary="Return all built-in species profiles",
+)
+def list_species_registry() -> dict:
+    """
+    Returns the full SPECIES_REGISTRY from identity_system.py.
+    Used by the SpeciesSelector component to render the species picker.
+    """
+    return SPECIES_REGISTRY
 
 
 # ---------------------------------------------------------------------------

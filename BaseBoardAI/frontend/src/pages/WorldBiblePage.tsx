@@ -1,14 +1,22 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { saveAs } from 'file-saver'
 import JSZip from 'jszip'
-import type { StoryboardScene, StoryboardFrame } from '../types/storyboard'
+import type { StoryboardProject, StoryboardScene, StoryboardFrame } from '../types/storyboard'
+import { reforgeAffectedFrames, scanContinuityImpact } from '../api/storyboard'
+import type { ContinuityImpactResult } from '../api/storyboard'
+import ContinuityImpactModal from '../components/ContinuityImpactModal'
 
 const SUB_TABS = ['Locations', 'Factions', 'Lore', 'Artifacts', 'Timelines']
 
 interface Props {
   scenes: StoryboardScene[]
+  project?: StoryboardProject | null
+  renderStyle?: string
   /** Called when the user deletes a location so the change propagates to project state */
   onDeleteScene?: (sceneNumber: number) => void
+  /** Called after frames are regenerated due to a location image change */
+  onUpdateSceneFrames?: (updatedScenes: StoryboardScene[]) => void
+  onNotify?: (msg: string, type?: 'success' | 'info') => void
 }
 
 function downloadSceneJson(scene: StoryboardScene) {
@@ -59,14 +67,26 @@ function LocationRow({
   scene,
   onDelete,
   onOpenLightbox,
+  onUploadLocationImage,
 }: {
   scene: StoryboardScene
   onDelete: () => void
   onOpenLightbox: (frames: StoryboardFrame[], index: number) => void
+  onUploadLocationImage?: (scene: StoryboardScene, dataUrl: string) => void
 }) {
   const [expanded,    setExpanded]    = useState(false)
   const [confirming,  setConfirming]  = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const uploadRef = useRef<HTMLInputElement>(null)
+
+  function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    const reader = new FileReader()
+    reader.onload = () => onUploadLocationImage?.(scene, reader.result as string)
+    reader.readAsDataURL(file)
+  }
 
   const framesWithImages = scene.frames.filter(f => f.generated_image_url)
 
@@ -87,8 +107,8 @@ function LocationRow({
     >
       {/* Palette strip */}
       <div style={{ display: 'flex', height: 3 }}>
-        {scene.color_palette.map((c, i) => (
-          <div key={i} style={{ flex: 1, background: c }} />
+        {scene.color_palette.map((c) => (
+          <div key={c} style={{ flex: 1, background: c }} />
         ))}
       </div>
 
@@ -149,8 +169,8 @@ function LocationRow({
           <div style={{ padding: '0 14px 12px' }}>
             <p style={{ fontSize: 8, letterSpacing: '0.2em', color: 'var(--text-muted)', textTransform: 'uppercase', opacity: 0.6, marginBottom: 6 }}>Colour Palette</p>
             <div style={{ display: 'flex', gap: 6 }}>
-              {scene.color_palette.map((c, i) => (
-                <div key={i} title={c} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+              {scene.color_palette.map((c) => (
+                <div key={c} title={c} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
                   <div style={{ width: 24, height: 24, borderRadius: 4, background: c, border: '1px solid rgba(255,255,255,0.1)' }} />
                   <span style={{ fontSize: 7, color: 'var(--text-muted)', opacity: 0.5, fontFamily: 'monospace' }}>{c}</span>
                 </div>
@@ -250,6 +270,20 @@ function LocationRow({
               </>
             ) : (
               <>
+                {/* Upload location reference image */}
+                {onUploadLocationImage && (
+                  <>
+                    <input ref={uploadRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={handleImageUpload} />
+                    <button className="btn-tactile"
+                      onClick={() => uploadRef.current?.click()}
+                      style={{ padding: '7px 10px', borderRadius: 4, fontSize: 10, cursor: 'pointer', border: '1px solid rgba(201,168,76,0.4)', background: 'transparent', color: 'var(--gold)', letterSpacing: '0.1em', textTransform: 'uppercase', transition: 'all 150ms ease' }}
+                      title="Upload a reference image for this location — all scenes at this location will be updated"
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--gold)'; e.currentTarget.style.background = 'rgba(201,168,76,0.08)' }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(201,168,76,0.4)'; e.currentTarget.style.background = 'transparent' }}>
+                      ⇪ Ref Image
+                    </button>
+                  </>
+                )}
                 <button className="btn-tactile"
                   onClick={() => downloadSceneJson(scene)}
                   style={{ flex: 1, padding: '7px 0', borderRadius: 4, fontSize: 10, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', letterSpacing: '0.15em', textTransform: 'uppercase', transition: 'border-color 150ms ease, color 150ms ease' }}
@@ -381,11 +415,71 @@ function Lightbox({
 // Page
 // ---------------------------------------------------------------------------
 
-export default function WorldBiblePage({ scenes, onDeleteScene }: Props) {
-  const [lightbox, setLightbox] = useState<LightboxState | null>(null)
+export default function WorldBiblePage({ scenes, project, renderStyle = 'bw_sketch', onDeleteScene, onUpdateSceneFrames, onNotify }: Props) {
+  const [lightbox,        setLightbox]        = useState<LightboxState | null>(null)
+  const [impactState,     setImpactState]     = useState<{
+    impact: ContinuityImpactResult
+    pendingScene: StoryboardScene
+  } | null>(null)
+  const [isRegenerating,  setIsRegenerating]  = useState(false)
+
+  async function handleUploadLocationImage(scene: StoryboardScene, dataUrl: string) {
+    if (!project || scenes.length === 0) {
+      onNotify?.('Location reference uploaded (no active project to propagate)', 'info')
+      return
+    }
+    onNotify?.('Scanning scenes for this location…', 'info')
+    try {
+      const impact = await scanContinuityImpact(
+        project, 'environment', scene.location_heading, 'location_image', '', dataUrl,
+      )
+      if (impact.total_affected === 0) {
+        onNotify?.('No existing frames use this location', 'info')
+        return
+      }
+      setImpactState({ impact, pendingScene: scene })
+    } catch {
+      onNotify?.('Location uploaded (continuity scan unavailable)', 'info')
+    }
+  }
+
+  async function handleConfirmRegenerate() {
+    if (!impactState) return
+    setIsRegenerating(true)
+    const { impact } = impactState
+    onNotify?.(`Regenerating ${impact.total_affected} frame${impact.total_affected !== 1 ? 's' : ''}…`, 'info')
+    try {
+      const updatedUrls = await reforgeAffectedFrames(scenes, impact.affected_frame_ids, renderStyle)
+      const updatedScenes = scenes.map(scene => ({
+        ...scene,
+        frames: scene.frames.map(frame => {
+          const key = `scene_${scene.scene_number}_frame_${frame.frame_number}`
+          const newUrl = updatedUrls.get(key)
+          return newUrl !== undefined ? { ...frame, generated_image_url: newUrl } : frame
+        }),
+      }))
+      onUpdateSceneFrames?.(updatedScenes)
+      onNotify?.(`${impact.total_affected} frame${impact.total_affected !== 1 ? 's' : ''} updated ✓`, 'success')
+    } catch {
+      onNotify?.('Regeneration failed — please try again', 'info')
+    } finally {
+      setIsRegenerating(false)
+      setImpactState(null)
+    }
+  }
 
   return (
     <div className="flex-1 flex flex-col bg-[var(--bg-base)] overflow-hidden">
+      {/* Continuity impact modal */}
+      {impactState && (
+        <ContinuityImpactModal
+          impact={impactState.impact}
+          isRegenerating={isRegenerating}
+          onConfirm={handleConfirmRegenerate}
+          onSkip={() => { if (!isRegenerating) setImpactState(null) }}
+        />
+      )}
+
       {/* Global lightbox */}
       {lightbox && (
         <Lightbox
@@ -427,6 +521,7 @@ export default function WorldBiblePage({ scenes, onDeleteScene }: Props) {
                 scene={scene}
                 onDelete={() => onDeleteScene?.(scene.scene_number)}
                 onOpenLightbox={(frames, idx) => setLightbox({ frames, index: idx })}
+                onUploadLocationImage={project ? handleUploadLocationImage : undefined}
               />
             ))}
           </div>

@@ -26,11 +26,14 @@ export default function LockedCutFolder({ scenes, selectedKeys, onToggleSelect, 
     <div className="space-y-4">
       <p className="text-[9px] tracking-[0.3em] uppercase text-[var(--gold)]/40">Locked Cut — {locked.length} frame{locked.length !== 1 ? 's' : ''}</p>
       <div className="flex flex-wrap gap-3">
-        {locked.map(({ frame, scene }) => (
-          <FrameCard key={`s${scene.scene_number}_f${frame.frame_number}`} frame={frame} scene={scene}
-            isSelected onToggleSelect={onToggleSelect}
-            onReplaceImage={onReplaceImage} />
-        ))}
+        {locked.map(({ frame, scene }) => {
+          const fk = `s${scene.scene_number}_f${frame.frame_number}`
+          return (
+            <FrameCard key={fk} frameKey={fk} frame={frame} scene={scene}
+              isSelected onToggleSelect={onToggleSelect}
+              onReplaceImage={onReplaceImage} />
+          )
+        })}
       </div>
     </div>
   )
