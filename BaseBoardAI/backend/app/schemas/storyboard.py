@@ -109,14 +109,58 @@ class CharacterVariant(BaseModel):
     notes: str | None = None
 
 
+class QARepairAction(BaseModel):
+    """
+    A single targeted fix recommended by the QA Engine.
+
+    Instead of regenerating the whole image, the engine tells the caller
+    exactly which subsystem to re-run and which API endpoint handles it.
+    """
+    category: str = Field(
+        description="The failing category this action fixes, e.g. 'composition', 'props'"
+    )
+    label: str = Field(
+        description="Human-readable action label, e.g. 'Regenerate Composition Only'"
+    )
+    endpoint: str = Field(
+        description="Backend endpoint to call, e.g. '/storyboard/frame/reforge-composition'"
+    )
+    severity: str = Field(
+        "warning",
+        description="'critical' (score < 0.5) | 'warning' (0.5–0.75) | 'suggestion' (0.75–0.85)"
+    )
+    score: float = Field(description="Category score that triggered this action (0.0–1.0)")
+
+
 class QAScoreResult(BaseModel):
-    """Result from the Visual QA Engine for a single frame."""
+    """
+    Result from the Project-Aware Visual QA Engine.
+
+    Validates a generated image against the Project Canon — including the
+    asset's species profile (no human assumption), active variant, required
+    props, composition, camera, lighting, and environment.
+    """
     overall: float = Field(description="0.0–1.0 weighted confidence score")
     breakdown: dict[str, float] = Field(
-        description="Per-category scores: identity, species, anatomy, composition, lighting, props, continuity"
+        description=(
+            "Per-category scores — 9 categories: "
+            "identity, species, anatomy, composition, camera, lighting, props, environment, continuity"
+        )
     )
-    warning: str | None = None
+    warning: str | None = Field(None, description="Plain-text summary of failures (backwards compat)")
     passed: bool = Field(description="True if overall >= 0.80")
+    asset_type: str = Field(
+        "character",
+        description="Asset type that was validated: 'character' | 'creature' | 'animal' | 'robot' | 'vehicle'"
+    )
+    repairs: list[QARepairAction] = Field(
+        default_factory=list,
+        description=(
+            "Ordered list of targeted fix actions — e.g. 'Regenerate Composition Only'. "
+            "Only populated for categories that scored below 0.85. "
+            "Empty when QA passes. Ordered by severity (critical first)."
+        )
+    )
 
 
 class CharacterProfileBase(BaseModel):
@@ -529,13 +573,34 @@ class CharacterQARequest(BaseModel):
     """
     Payload for POST /storyboard/character/qa-score.
 
-    Runs the Visual QA Engine against a generated prompt, identity, and
-    species/variant context and returns a full QAScoreResult.
+    Runs the Project-Aware Visual QA Engine against a generated prompt.
+    The engine selects the correct structural validator based on asset_type,
+    loads the species profile from the registry, and validates anatomy,
+    identity, camera, environment, props, and continuity.
     """
     generated_prompt: str = Field(description="The assembled image prompt that was sent to the generator")
     identity: CharacterIdentity
-    species_id: str = Field("human", description="Active species key, e.g. 'human', 'elf', 'wolf'")
+    species_id: str = Field("human", description="Active species key, e.g. 'human', 'elf', 'wolf', 'car', 'horse'")
     variant: CharacterVariant | None = None
+    asset_type: Literal["character", "creature", "animal", "robot", "vehicle"] = Field(
+        "character",
+        description=(
+            "Asset type — determines which structural validator is loaded. "
+            "'character' covers humanoids (human, elf, vampire). "
+            "'creature' covers non-humanoid fantasy (dragon, wolf). "
+            "'animal' covers real-world animals. "
+            "'robot' covers mechanical constructs. "
+            "'vehicle' covers cars, ships, spacecraft."
+        )
+    )
+    scene_context: str | None = Field(
+        None,
+        description="Optional: location/environment description used to score the Environment category"
+    )
+    camera_spec: str | None = Field(
+        None,
+        description="Optional: expected camera/lens spec (e.g. '85mm portrait, shallow bokeh') for Camera scoring"
+    )
 
 
 class ImportAssetRequest(BaseModel):

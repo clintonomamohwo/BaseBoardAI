@@ -146,20 +146,31 @@ export interface CharacterVariant {
   notes: string | null
 }
 
+/** A single targeted fix recommended by the QA Engine. */
+export interface QARepairAction {
+  /** The failing category this action fixes, e.g. 'composition' */
+  category: string
+  /** Human-readable label, e.g. 'Regenerate Composition Only' */
+  label: string
+  /** Backend endpoint to call, e.g. '/storyboard/frame/reforge-composition' */
+  endpoint: string
+  /** 'critical' | 'warning' | 'suggestion' */
+  severity: 'critical' | 'warning' | 'suggestion'
+  /** Category score that triggered this action */
+  score: number
+}
+
 /** QA Engine result for a single generation. */
 export interface QAScoreResult {
   overall: number          // 0.0–1.0
-  breakdown: {
-    identity: number
-    species: number
-    anatomy: number
-    composition: number
-    lighting: number
-    props: number
-    continuity: number
-  }
+  /** 9 categories: identity, species, anatomy, composition, camera, lighting, props, environment, continuity */
+  breakdown: Record<string, number>
   warning: string | null
   passed: boolean
+  /** Asset type validator that was used */
+  asset_type: string
+  /** Ordered targeted repair actions (critical first). Empty when QA passes. */
+  repairs: QARepairAction[]
 }
 
 export interface CharacterProfile {
