@@ -132,7 +132,6 @@ class _GeminiImageProvider:
         height: int = 512,
     ) -> str | None:
         import base64
-        import io
         from google import genai  # type: ignore[import]
         from google.genai import types  # type: ignore[import]
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -148,18 +147,10 @@ class _GeminiImageProvider:
             for candidate in response.candidates:
                 for part in candidate.content.parts:
                     if getattr(part, "inline_data", None) is not None:
-                        img_bytes = base64.b64decode(part.inline_data.data)
-                        # Re-encode as PNG via PIL if available, else pass through
-                        try:
-                            from PIL import Image  # type: ignore[import]
-                            buf = io.BytesIO(img_bytes)
-                            out = io.BytesIO()
-                            Image.open(buf).save(out, format="PNG")
-                            img_bytes = out.getvalue()
-                        except Exception:
-                            pass
-                        mime = getattr(part.inline_data, "mime_type", "image/png")
-                        ext = "png" if "png" in mime else mime.split("/")[-1]
+                        raw = part.inline_data.data
+                        # SDK returns raw bytes directly — no b64decode needed
+                        img_bytes: bytes = raw if isinstance(raw, bytes) else base64.b64decode(raw)
+                        mime = getattr(part.inline_data, "mime_type", "image/jpeg")
                         return f"data:{mime};base64," + base64.b64encode(img_bytes).decode()
             return None
         except Exception as exc:
