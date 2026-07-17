@@ -50,9 +50,23 @@ _BW_DETAILED_NEGATIVE_CONSTRAINTS = (
 # Shared byte → data URL encoder
 # ---------------------------------------------------------------------------
 
+def _detect_mime(content: bytes) -> str:
+    """Detect image MIME type from magic bytes. Defaults to image/png."""
+    if content[:3] == b'\xff\xd8\xff':
+        return "image/jpeg"
+    if content[:4] == b'\x89PNG':
+        return "image/png"
+    if content[:6] in (b'GIF87a', b'GIF89a'):
+        return "image/gif"
+    if content[:4] == b'RIFF' and content[8:12] == b'WEBP':
+        return "image/webp"
+    return "image/png"
+
+
 def _convert_bytes_to_data_url(content: bytes) -> str:
-    """Encode raw image bytes to a self-contained base64 data URL."""
-    return "data:image/png;base64," + base64.b64encode(content).decode("utf-8")
+    """Encode raw image bytes to a self-contained base64 data URL with correct MIME type."""
+    mime = _detect_mime(content)
+    return f"data:{mime};base64," + base64.b64encode(content).decode("utf-8")
 
 
 def _strip_data_url_header(data_url: str) -> str:
