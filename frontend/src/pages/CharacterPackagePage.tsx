@@ -229,6 +229,22 @@ function Spinner() {
   )
 }
 
+function LockBanner({ lockedImage, onClear }: { lockedImage: string | null; onClear: () => void }) {
+  if (!lockedImage) return null
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:10, background:'rgba(201,168,76,0.08)', border:'1px solid rgba(201,168,76,0.35)', borderRadius:5, padding:'8px 14px', marginBottom:16 }}>
+      <img src={lockedImage} alt="locked reference" style={{ width:32, height:32, objectFit:'cover', borderRadius:3, border:'1px solid var(--gold)' }} />
+      <div style={{ flex:1 }}>
+        <span style={{ fontSize:9, letterSpacing:'0.2em', color:'var(--gold)', textTransform:'uppercase', fontWeight:600 }}>🔒 Reference locked</span>
+        <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.7, marginTop:2 }}>All regenerations will use this image to stay consistent. Click 🔓 on any tile to change it.</p>
+      </div>
+      <button onClick={onClear} title="Clear reference" style={{ background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4, padding:'4px 10px', fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', cursor:'pointer', opacity:0.7, textTransform:'uppercase' }}>
+        Clear
+      </button>
+    </div>
+  )
+}
+
 function ImageTile({
   url, label, width = 120, height = 140, onRegen, isLoading, onOpen, isLocked, onToggleLock,
 }: {
@@ -1187,8 +1203,11 @@ export default function CharacterPackagePage({
         {activeTab === 'Portrait' && (
           <div>
             <SectionHeader title="Hero Portrait" section="portrait" />
+            <LockBanner lockedImage={pkg.lockedImage} onClear={() => setPkg(p => ({ ...p, lockedImage: null }))} />
             <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
               <ImageTile url={pkg.portrait} label="Portrait" width={200} height={260} isLoading={isLoading('portrait')} onRegen={() => handleRegenOne('portrait')}
+                isLocked={!!pkg.portrait && pkg.lockedImage === pkg.portrait}
+                onToggleLock={() => pkg.portrait && handleToggleLock(pkg.portrait)}
                 onOpen={() => pkg.portrait && setGallery({ items:[{ url: pkg.portrait, label:'Portrait' }], index:0 })} />
               <div style={{ flex:1, maxWidth:320 }}>
                 <p style={{ fontSize:8, letterSpacing:'0.2em', color:'var(--text-muted)', textTransform:'uppercase', opacity:0.6, marginBottom:8 }}>Generation Notes</p>
@@ -1213,10 +1232,13 @@ export default function CharacterPackagePage({
             <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:20, lineHeight:1.6 }}>
               Industry-standard 5-view reference sheet. For the 360° turntable (8 angles) use the Full Reference Pack.
             </p>
+            <LockBanner lockedImage={pkg.lockedImage} onClear={() => setPkg(p => ({ ...p, lockedImage: null }))} />
             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
               {TURNAROUND_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.turnaround[key]} label={TURNAROUND_LABELS[key]} width={130} height={180}
                   isLoading={isLoading(`turnaround/${key}`)} onRegen={() => handleRegenOne(`turnaround/${key}`)}
+                  isLocked={!!pkg.turnaround[key] && pkg.lockedImage === pkg.turnaround[key]}
+                  onToggleLock={() => pkg.turnaround[key] && handleToggleLock(pkg.turnaround[key]!)}
                   onOpen={() => openGallery(pkg.turnaround, TURNAROUND_KEYS, TURNAROUND_LABELS, key)} />
               ))}
             </div>
@@ -1250,6 +1272,7 @@ export default function CharacterPackagePage({
         {activeTab === 'Expressions' && (
           <div>
             <SectionHeader title="Expression Sheet — 9 Expressions" section="expressions" />
+            <LockBanner lockedImage={pkg.lockedImage} onClear={() => setPkg(p => ({ ...p, lockedImage: null }))} />
             <div style={{ display:'flex', gap:14, flexWrap:'wrap' }}>
               {EXPRESSION_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.expressions[key]} label={`${EXPRESSION_EMOJIS[key]} ${key.charAt(0).toUpperCase()+key.slice(1)}`}
@@ -1269,6 +1292,7 @@ export default function CharacterPackagePage({
         {activeTab === 'Poses' && (
           <div>
             <SectionHeader title="Pose Sheet — 7 Common Poses" section="poses" />
+            <LockBanner lockedImage={pkg.lockedImage} onClear={() => setPkg(p => ({ ...p, lockedImage: null }))} />
             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
               {POSE_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.poses[key]} label={POSE_LABELS[key]} width={120} height={160}
@@ -1308,6 +1332,7 @@ export default function CharacterPackagePage({
         {activeTab === 'Outfits' && (
           <div>
             <SectionHeader title="Outfit Variations — 7 Costumes" section="outfits" />
+            <LockBanner lockedImage={pkg.lockedImage} onClear={() => setPkg(p => ({ ...p, lockedImage: null }))} />
             <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:20, lineHeight:1.6 }}>
               Each outfit can be regenerated independently without affecting the others.
             </p>
