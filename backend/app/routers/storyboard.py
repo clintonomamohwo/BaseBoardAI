@@ -67,7 +67,7 @@ from app.core.llm import (
     invoke_world_stage,
     invoke_storyboard_stage,
 )
-from app.core.image import generate_frame_image, _generate_pollinations, _generate_pollinations_img2img, _strip_data_url_header
+from app.core.image import generate_frame_image, generate_image, _generate_pollinations, _strip_data_url_header
 from app.core.director_engine import direct_storyboard
 from app.core.continuity_engine import scan_continuity_impact
 from app.core.lens_planner import assign_lens, detect_scene_type
@@ -227,10 +227,7 @@ def generate_character_package(
         ]))
         face_suffix = f", {face_detail}" if face_detail else ""
         prompt = _pkg_prompt(base, f"hero portrait, neutral expression, looking directly at camera, bust shot, face clearly visible{face_suffix}", render_style)
-        result["portrait"] = (
-            _generate_pollinations_img2img(prompt, ref_b64) if ref_b64
-            else _generate_pollinations(prompt)
-        )
+        result["portrait"] = generate_image(prompt, reference_b64=ref_b64)
 
     if "turnaround" in sections:
         layout = get_layout("turnaround")
@@ -318,10 +315,7 @@ def regenerate_character_image(
         ]))
         face_suffix = f", {face_detail}" if face_detail else ""
         prompt = _pkg_prompt(base, f"hero portrait, neutral expression, looking directly at camera, bust shot, face clearly visible{face_suffix}", render_style)
-        return {"image_url": (
-            _generate_pollinations_img2img(prompt, ref_b64) if ref_b64
-            else _generate_pollinations(prompt)
-        )}
+        return {"image_url": generate_image(prompt, reference_b64=ref_b64)}
 
     if "/" in section:
         section_name, cell_id = section.split("/", 1)
@@ -336,10 +330,7 @@ def regenerate_character_image(
 
     # Fallback: unknown section — generate a single image directly
     prompt = _pkg_prompt(base, section.replace("/", " ").replace("_", " "), render_style)
-    return {"image_url": (
-        _generate_pollinations_img2img(prompt, ref_b64) if ref_b64
-        else _generate_pollinations(prompt)
-    )}
+    return {"image_url": generate_image(prompt, reference_b64=ref_b64)}
 
 
 # ---------------------------------------------------------------------------

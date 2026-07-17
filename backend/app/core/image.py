@@ -100,6 +100,74 @@ def _build_image_prompt(
 
 
 # ---------------------------------------------------------------------------
+# Provider-agnostic single image generator
+# ---------------------------------------------------------------------------
+
+def generate_image(
+    prompt: str,
+    reference_b64: str | None = None,
+    width: int | None = None,
+    height: int | None = None,
+) -> str | None:
+    """
+    Generate one image using whichever IMAGE_PROVIDER is active in .env.
+
+    Works for all three providers — gemini, pollinations, huggingface.
+    If reference_b64 is provided the provider's img2img path is used.
+    Falls back to Pollinations text-to-image on any Gemini/HF failure.
+
+    width/height are only used by the Pollinations text-to-image path
+    (img2img always uses the reference dimensions).
+    """
+    w = width  or settings.POLLINATIONS_WIDTH
+    h = height or settings.POLLINATIONS_HEIGHT
+    provider = settings.IMAGE_PROVIDER.lower()
+
+    # ── Gemini ──────────────────────────────────────────────────────────────
+    if provider == "gemini":
+        try:
+            from app.core.ai_factory import AIFactory
+            result = AIFactory.get_image_provider().generate(
+                prompt,
+                reference_b64=reference_b64,
+                width=w,
+                height=h,
+            )
+            if result:
+                return result
+        except Exception as exc:
+            logger.warning("Gemini image generation failed (%s) — falling back to Pollinations.", exc)
+        provider = "pollinations"   # fall through
+
+    # ── Hugging Face ─────────────────────────────────────────────────────────
+    if provider == "huggingface":
+        if reference_b64:
+            return _generate_huggingface_img2img(prompt, reference_b64)
+        return _generate_huggingface(prompt)
+
+    # ── Pollinations (default) ────────────────────────────────────────────────
+    if reference_b64:
+        return _generate_pollinations_img2img(prompt, reference_b64)
+    # Use custom dimensions if provided (e.g. sheet canvas sizes)
+    encoded = urllib.parse.quote(prompt)
+    url = (
+        f"https://image.pollinations.ai/prompt/{encoded}"
+        f"?width={w}&height={h}&model=flux&nologo=true"
+    )
+    for attempt, delay in enumerate(_RETRY_DELAYS, start=1):
+        if delay:
+            time.sleep(delay)
+        try:
+            response = httpx.get(url, timeout=90, follow_redirects=True)
+            if response.status_code == 200:
+                return _convert_bytes_to_data_url(response.content)
+            logger.warning("Pollinations attempt %d/%d returned %s", attempt, len(_RETRY_DELAYS), response.status_code)
+        except httpx.TimeoutException:
+            logger.warning("Pollinations attempt %d/%d timed out", attempt, len(_RETRY_DELAYS))
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Provider: Pollinations.ai (text-to-image)
 # ---------------------------------------------------------------------------
 
@@ -302,52 +370,9 @@ def generate_sheet_image(
     Never raises — sheet generation is non-fatal.
     """
     try:
-        provider = settings.IMAGE_PROVIDER.lower()
-
-        if provider == "gemini":
-            try:
-                from app.core.ai_factory import AIFactory
-                result = AIFactory.get_image_provider().generate(
-                    sheet_prompt,
-                    width=canvas_width,
-                    height=canvas_height,
-                )
-                if result:
-                    return result
-                raise RuntimeError("Gemini Imagen returned None")
-            except Exception as exc:
-                logger.warning(
-                    "Gemini Imagen sheet generation failed (%s) — falling back to Pollinations.", exc
-                )
-                provider = "pollinations"
-
-        # If a reference image is locked, use img2img for consistency
-        if reference_b64:
-            return _generate_pollinations_img2img(sheet_prompt, reference_b64)
-
-        # Pollinations text-to-image: request exact canvas dimensions
-        encoded = urllib.parse.quote(sheet_prompt)
-        url = (
-            f"https://image.pollinations.ai/prompt/{encoded}"
-            f"?width={canvas_width}"
-            f"&height={canvas_height}"
-            f"&model=flux"
-            f"&nologo=true"
-        )
-        for attempt, delay in enumerate(_RETRY_DELAYS, start=1):
-            if delay:
-                time.sleep(delay)
-            try:
-                response = httpx.get(url, timeout=90, follow_redirects=True)
-                if response.status_code == 200:
-                    return _convert_bytes_to_data_url(response.content)
-                logger.warning(
-                    "Pollinations sheet attempt %d/%d returned %s",
-                    attempt, len(_RETRY_DELAYS), response.status_code,
-                )
-            except httpx.TimeoutException:
-                logger.warning("Pollinations sheet attempt %d/%d timed out", attempt, len(_RETRY_DELAYS))
-        return None
+        # If no reference: use canvas dimensions so Pollinations matches the grid
+        # If reference is present: generate_image routes img2img through active provider
+        return generate_image(sheet_prompt, reference_b64=reference_b64, width=canvas_width, height=canvas_height)
     except Exception as exc:
         logger.error("Sheet image generation failed: %s", exc)
         return None
