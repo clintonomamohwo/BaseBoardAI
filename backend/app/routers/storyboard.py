@@ -231,25 +231,25 @@ def generate_character_package(
 
     if "turnaround" in sections:
         layout = get_layout("turnaround")
-        sheet_prompt = layout.prompt_prefix(base)
+        sheet_prompt = layout.prompt_prefix(base, render_style)
         sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height, reference_b64=ref_b64)
         result["turnaround"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "expressions" in sections:
         layout = get_layout("expressions")
-        sheet_prompt = layout.prompt_prefix(base)
+        sheet_prompt = layout.prompt_prefix(base, render_style)
         sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height, reference_b64=ref_b64)
         result["expressions"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "poses" in sections:
         layout = get_layout("poses")
-        sheet_prompt = layout.prompt_prefix(base)
+        sheet_prompt = layout.prompt_prefix(base, render_style)
         sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height, reference_b64=ref_b64)
         result["poses"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "outfits" in sections:
         layout = get_layout("outfits")
-        sheet_prompt = layout.prompt_prefix(base)
+        sheet_prompt = layout.prompt_prefix(base, render_style)
         sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height, reference_b64=ref_b64)
         result["outfits"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
@@ -322,7 +322,7 @@ def regenerate_character_image(
         layout_key = _SECTION_LAYOUT.get(section_name)
         if layout_key:
             layout = get_layout(layout_key)
-            sheet_prompt = layout.prompt_prefix(base)
+            sheet_prompt = layout.prompt_prefix(base, render_style)
             sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height, reference_b64=ref_b64)
             if sheet_url:
                 return {"image_url": slice_cell(sheet_url, layout, cell_id)}
@@ -405,7 +405,7 @@ def generate_full_character_pack(
     for target in ("turnaround_360", "premium_poses", "material_closeups"):
         if target in targets:
             layout = get_layout(target)
-            sheet_prompt = layout.prompt_prefix(base)
+            sheet_prompt = layout.prompt_prefix(base, render_style)
             sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
             result[target] = slice_sheet(sheet_url, layout) if sheet_url else {}
 

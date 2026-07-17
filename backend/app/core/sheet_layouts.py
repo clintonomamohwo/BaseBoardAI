@@ -62,22 +62,38 @@ class SheetLayout:
     def cell_by_id(self, cell_id: str) -> SheetCell | None:
         return next((c for c in self.cells if c.id == cell_id), None)
 
-    def prompt_prefix(self, base_desc: str) -> str:
+    def prompt_prefix(self, base_desc: str, render_style: str = "bw_sketch") -> str:
         """
         Build the sheet generation prompt.
         Describes the full grid layout so the image model generates each cell
         in the correct position with the correct subject.
+        Prepends the active render-style prefix so all sheet images honour
+        the style selected at project creation.
         """
+        from app.core.prompt_builder import STYLE_PREFIXES, DEFAULT_STYLE_PREFIX
+        style_prefix = STYLE_PREFIXES.get(render_style, DEFAULT_STYLE_PREFIX)
+
         cell_descs = "  |  ".join(
             f"[{c.label}]" for c in sorted(self.cells, key=lambda x: (x.row, x.col))
         )
         grid_desc = f"{self.rows} rows × {self.cols} columns"
+
+        if render_style == "bw_sketch":
+            style_note = "minimal outline drawings only, no shading, no color, no fill"
+        elif render_style == "bw_detailed":
+            style_note = "detailed black and white ink illustration, crosshatch shading, no color"
+        elif render_style == "flat_color":
+            style_note = "flat solid color fills, clean vector outlines, no gradients, no shading"
+        else:  # full_shaded
+            style_note = "fully shaded 2D illustration, volumetric lighting, expressive rendering"
+
         return (
+            style_prefix +
             f"{base_desc}, character reference sheet, {grid_desc} grid, "
             f"white background, each cell labeled: {cell_descs}, "
-            f"uniform cell size, consistent head size ~65% of cell height, "
+            f"uniform cell size, consistent character size across cells, "
             f"consistent camera distance, consistent lighting, "
-            f"clean flat illustration style, no overlap between cells"
+            f"{style_note}, no overlap between cells"
         )
 
     def to_dict(self) -> dict:
