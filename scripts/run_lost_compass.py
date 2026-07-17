@@ -368,8 +368,8 @@ def run_character_packages(client: httpx.Client, project: dict) -> None:
 def run_storyboard_images(client: httpx.Client, project: dict) -> None:
     """
     Trigger image generation for every frame in the already-saved project.
-    Uses /forge-pipeline-stream with skip_images=False on the saved project's
-    db_id by calling the reforge-composition endpoint per frame instead.
+    Calls reforge-composition per frame then immediately persists the result
+    to the DB via PATCH /frame/save-image so the app can display it.
     """
     db_id = project.get("db_id")
     scenes = project.get("scenes", [])
@@ -399,8 +399,22 @@ def run_storyboard_images(client: httpx.Client, project: dict) -> None:
                 )
                 resp.raise_for_status()
                 result = resp.json()
+                new_url = result.get("generated_image_url")
                 # Patch the frame's image URL in the local project dict
-                frame["generated_image_url"] = result.get("generated_image_url")
+                frame["generated_image_url"] = new_url
+
+                # Persist the image URL back to the DB so the app can display it
+                client.patch(
+                    f"{BASE_URL}/storyboard/frame/save-image",
+                    json={
+                        "project_id": db_id,
+                        "scene_number": scene.get("scene_number"),
+                        "frame_number": frame.get("frame_number"),
+                        "generated_image_url": new_url,
+                    },
+                    timeout=30,
+                )
+
                 done += 1
                 bar = "█" * done + "░" * (total_frames - done)
                 print(f"\r  [{bar}] {done}/{total_frames}", end="", flush=True)

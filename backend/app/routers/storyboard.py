@@ -11,7 +11,8 @@ from __future__ import annotations
 import json
 from typing import Annotated, Generator
 from fastapi import APIRouter, Body, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
@@ -1026,6 +1027,49 @@ def reforge_composition(payload: ReforgeCompositionRequest) -> dict:
         "depth_style": frame.depth_style,
         "generated_image_url": new_image_url,
     }
+
+
+# ---------------------------------------------------------------------------
+# Frame image persist — write generated_image_url back to DB
+# ---------------------------------------------------------------------------
+
+class _FrameImageSave(BaseModel):
+    project_id: int
+    scene_number: int
+    frame_number: int
+    generated_image_url: str | None
+
+
+@router.patch(
+    "/frame/save-image",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Persist a generated frame image URL back to the database",
+)
+def save_frame_image(payload: _FrameImageSave, db: DbSession) -> Response:
+    """
+    Looks up the frame by project_id + scene_number + frame_number and
+    writes generated_image_url to the DB row.  Used by pipeline scripts
+    after reforge-composition so images survive past the script run.
+    """
+    frame_row = (
+        db.query(StoryboardFrameORM)
+        .join(ScriptSceneORM, StoryboardFrameORM.scene_id == ScriptSceneORM.id)
+        .filter(
+            ScriptSceneORM.project_id == payload.project_id,
+            ScriptSceneORM.scene_number == payload.scene_number,
+            StoryboardFrameORM.frame_number == payload.frame_number,
+        )
+        .first()
+    )
+    if not frame_row:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Frame not found: project={payload.project_id} scene={payload.scene_number} frame={payload.frame_number}",
+        )
+    frame_row.generated_image_url = payload.generated_image_url
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------

@@ -404,7 +404,21 @@ def run_storyboard_images(client: httpx.Client, project: dict) -> None:
                 )
                 resp.raise_for_status()
                 result = resp.json()
-                frame["generated_image_url"] = result.get("generated_image_url")
+                new_url = result.get("generated_image_url")
+                frame["generated_image_url"] = new_url
+
+                # Persist the image URL back to the DB so the app can display it
+                client.patch(
+                    f"{BASE_URL}/storyboard/frame/save-image",
+                    json={
+                        "project_id": db_id,
+                        "scene_number": scene.get("scene_number"),
+                        "frame_number": frame.get("frame_number"),
+                        "generated_image_url": new_url,
+                    },
+                    timeout=30,
+                )
+
                 done += 1
                 bar = "█" * done + "░" * (total_frames - done)
                 print(f"\r  [{bar}] {done}/{total_frames}", end="", flush=True)
