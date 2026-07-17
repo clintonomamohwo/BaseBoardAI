@@ -1,6 +1,10 @@
 {
-  "venvPath": "BaseBoardAI/backend",
+  "venvPath": "backend",
   "venv": ".venv",
   "pythonVersion": "3.13",
-  "include": ["BaseBoardAI/backend/app"]
+  "pythonPlatform": "Darwin",
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "include": ["backend/app"],
+  "extraPaths": ["backend/.venv/lib/python3.13/site-packages"]
 }
