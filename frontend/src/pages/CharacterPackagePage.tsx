@@ -1372,7 +1372,7 @@ export default function CharacterPackagePage({
             <StarBanner starredImage={pkg.starredImage} onClear={() => setPkg(p => ({ ...p, starredImage: null, lockedImage: null }))} />
             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
               {POSE_KEYS.map(key => (
-                <ImageTile key={key} url={pkg.poses[key]} label={POSE_LABELS[key]} width={120} height={160}
+                <ImageTile key={key} url={pkg.poses[key]} label={POSE_LABELS[key]} width={110} height={130}
                   isLoading={isLoading(`poses/${key}`)} onRegen={() => handleRegenOne(`poses/${key}`)}
                   isStarred={!!pkg.poses[key] && pkg.starredImage === pkg.poses[key]}
                   onToggleStar={() => pkg.poses[key] && handleToggleStar(pkg.poses[key]!)}
@@ -1417,7 +1417,7 @@ export default function CharacterPackagePage({
             </p>
             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
               {OUTFIT_KEYS.map(key => (
-                <ImageTile key={key} url={pkg.outfits[key]} label={OUTFIT_LABELS[key]} width={120} height={160}
+                <ImageTile key={key} url={pkg.outfits[key]} label={OUTFIT_LABELS[key]} width={110} height={130}
                   isLoading={isLoading(`outfits/${key}`)} onRegen={() => handleRegenOne(`outfits/${key}`)}
                   isStarred={!!pkg.outfits[key] && pkg.starredImage === pkg.outfits[key]}
                   onToggleStar={() => pkg.outfits[key] && handleToggleStar(pkg.outfits[key]!)}
