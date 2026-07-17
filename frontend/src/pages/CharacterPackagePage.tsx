@@ -727,10 +727,8 @@ function pkgCacheKey(charId: string): string {
 function loadPkgCache(charId: string): Partial<CharacterPackage> | null {
   try {
     const raw = localStorage.getItem(pkgCacheKey(charId))
-    if (!raw) { console.log('[PKG CACHE] miss for', charId); return null }
-    const data = JSON.parse(raw)
-    console.log('[PKG CACHE] hit for', charId, '| autoInitDone:', data.autoInitDone, '| portrait:', !!data.portrait, '| turnaround keys with images:', Object.entries(data.turnaround ?? {}).filter(([,v])=>!!v).map(([k])=>k))
-    return data
+    if (!raw) return null
+    return JSON.parse(raw)
   } catch { return null }
 }
 
@@ -738,7 +736,6 @@ function savePkgCache(charId: string, pkg: CharacterPackage): void {
   try {
     const subset: Record<string, unknown> = {}
     for (const k of PKG_FIELDS_TO_PERSIST) subset[k] = pkg[k as keyof CharacterPackage]
-    console.log('[PKG CACHE] saving', charId, '| autoInitDone:', pkg.autoInitDone, '| portrait:', !!pkg.portrait)
     localStorage.setItem(pkgCacheKey(charId), JSON.stringify(subset))
   } catch { /* storage full — silent */ }
 }
@@ -781,6 +778,20 @@ export default function CharacterPackagePage({
   const pkgRef = useRef(pkg)
   pkgRef.current = pkg  // keep ref in sync on every render
 
+  // Pre-populate loadedTabs for any section that already has images in the
+  // initial pkg state (from autoInit or a previous session). This prevents
+  // loadTab from firing API calls on tabs that don't need them after a
+  // component remount (e.g. navigating away and back to Character Dictionary).
+  useEffect(() => {
+    const p = pkgRef.current
+    if (p.portrait)                                          loadedTabs.current.add('Portrait')
+    if (Object.values(p.turnaround).some(Boolean))          loadedTabs.current.add('Turnaround')
+    if (Object.values(p.expressions).some(Boolean))         loadedTabs.current.add('Expressions')
+    if (Object.values(p.poses).some(Boolean))               loadedTabs.current.add('Poses')
+    if (Object.values(p.outfits).some(Boolean))             loadedTabs.current.add('Outfits')
+    if (p.props && Object.values(p.props).some(Boolean))    loadedTabs.current.add('Props')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const p = pkgRef.current
     if (p.autoInitDone || p.portrait || Object.values(p.turnaround).some(Boolean)) {
@@ -806,18 +817,7 @@ export default function CharacterPackagePage({
   // Auto-init: generate all default sections when package first mounts
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    console.log('[AUTO-INIT] mount check | autoInitRef:', autoInitRef.current, '| pkg.autoInitDone:', pkg.autoInitDone, '| portrait:', !!pkg.portrait)
     if (autoInitRef.current || pkg.autoInitDone) return
-    // Skip auto-init if images already exist — don't regenerate on every mount
-    const alreadyHasImages = pkg.portrait || Object.values(pkg.turnaround).some(Boolean)
-    console.log('[AUTO-INIT] alreadyHasImages:', alreadyHasImages)
-    if (alreadyHasImages) {
-      setPkg(p => ({ ...p, autoInitDone: true }))
-      AUTO_INIT_SECTIONS.forEach(s => loadedTabs.current.add(s.charAt(0).toUpperCase() + s.slice(1) as PackageTab))
-      loadedTabs.current.add('Portrait')
-      return
-    }
-    console.log('[AUTO-INIT] FIRING autoInit()')
     autoInitRef.current = true
     autoInit()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -924,7 +924,6 @@ export default function CharacterPackagePage({
 
   const loadTab = useCallback(async (tab: PackageTab) => {
     if (loadedTabs.current.has(tab)) return
-    loadedTabs.current.add(tab)
 
     const sectionMap: Partial<Record<PackageTab, string>> = {
       Portrait:    'portrait',
@@ -937,9 +936,23 @@ export default function CharacterPackagePage({
     const section = sectionMap[tab]
     if (!section) return
 
+    // If the section already has images in the current pkg state, mark it loaded
+    // and skip the API call. This handles remounts where loadedTabs resets but
+    // images are still in component state (autoInit already ran).
+    const p = pkgRef.current
+    const alreadyHasData =
+      section === 'portrait'
+        ? !!p.portrait
+        : Object.values((p[section as keyof CharacterPackage] ?? {}) as Record<string, unknown>).some(Boolean)
+    if (alreadyHasData) {
+      loadedTabs.current.add(tab)
+      return
+    }
+
+    loadedTabs.current.add(tab)
     setLoading(section, true)
     try {
-      const result = await generateCharacterPackage(character, [section], pkg.renderStyle)
+      const result = await generateCharacterPackage(character, [section], pkgRef.current.renderStyle)
       setPkg(p => ({
         ...p,
         ...(section === 'portrait' ? { portrait: result['portrait'] as string | null } : {}),
@@ -947,7 +960,7 @@ export default function CharacterPackagePage({
       }))
     } catch { /* silently leave nulls */ }
     finally { setLoading(section, false) }
-  }, [character, pkg.renderStyle, setLoading])
+  }, [character, setLoading]) // pkg.renderStyle removed — read from pkgRef to avoid stale closure
 
   function handleTabChange(tab: PackageTab) {
     setActiveTab(tab)
