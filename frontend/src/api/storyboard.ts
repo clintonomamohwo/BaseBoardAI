@@ -165,11 +165,12 @@ export async function generateCharacterPackage(
   charData: CharacterPackageInput,
   sections: string[],
   renderStyle: string = 'bw_sketch',
+  referenceImage: string | null = null,
 ): Promise<Record<string, unknown>> {
   const res = await fetch(`${BASE_URL}/storyboard/character-package/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ char_data: charData, sections, render_style: renderStyle }),
+    body: JSON.stringify({ char_data: charData, sections, render_style: renderStyle, reference_image: referenceImage }),
   })
   return handleResponse<Record<string, unknown>>(res)
 }
@@ -445,4 +446,131 @@ export async function regenerateVisualAction(
     }),
   })
   return handleResponse<RegenerateVisualActionResult>(res)
+}
+
+// ---------------------------------------------------------------------------
+// Standalone save/load — characters, worlds, storyboards (project-independent)
+// ---------------------------------------------------------------------------
+
+export interface StandaloneCharacterResponse {
+  id: number
+  char_id: string
+  name: string
+  story_role?: string | null
+  label?: string | null
+  character: CharacterProfile
+}
+
+export interface StandaloneWorldResponse {
+  id: number
+  location_name: string
+  label?: string | null
+  world: { location_name: string; spatial_textures: string; lighting_keys: string }
+}
+
+export interface StandaloneStoryboardResponse {
+  id: number
+  title: string
+  global_aesthetic: string
+  render_style: string
+  label?: string | null
+  scenes: StoryboardScene[]
+  scene_count: number
+  frame_count: number
+}
+
+// ── Characters ──────────────────────────────────────────────────────────────
+
+export async function saveStandaloneCharacter(
+  character: CharacterProfile,
+  label?: string,
+): Promise<StandaloneCharacterResponse> {
+  const res = await fetch(`${BASE_URL}/standalone/characters`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ character, label: label ?? null }),
+  })
+  return handleResponse<StandaloneCharacterResponse>(res)
+}
+
+export async function listStandaloneCharacters(): Promise<StandaloneCharacterResponse[]> {
+  const res = await fetch(`${BASE_URL}/standalone/characters`)
+  return handleResponse<StandaloneCharacterResponse[]>(res)
+}
+
+export async function getStandaloneCharacter(id: number): Promise<StandaloneCharacterResponse> {
+  const res = await fetch(`${BASE_URL}/standalone/characters/${id}`)
+  return handleResponse<StandaloneCharacterResponse>(res)
+}
+
+export async function deleteStandaloneCharacter(id: number): Promise<void> {
+  const res = await fetch(`${BASE_URL}/standalone/characters/${id}`, { method: 'DELETE' })
+  return handleResponse<void>(res)
+}
+
+// ── Worlds ───────────────────────────────────────────────────────────────────
+
+export async function saveStandaloneWorld(
+  world: { location_name: string; spatial_textures: string; lighting_keys: string },
+  label?: string,
+): Promise<StandaloneWorldResponse> {
+  const res = await fetch(`${BASE_URL}/standalone/worlds`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ world, label: label ?? null }),
+  })
+  return handleResponse<StandaloneWorldResponse>(res)
+}
+
+export async function listStandaloneWorlds(): Promise<StandaloneWorldResponse[]> {
+  const res = await fetch(`${BASE_URL}/standalone/worlds`)
+  return handleResponse<StandaloneWorldResponse[]>(res)
+}
+
+export async function getStandaloneWorld(id: number): Promise<StandaloneWorldResponse> {
+  const res = await fetch(`${BASE_URL}/standalone/worlds/${id}`)
+  return handleResponse<StandaloneWorldResponse>(res)
+}
+
+export async function deleteStandaloneWorld(id: number): Promise<void> {
+  const res = await fetch(`${BASE_URL}/standalone/worlds/${id}`, { method: 'DELETE' })
+  return handleResponse<void>(res)
+}
+
+// ── Storyboards ───────────────────────────────────────────────────────────────
+
+export async function saveStandaloneStoryboard(
+  title: string,
+  globalAesthetic: string,
+  renderStyle: string,
+  scenes: StoryboardScene[],
+  label?: string,
+): Promise<StandaloneStoryboardResponse> {
+  const res = await fetch(`${BASE_URL}/standalone/storyboards`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title,
+      global_aesthetic: globalAesthetic,
+      render_style: renderStyle,
+      scenes,
+      label: label ?? null,
+    }),
+  })
+  return handleResponse<StandaloneStoryboardResponse>(res)
+}
+
+export async function listStandaloneStoryboards(): Promise<StandaloneStoryboardResponse[]> {
+  const res = await fetch(`${BASE_URL}/standalone/storyboards`)
+  return handleResponse<StandaloneStoryboardResponse[]>(res)
+}
+
+export async function getStandaloneStoryboard(id: number): Promise<StandaloneStoryboardResponse> {
+  const res = await fetch(`${BASE_URL}/standalone/storyboards/${id}`)
+  return handleResponse<StandaloneStoryboardResponse>(res)
+}
+
+export async function deleteStandaloneStoryboard(id: number): Promise<void> {
+  const res = await fetch(`${BASE_URL}/standalone/storyboards/${id}`, { method: 'DELETE' })
+  return handleResponse<void>(res)
 }

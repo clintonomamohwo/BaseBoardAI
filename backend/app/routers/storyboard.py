@@ -67,7 +67,7 @@ from app.core.llm import (
     invoke_world_stage,
     invoke_storyboard_stage,
 )
-from app.core.image import generate_frame_image, _generate_pollinations
+from app.core.image import generate_frame_image, _generate_pollinations, _generate_pollinations_img2img, _strip_data_url_header
 from app.core.director_engine import direct_storyboard
 from app.core.continuity_engine import scan_continuity_impact
 from app.core.lens_planner import assign_lens, detect_scene_type
@@ -198,6 +198,7 @@ def generate_character_package(
         default=["portrait", "turnaround", "expressions", "poses", "outfits"],
         description="Which sections to generate",
     ),
+    reference_image: str | None = Body(None, description="Locked reference data URL — steers all generations"),
 ) -> dict:
     """
     Generates the requested image sections for a character.
@@ -216,6 +217,7 @@ def generate_character_package(
 
     base = _char_base_desc(char_data)
     result: dict = {}
+    ref_b64 = _strip_data_url_header(reference_image) if reference_image else None
 
     if "portrait" in sections:
         fb = char_data.get("facial_blueprint", {})
@@ -225,30 +227,33 @@ def generate_character_package(
         ]))
         face_suffix = f", {face_detail}" if face_detail else ""
         prompt = _pkg_prompt(base, f"hero portrait, neutral expression, looking directly at camera, bust shot, face clearly visible{face_suffix}", render_style)
-        result["portrait"] = _generate_pollinations(prompt)
+        result["portrait"] = (
+            _generate_pollinations_img2img(prompt, ref_b64) if ref_b64
+            else _generate_pollinations(prompt)
+        )
 
     if "turnaround" in sections:
         layout = get_layout("turnaround")
         sheet_prompt = layout.prompt_prefix(base)
-        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height, reference_b64=ref_b64)
         result["turnaround"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "expressions" in sections:
         layout = get_layout("expressions")
         sheet_prompt = layout.prompt_prefix(base)
-        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height, reference_b64=ref_b64)
         result["expressions"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "poses" in sections:
         layout = get_layout("poses")
         sheet_prompt = layout.prompt_prefix(base)
-        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height, reference_b64=ref_b64)
         result["poses"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "outfits" in sections:
         layout = get_layout("outfits")
         sheet_prompt = layout.prompt_prefix(base)
-        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height, reference_b64=ref_b64)
         result["outfits"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "props" in sections:
@@ -273,6 +278,7 @@ def regenerate_character_image(
     char_data: dict = Body(...),
     section: str = Body(..., description="e.g. 'portrait', 'turnaround/front', 'expressions/happy'"),
     render_style: str = Body("bw_sketch"),
+    reference_image: str | None = Body(None, description="Locked reference data URL — steers generation"),
 ) -> dict:
     """
     Regenerate exactly one cell within a sheet section.
@@ -286,7 +292,7 @@ def regenerate_character_image(
 
     Returns { image_url: str | null }.
     """
-    from app.core.image import generate_sheet_image, _generate_pollinations
+    from app.core.image import generate_sheet_image
     from app.core.sheet_layouts import LAYOUTS, get_layout
     from app.core.sheet_slicer import slice_cell
 
@@ -302,6 +308,7 @@ def regenerate_character_image(
     }
 
     base = _char_base_desc(char_data)
+    ref_b64 = _strip_data_url_header(reference_image) if reference_image else None
 
     if section == "portrait":
         fb = char_data.get("facial_blueprint", {})
@@ -311,7 +318,10 @@ def regenerate_character_image(
         ]))
         face_suffix = f", {face_detail}" if face_detail else ""
         prompt = _pkg_prompt(base, f"hero portrait, neutral expression, looking directly at camera, bust shot, face clearly visible{face_suffix}", render_style)
-        return {"image_url": _generate_pollinations(prompt)}
+        return {"image_url": (
+            _generate_pollinations_img2img(prompt, ref_b64) if ref_b64
+            else _generate_pollinations(prompt)
+        )}
 
     if "/" in section:
         section_name, cell_id = section.split("/", 1)
@@ -319,14 +329,17 @@ def regenerate_character_image(
         if layout_key:
             layout = get_layout(layout_key)
             sheet_prompt = layout.prompt_prefix(base)
-            sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+            sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height, reference_b64=ref_b64)
             if sheet_url:
                 return {"image_url": slice_cell(sheet_url, layout, cell_id)}
             return {"image_url": None}
 
     # Fallback: unknown section — generate a single image directly
     prompt = _pkg_prompt(base, section.replace("/", " ").replace("_", " "), render_style)
-    return {"image_url": _generate_pollinations(prompt)}
+    return {"image_url": (
+        _generate_pollinations_img2img(prompt, ref_b64) if ref_b64
+        else _generate_pollinations(prompt)
+    )}
 
 
 # ---------------------------------------------------------------------------

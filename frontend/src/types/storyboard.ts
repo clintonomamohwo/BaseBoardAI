@@ -95,6 +95,10 @@ export interface CharacterPackage {
   /** Which variant is currently active for generation. */
   activeVariantId: string
 
+  // ── Locked reference image ────────────────────────────────────────────────
+  /** Image URL locked by the user — passed as reference to all subsequent generations. */
+  lockedImage: string | null
+
   // ── Visual QA Engine ─────────────────────────────────────────────────────
   /** Latest QA score from the Visual QA Engine. Null until first check. */
   qaResult: QAScoreResult | null

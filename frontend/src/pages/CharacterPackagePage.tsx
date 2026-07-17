@@ -133,6 +133,7 @@ function buildEmptyPackage(char: CharacterProfile, renderStyle: RenderStyle): Ch
     overview: null,
     prompt: basePrompt,
     renderStyle,
+    lockedImage: null,
     portrait: null,
     turnaround: Object.fromEntries(TURNAROUND_KEYS.map(k => [k, null])),
     expressions: Object.fromEntries(EXPRESSION_KEYS.map(k => [k, null])),
@@ -229,12 +230,13 @@ function Spinner() {
 }
 
 function ImageTile({
-  url, label, width = 120, height = 140, onRegen, isLoading, onOpen,
+  url, label, width = 120, height = 140, onRegen, isLoading, onOpen, isLocked, onToggleLock,
 }: {
   url: string | null; label: string; width?: number; height?: number;
   onRegen?: () => void; isLoading?: boolean;
-  /** Called when the tile is clicked — parent opens the shared gallery */
   onOpen?: () => void;
+  isLocked?: boolean;
+  onToggleLock?: () => void;
 }) {
   async function handleDownload() {
     if (!url) return
@@ -245,7 +247,7 @@ function ImageTile({
   return (
     <div style={{ display:'flex',flexDirection:'column',alignItems:'center',gap:5 }}>
       <div
-        style={{ width, height, borderRadius:5, border:'1px solid var(--border)', background:'var(--bg-base)', overflow:'hidden', display:'flex',alignItems:'center',justifyContent:'center', cursor: url ? 'zoom-in' : 'default', position:'relative' }}
+        style={{ width, height, borderRadius:5, border: isLocked ? '2px solid var(--gold)' : '1px solid var(--border)', background:'var(--bg-base)', overflow:'hidden', display:'flex',alignItems:'center',justifyContent:'center', cursor: url ? 'zoom-in' : 'default', position:'relative' }}
         onClick={() => url && onOpen?.()}
       >
         {isLoading ? <Spinner /> : url ? (
@@ -253,9 +255,20 @@ function ImageTile({
         ) : (
           <span style={{ fontSize:9,color:'var(--text-muted)',opacity:0.25,textAlign:'center',padding:'0 8px',letterSpacing:'0.1em' }}>{label}</span>
         )}
+        {/* Lock badge — top-right corner */}
+        {isLocked && (
+          <div style={{ position:'absolute',top:4,right:4,background:'var(--gold)',borderRadius:3,padding:'1px 4px',fontSize:9,lineHeight:1.2,color:'#000',fontWeight:700,pointerEvents:'none' }}>
+            🔒 REF
+          </div>
+        )}
       </div>
-      <div style={{ display:'flex',gap:4 }}>
+      <div style={{ display:'flex',gap:4,alignItems:'center' }}>
         <span style={{ fontSize:8,color:'var(--text-muted)',opacity:0.5,letterSpacing:'0.12em',textTransform:'uppercase' }}>{label}</span>
+        {url && onToggleLock && (
+          <button onClick={onToggleLock} title={isLocked ? 'Unlock reference' : 'Lock as reference image'} style={{ background:'none',border:'none',cursor:'pointer',color:isLocked?'var(--gold)':'var(--text-muted)',opacity:isLocked?1:0.4,fontSize:10,padding:0 }}>
+            {isLocked ? '🔒' : '🔓'}
+          </button>
+        )}
         {onRegen && (
           <button onClick={onRegen} disabled={isLoading} title="Regenerate" style={{ background:'none',border:'none',cursor:isLoading?'wait':'pointer',color:'var(--gold)',opacity:isLoading?0.3:0.5,fontSize:10,padding:0 }}>↺</button>
         )}
@@ -623,7 +636,7 @@ export default function CharacterPackagePage({
     }))
 
     try {
-      const result = await generateCharacterPackage(character, AUTO_INIT_SECTIONS, effectiveStyle)
+      const result = await generateCharacterPackage(character, AUTO_INIT_SECTIONS, effectiveStyle, pkg.lockedImage)
       setPkg(p => ({
         ...p,
         portrait:    (result['portrait'] as string | null) ?? p.portrait,
@@ -755,7 +768,7 @@ export default function CharacterPackagePage({
     loadedTabs.current.delete(section.charAt(0).toUpperCase() + section.slice(1) as PackageTab)
     setLoading(section, true)
     try {
-      const result = await generateCharacterPackage(character, [section], promptDraft)
+      const result = await generateCharacterPackage(character, [section], promptDraft, pkg.lockedImage)
       setPkg(p => ({
         ...p,
         prompt: promptDraft,
@@ -770,10 +783,17 @@ export default function CharacterPackagePage({
   // Regenerate a single image
   // ---------------------------------------------------------------------------
 
+  function handleToggleLock(url: string) {
+    setPkg(p => ({
+      ...p,
+      lockedImage: p.lockedImage === url ? null : url,
+    }))
+  }
+
   async function handleRegenOne(sectionKey: string) {
     setLoading(sectionKey, true)
     try {
-      const url = await regenerateCharacterImage(character, sectionKey, promptDraft)
+      const url = await regenerateCharacterImage(character, sectionKey, promptDraft, pkg.lockedImage)
       const [topSection, subKey] = sectionKey.includes('/') ? sectionKey.split('/') : [sectionKey, null]
       setPkg(p => {
         if (!subKey) return { ...p, [topSection]: url }
@@ -1234,6 +1254,8 @@ export default function CharacterPackagePage({
               {EXPRESSION_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.expressions[key]} label={`${EXPRESSION_EMOJIS[key]} ${key.charAt(0).toUpperCase()+key.slice(1)}`}
                   width={110} height={130} isLoading={isLoading(`expressions/${key}`)} onRegen={() => handleRegenOne(`expressions/${key}`)}
+                  isLocked={!!pkg.expressions[key] && pkg.lockedImage === pkg.expressions[key]}
+                  onToggleLock={() => pkg.expressions[key] && handleToggleLock(pkg.expressions[key]!)}
                   onOpen={() => {
                     const emojiLabels = Object.fromEntries(EXPRESSION_KEYS.map(k => [k, `${EXPRESSION_EMOJIS[k]} ${k.charAt(0).toUpperCase()+k.slice(1)}`]))
                     openGallery(pkg.expressions, EXPRESSION_KEYS, emojiLabels, key)
@@ -1251,6 +1273,8 @@ export default function CharacterPackagePage({
               {POSE_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.poses[key]} label={POSE_LABELS[key]} width={120} height={160}
                   isLoading={isLoading(`poses/${key}`)} onRegen={() => handleRegenOne(`poses/${key}`)}
+                  isLocked={!!pkg.poses[key] && pkg.lockedImage === pkg.poses[key]}
+                  onToggleLock={() => pkg.poses[key] && handleToggleLock(pkg.poses[key]!)}
                   onOpen={() => openGallery(pkg.poses, POSE_KEYS, POSE_LABELS, key)} />
               ))}
             </div>
@@ -1291,6 +1315,8 @@ export default function CharacterPackagePage({
               {OUTFIT_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.outfits[key]} label={OUTFIT_LABELS[key]} width={120} height={160}
                   isLoading={isLoading(`outfits/${key}`)} onRegen={() => handleRegenOne(`outfits/${key}`)}
+                  isLocked={!!pkg.outfits[key] && pkg.lockedImage === pkg.outfits[key]}
+                  onToggleLock={() => pkg.outfits[key] && handleToggleLock(pkg.outfits[key]!)}
                   onOpen={() => openGallery(pkg.outfits, OUTFIT_KEYS, OUTFIT_LABELS, key)} />
               ))}
             </div>

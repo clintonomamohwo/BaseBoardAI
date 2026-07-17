@@ -285,6 +285,7 @@ def generate_sheet_image(
     sheet_prompt: str,
     canvas_width: int,
     canvas_height: int,
+    reference_b64: str | None = None,
 ) -> str | None:
     """
     Generate a single full-grid sheet image using the active image provider.
@@ -292,6 +293,10 @@ def generate_sheet_image(
     The prompt is the full sheet generation prompt produced by
     SheetLayout.prompt_prefix().  The canvas dimensions come from the layout
     manifest so the image matches the grid geometry exactly.
+
+    If reference_b64 is provided the locked reference image is passed as
+    img2img guidance (strength=0.55) so the generated sheet stays visually
+    consistent with the locked image.
 
     Returns a base64 data URL on success, or None on any failure.
     Never raises — sheet generation is non-fatal.
@@ -316,7 +321,11 @@ def generate_sheet_image(
                 )
                 provider = "pollinations"
 
-        # Pollinations: encode prompt and request exact canvas dimensions
+        # If a reference image is locked, use img2img for consistency
+        if reference_b64:
+            return _generate_pollinations_img2img(sheet_prompt, reference_b64)
+
+        # Pollinations text-to-image: request exact canvas dimensions
         encoded = urllib.parse.quote(sheet_prompt)
         url = (
             f"https://image.pollinations.ai/prompt/{encoded}"
