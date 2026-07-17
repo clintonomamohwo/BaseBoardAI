@@ -104,23 +104,26 @@ class SheetLayout:
 
 
 # ---------------------------------------------------------------------------
-# Expressions — 3 × 2 grid (6 cells, 1536 × 1024 canvas)
+# Expressions — 3 × 3 grid (9 cells, 1536 × 1536 canvas)
 # ---------------------------------------------------------------------------
 
 EXPRESSIONS_LAYOUT = SheetLayout(
-    template="expressions_3x2",
+    template="expressions_3x3",
     canvas_width=1536,
-    canvas_height=1024,
-    rows=2,
+    canvas_height=1536,
+    rows=3,
     cols=3,
     padding=48,
     cells=(
-        SheetCell("neutral",    "Neutral",    0, 0, "neutral resting expression, relaxed face"),
-        SheetCell("happy",      "Happy",      0, 1, "happy smiling expression, warm eyes"),
-        SheetCell("angry",      "Angry",      0, 2, "angry expression, furrowed brow, clenched jaw"),
-        SheetCell("sad",        "Sad",        1, 0, "sad expression, downcast eyes, slight frown"),
-        SheetCell("surprised",  "Surprised",  1, 1, "surprised expression, wide eyes, open mouth"),
-        SheetCell("determined", "Determined", 1, 2, "determined expression, focused gaze, firm set jaw"),
+        SheetCell("neutral",   "Neutral",   0, 0, "neutral resting expression, relaxed face, mouth closed"),
+        SheetCell("happy",     "Happy",     0, 1, "happy smiling expression, warm eyes, raised cheeks"),
+        SheetCell("laughing",  "Laughing",  0, 2, "laughing expression, open mouth, squinting eyes, joy"),
+        SheetCell("angry",     "Angry",     1, 0, "angry expression, furrowed brow, clenched jaw, fierce eyes"),
+        SheetCell("sad",       "Sad",       1, 1, "sad expression, downcast eyes, slight frown, drooping corners"),
+        SheetCell("surprised", "Surprised", 1, 2, "surprised expression, wide eyes, open mouth, raised brows"),
+        SheetCell("fearful",   "Fearful",   2, 0, "fearful expression, wide frightened eyes, tense brow, open mouth"),
+        SheetCell("thinking",  "Thinking",  2, 1, "thinking expression, eyes looking up-right, finger on chin, slight squint"),
+        SheetCell("crying",    "Crying",    2, 2, "crying expression, tears on cheeks, scrunched eyes, quivering lip"),
     ),
 )
 

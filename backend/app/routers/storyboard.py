@@ -218,7 +218,13 @@ def generate_character_package(
     result: dict = {}
 
     if "portrait" in sections:
-        prompt = _pkg_prompt(base, "hero portrait, neutral pose, looking at camera, bust shot", render_style)
+        fb = char_data.get("facial_blueprint", {})
+        face_detail = ", ".join(filter(None, [
+            fb.get("bone_structure", ""),
+            fb.get("distinct_markers", "") or "",
+        ]))
+        face_suffix = f", {face_detail}" if face_detail else ""
+        prompt = _pkg_prompt(base, f"hero portrait, neutral expression, looking directly at camera, bust shot, face clearly visible{face_suffix}", render_style)
         result["portrait"] = _generate_pollinations(prompt)
 
     if "turnaround" in sections:
@@ -298,7 +304,13 @@ def regenerate_character_image(
     base = _char_base_desc(char_data)
 
     if section == "portrait":
-        prompt = _pkg_prompt(base, "hero portrait, neutral pose, looking at camera, bust shot", render_style)
+        fb = char_data.get("facial_blueprint", {})
+        face_detail = ", ".join(filter(None, [
+            fb.get("bone_structure", ""),
+            fb.get("distinct_markers", "") or "",
+        ]))
+        face_suffix = f", {face_detail}" if face_detail else ""
+        prompt = _pkg_prompt(base, f"hero portrait, neutral expression, looking directly at camera, bust shot, face clearly visible{face_suffix}", render_style)
         return {"image_url": _generate_pollinations(prompt)}
 
     if "/" in section:
