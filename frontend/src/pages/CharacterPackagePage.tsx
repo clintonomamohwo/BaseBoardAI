@@ -661,6 +661,14 @@ export default function CharacterPackagePage({
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (autoInitRef.current || pkg.autoInitDone) return
+    // Skip auto-init if images already exist — don't regenerate on every mount
+    const alreadyHasImages = pkg.portrait || Object.values(pkg.turnaround).some(Boolean)
+    if (alreadyHasImages) {
+      setPkg(p => ({ ...p, autoInitDone: true }))
+      AUTO_INIT_SECTIONS.forEach(s => loadedTabs.current.add(s.charAt(0).toUpperCase() + s.slice(1) as PackageTab))
+      loadedTabs.current.add('Portrait')
+      return
+    }
     autoInitRef.current = true
     autoInit()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
