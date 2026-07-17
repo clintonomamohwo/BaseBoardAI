@@ -424,17 +424,38 @@ def run_storyboard_images(client: httpx.Client, project: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="Tom & Jerry — BaseBoard pipeline")
+    parser.add_argument(
+        "--stage3-only",
+        action="store_true",
+        help="Skip Stages 1 & 2 — load saved project.json and regenerate storyboard images only",
+    )
+    args = parser.parse_args()
+
     client = httpx.Client(timeout=900)
     _health_check(client)
 
-    # ── Stage 1: LLM extraction only (no images yet) ──────────────────────
-    project = run_pipeline(client, skip_images=True)
+    if args.stage3_only:
+        saved_json = OUT_ROOT / "storyboard" / "project.json"
+        if not saved_json.exists():
+            print(f"✗ No saved project found at {saved_json}")
+            print("  Run without --stage3-only first to generate the project.")
+            sys.exit(1)
+        project = json.loads(saved_json.read_text())
+        frames = sum(len(s.get("frames", [])) for s in project.get("scenes", []))
+        print(f"Loaded saved project: {len(project.get('characters', []))} chars, "
+              f"{len(project.get('scenes', []))} scenes, {frames} frames\n")
+        run_storyboard_images(client, project)
+    else:
+        # ── Stage 1: LLM extraction only (no images yet) ──────────────────────
+        project = run_pipeline(client, skip_images=True)
 
-    # ── Stage 2: Full character packages ──────────────────────────────────
-    run_character_packages(client, project)
+        # ── Stage 2: Full character packages ──────────────────────────────────
+        run_character_packages(client, project)
 
-    # ── Stage 3: Storyboard images (after character packages are ready) ───
-    run_storyboard_images(client, project)
+        # ── Stage 3: Storyboard images (after character packages are ready) ───
+        run_storyboard_images(client, project)
 
     client.close()
 
