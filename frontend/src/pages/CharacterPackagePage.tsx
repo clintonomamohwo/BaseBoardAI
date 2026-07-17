@@ -133,6 +133,8 @@ function buildEmptyPackage(char: CharacterProfile, renderStyle: RenderStyle): Ch
     overview: null,
     prompt: basePrompt,
     renderStyle,
+    starredImage: null,
+    lockedImages: new Set<string>(),
     lockedImage: null,
     portrait: null,
     turnaround: Object.fromEntries(TURNAROUND_KEYS.map(k => [k, null])),
@@ -229,16 +231,16 @@ function Spinner() {
   )
 }
 
-function LockBanner({ lockedImage, onClear }: { lockedImage: string | null; onClear: () => void }) {
-  if (!lockedImage) return null
+function StarBanner({ starredImage, onClear }: { starredImage: string | null; onClear: () => void }) {
+  if (!starredImage) return null
   return (
     <div style={{ display:'flex', alignItems:'center', gap:10, background:'rgba(201,168,76,0.08)', border:'1px solid rgba(201,168,76,0.35)', borderRadius:5, padding:'8px 14px', marginBottom:16 }}>
-      <img src={lockedImage} alt="locked reference" style={{ width:32, height:32, objectFit:'cover', borderRadius:3, border:'1px solid var(--gold)' }} />
+      <img src={starredImage} alt="starred reference" style={{ width:32, height:32, objectFit:'cover', borderRadius:3, border:'1px solid var(--gold)' }} />
       <div style={{ flex:1 }}>
-        <span style={{ fontSize:9, letterSpacing:'0.2em', color:'var(--gold)', textTransform:'uppercase', fontWeight:600 }}>🔒 Reference locked</span>
-        <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.7, marginTop:2 }}>All regenerations will use this image to stay consistent. Click 🔓 on any tile to change it.</p>
+        <span style={{ fontSize:9, letterSpacing:'0.2em', color:'var(--gold)', textTransform:'uppercase', fontWeight:600 }}>⭐ Reference image set</span>
+        <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.7, marginTop:2 }}>All regenerations use this as a reference. Starred image is protected from regeneration.</p>
       </div>
-      <button onClick={onClear} title="Clear reference" style={{ background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4, padding:'4px 10px', fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', cursor:'pointer', opacity:0.7, textTransform:'uppercase' }}>
+      <button onClick={onClear} title="Clear star" style={{ background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4, padding:'4px 10px', fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', cursor:'pointer', opacity:0.7, textTransform:'uppercase' }}>
         Clear
       </button>
     </div>
@@ -246,13 +248,17 @@ function LockBanner({ lockedImage, onClear }: { lockedImage: string | null; onCl
 }
 
 function ImageTile({
-  url, label, width = 120, height = 140, onRegen, isLoading, onOpen, isLocked, onToggleLock,
+  url, label, width = 120, height = 140, onRegen, isLoading, onOpen,
+  isStarred, onToggleStar, isLocked, onToggleLock, isProtected,
 }: {
   url: string | null; label: string; width?: number; height?: number;
   onRegen?: () => void; isLoading?: boolean;
   onOpen?: () => void;
-  isLocked?: boolean;
+  isStarred?: boolean;      // ⭐ — reference image (also protected)
+  onToggleStar?: () => void;
+  isLocked?: boolean;       // 🔒 — protected from regen only
   onToggleLock?: () => void;
+  isProtected?: boolean;    // true if starred OR locked
 }) {
   async function handleDownload() {
     if (!url) return
@@ -260,10 +266,13 @@ function ImageTile({
     catch { window.open(url, '_blank') }
   }
 
+  const borderColor = isStarred ? 'var(--gold)' : isLocked ? '#7c5cd8' : 'var(--border)'
+  const borderWidth = (isStarred || isLocked) ? '2px' : '1px'
+
   return (
     <div style={{ display:'flex',flexDirection:'column',alignItems:'center',gap:5 }}>
       <div
-        style={{ width, height, borderRadius:5, border: isLocked ? '2px solid var(--gold)' : '1px solid var(--border)', background:'var(--bg-base)', overflow:'hidden', display:'flex',alignItems:'center',justifyContent:'center', cursor: url ? 'zoom-in' : 'default', position:'relative' }}
+        style={{ width, height, borderRadius:5, border:`${borderWidth} solid ${borderColor}`, background:'var(--bg-base)', overflow:'hidden', display:'flex',alignItems:'center',justifyContent:'center', cursor: url ? 'zoom-in' : 'default', position:'relative', opacity: isProtected && !isStarred && !isLocked ? 1 : 1 }}
         onClick={() => url && onOpen?.()}
       >
         {isLoading ? <Spinner /> : url ? (
@@ -271,21 +280,34 @@ function ImageTile({
         ) : (
           <span style={{ fontSize:9,color:'var(--text-muted)',opacity:0.25,textAlign:'center',padding:'0 8px',letterSpacing:'0.1em' }}>{label}</span>
         )}
-        {/* Lock badge — top-right corner */}
-        {isLocked && (
-          <div style={{ position:'absolute',top:4,right:4,background:'var(--gold)',borderRadius:3,padding:'1px 4px',fontSize:9,lineHeight:1.2,color:'#000',fontWeight:700,pointerEvents:'none' }}>
-            🔒 REF
+        {/* Badge — top-right corner */}
+        {isStarred && (
+          <div style={{ position:'absolute',top:4,right:4,background:'var(--gold)',borderRadius:3,padding:'1px 5px',fontSize:9,lineHeight:1.4,color:'#000',fontWeight:700,pointerEvents:'none' }}>
+            ⭐ REF
+          </div>
+        )}
+        {!isStarred && isLocked && (
+          <div style={{ position:'absolute',top:4,right:4,background:'#7c5cd8',borderRadius:3,padding:'1px 5px',fontSize:9,lineHeight:1.4,color:'#fff',fontWeight:700,pointerEvents:'none' }}>
+            🔒
           </div>
         )}
       </div>
       <div style={{ display:'flex',gap:4,alignItems:'center' }}>
         <span style={{ fontSize:8,color:'var(--text-muted)',opacity:0.5,letterSpacing:'0.12em',textTransform:'uppercase' }}>{label}</span>
-        {url && onToggleLock && (
-          <button onClick={onToggleLock} title={isLocked ? 'Unlock reference' : 'Lock as reference image'} style={{ background:'none',border:'none',cursor:'pointer',color:isLocked?'var(--gold)':'var(--text-muted)',opacity:isLocked?1:0.4,fontSize:10,padding:0 }}>
+        {/* Star — set as reference (also protects) */}
+        {url && onToggleStar && (
+          <button onClick={onToggleStar} title={isStarred ? 'Remove star' : 'Star as reference (protects from regen)'} style={{ background:'none',border:'none',cursor:'pointer',color:'var(--gold)',opacity:isStarred?1:0.3,fontSize:11,padding:0,lineHeight:1 }}>
+            {isStarred ? '⭐' : '☆'}
+          </button>
+        )}
+        {/* Lock — protect from regen only */}
+        {url && onToggleLock && !isStarred && (
+          <button onClick={onToggleLock} title={isLocked ? 'Unlock' : 'Lock (protect from regen)'} style={{ background:'none',border:'none',cursor:'pointer',color:'#7c5cd8',opacity:isLocked?1:0.3,fontSize:10,padding:0,lineHeight:1 }}>
             {isLocked ? '🔒' : '🔓'}
           </button>
         )}
-        {onRegen && (
+        {/* Regen — hidden if starred or locked */}
+        {onRegen && !isStarred && !isLocked && (
           <button onClick={onRegen} disabled={isLoading} title="Regenerate" style={{ background:'none',border:'none',cursor:isLoading?'wait':'pointer',color:'var(--gold)',opacity:isLoading?0.3:0.5,fontSize:10,padding:0 }}>↺</button>
         )}
         {url && (
@@ -652,7 +674,7 @@ export default function CharacterPackagePage({
     }))
 
     try {
-      const result = await generateCharacterPackage(character, AUTO_INIT_SECTIONS, effectiveStyle, pkg.lockedImage)
+      const result = await generateCharacterPackage(character, AUTO_INIT_SECTIONS, effectiveStyle, pkg.starredImage)
       setPkg(p => ({
         ...p,
         portrait:    (result['portrait'] as string | null) ?? p.portrait,
@@ -781,35 +803,76 @@ export default function CharacterPackagePage({
 
   async function handleBulkRegen(section: string) {
     saveVersion({ portrait: pkg.portrait, ...pkg.turnaround, ...pkg.expressions, ...pkg.poses, ...pkg.outfits })
-    loadedTabs.current.delete(section.charAt(0).toUpperCase() + section.slice(1) as PackageTab)
-    setLoading(section, true)
-    try {
-      const result = await generateCharacterPackage(character, [section], promptDraft, pkg.lockedImage)
-      setPkg(p => ({
-        ...p,
-        prompt: promptDraft,
-        ...(section === 'portrait' ? { portrait: result['portrait'] as string | null } : {}),
-        ...(section !== 'portrait' ? { [section]: result[section] as Record<string, string | null> } : {}),
-      }))
-    } catch { /* leave existing */ }
-    finally { setLoading(section, false) }
+
+    if (section === 'portrait') {
+      if (!isProtected(pkg.portrait)) {
+        setLoading('portrait', true)
+        try {
+          const result = await generateCharacterPackage(character, ['portrait'], promptDraft, pkg.starredImage)
+          setPkg(p => ({ ...p, prompt: promptDraft, portrait: result['portrait'] as string | null }))
+        } catch { /* leave existing */ }
+        finally { setLoading('portrait', false) }
+      }
+      return
+    }
+
+    // For grid sections: regenerate only the unlocked/unstarred keys individually
+    const sectionMap: Record<string, string[]> = {
+      expressions: [...EXPRESSION_KEYS],
+      poses:       [...POSE_KEYS],
+      outfits:     [...OUTFIT_KEYS],
+      turnaround:  [...TURNAROUND_KEYS],
+    }
+    const keys = sectionMap[section]
+    if (!keys) return
+
+    const sectionData = pkg[section as keyof typeof pkg] as Record<string, string | null>
+    const unprotectedKeys = keys.filter(k => !isProtected(sectionData?.[k] ?? null))
+    if (unprotectedKeys.length === 0) return
+
+    // Regenerate each unprotected key one by one
+    for (const key of unprotectedKeys) {
+      await handleRegenOne(`${section}/${key}`)
+    }
   }
 
   // ---------------------------------------------------------------------------
   // Regenerate a single image
   // ---------------------------------------------------------------------------
 
-  function handleToggleLock(url: string) {
+  function handleToggleStar(url: string) {
     setPkg(p => ({
       ...p,
-      lockedImage: p.lockedImage === url ? null : url,
+      starredImage: p.starredImage === url ? null : url,
+      lockedImage: p.starredImage === url ? null : url, // keep compat
     }))
   }
 
+  function handleToggleLock(url: string) {
+    setPkg(p => {
+      const next = new Set(p.lockedImages)
+      if (next.has(url)) next.delete(url)
+      else next.add(url)
+      return { ...p, lockedImages: next }
+    })
+  }
+
+  function isProtected(url: string | null) {
+    if (!url) return false
+    return pkg.starredImage === url || pkg.lockedImages.has(url)
+  }
+
   async function handleRegenOne(sectionKey: string) {
+    // Resolve the current image URL for this tile
+    const [topSection, subKey] = sectionKey.includes('/') ? sectionKey.split('/') : [sectionKey, null]
+    const currentUrl = subKey
+      ? (pkg[topSection as keyof typeof pkg] as Record<string, string | null>)?.[subKey]
+      : (pkg[topSection as keyof typeof pkg] as string | null)
+    if (isProtected(currentUrl ?? null)) return   // starred or locked — skip
+
     setLoading(sectionKey, true)
     try {
-      const url = await regenerateCharacterImage(character, sectionKey, promptDraft, pkg.lockedImage)
+      const url = await regenerateCharacterImage(character, sectionKey, promptDraft, pkg.starredImage)
       const [topSection, subKey] = sectionKey.includes('/') ? sectionKey.split('/') : [sectionKey, null]
       setPkg(p => {
         if (!subKey) return { ...p, [topSection]: url }
@@ -1203,10 +1266,12 @@ export default function CharacterPackagePage({
         {activeTab === 'Portrait' && (
           <div>
             <SectionHeader title="Hero Portrait" section="portrait" />
-            <LockBanner lockedImage={pkg.lockedImage} onClear={() => setPkg(p => ({ ...p, lockedImage: null }))} />
+            <StarBanner starredImage={pkg.starredImage} onClear={() => setPkg(p => ({ ...p, starredImage: null, lockedImage: null }))} />
             <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
               <ImageTile url={pkg.portrait} label="Portrait" width={200} height={260} isLoading={isLoading('portrait')} onRegen={() => handleRegenOne('portrait')}
-                isLocked={!!pkg.portrait && pkg.lockedImage === pkg.portrait}
+                isStarred={!!pkg.portrait && pkg.starredImage === pkg.portrait}
+                onToggleStar={() => pkg.portrait && handleToggleStar(pkg.portrait)}
+                isLocked={!!pkg.portrait && pkg.lockedImages.has(pkg.portrait)}
                 onToggleLock={() => pkg.portrait && handleToggleLock(pkg.portrait)}
                 onOpen={() => pkg.portrait && setGallery({ items:[{ url: pkg.portrait, label:'Portrait' }], index:0 })} />
               <div style={{ flex:1, maxWidth:320 }}>
@@ -1232,12 +1297,14 @@ export default function CharacterPackagePage({
             <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:20, lineHeight:1.6 }}>
               Industry-standard 5-view reference sheet. For the 360° turntable (8 angles) use the Full Reference Pack.
             </p>
-            <LockBanner lockedImage={pkg.lockedImage} onClear={() => setPkg(p => ({ ...p, lockedImage: null }))} />
+            <StarBanner starredImage={pkg.starredImage} onClear={() => setPkg(p => ({ ...p, starredImage: null, lockedImage: null }))} />
             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
               {TURNAROUND_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.turnaround[key]} label={TURNAROUND_LABELS[key]} width={130} height={180}
                   isLoading={isLoading(`turnaround/${key}`)} onRegen={() => handleRegenOne(`turnaround/${key}`)}
-                  isLocked={!!pkg.turnaround[key] && pkg.lockedImage === pkg.turnaround[key]}
+                  isStarred={!!pkg.turnaround[key] && pkg.starredImage === pkg.turnaround[key]}
+                  onToggleStar={() => pkg.turnaround[key] && handleToggleStar(pkg.turnaround[key]!)}
+                  isLocked={!!pkg.turnaround[key] && pkg.lockedImages.has(pkg.turnaround[key]!)}
                   onToggleLock={() => pkg.turnaround[key] && handleToggleLock(pkg.turnaround[key]!)}
                   onOpen={() => openGallery(pkg.turnaround, TURNAROUND_KEYS, TURNAROUND_LABELS, key)} />
               ))}
@@ -1272,12 +1339,14 @@ export default function CharacterPackagePage({
         {activeTab === 'Expressions' && (
           <div>
             <SectionHeader title="Expression Sheet — 9 Expressions" section="expressions" />
-            <LockBanner lockedImage={pkg.lockedImage} onClear={() => setPkg(p => ({ ...p, lockedImage: null }))} />
+            <StarBanner starredImage={pkg.starredImage} onClear={() => setPkg(p => ({ ...p, starredImage: null, lockedImage: null }))} />
             <div style={{ display:'flex', gap:14, flexWrap:'wrap' }}>
               {EXPRESSION_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.expressions[key]} label={`${EXPRESSION_EMOJIS[key]} ${key.charAt(0).toUpperCase()+key.slice(1)}`}
                   width={110} height={130} isLoading={isLoading(`expressions/${key}`)} onRegen={() => handleRegenOne(`expressions/${key}`)}
-                  isLocked={!!pkg.expressions[key] && pkg.lockedImage === pkg.expressions[key]}
+                  isStarred={!!pkg.expressions[key] && pkg.starredImage === pkg.expressions[key]}
+                  onToggleStar={() => pkg.expressions[key] && handleToggleStar(pkg.expressions[key]!)}
+                  isLocked={!!pkg.expressions[key] && pkg.lockedImages.has(pkg.expressions[key]!)}
                   onToggleLock={() => pkg.expressions[key] && handleToggleLock(pkg.expressions[key]!)}
                   onOpen={() => {
                     const emojiLabels = Object.fromEntries(EXPRESSION_KEYS.map(k => [k, `${EXPRESSION_EMOJIS[k]} ${k.charAt(0).toUpperCase()+k.slice(1)}`]))
@@ -1292,12 +1361,14 @@ export default function CharacterPackagePage({
         {activeTab === 'Poses' && (
           <div>
             <SectionHeader title="Pose Sheet — 7 Common Poses" section="poses" />
-            <LockBanner lockedImage={pkg.lockedImage} onClear={() => setPkg(p => ({ ...p, lockedImage: null }))} />
+            <StarBanner starredImage={pkg.starredImage} onClear={() => setPkg(p => ({ ...p, starredImage: null, lockedImage: null }))} />
             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
               {POSE_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.poses[key]} label={POSE_LABELS[key]} width={120} height={160}
                   isLoading={isLoading(`poses/${key}`)} onRegen={() => handleRegenOne(`poses/${key}`)}
-                  isLocked={!!pkg.poses[key] && pkg.lockedImage === pkg.poses[key]}
+                  isStarred={!!pkg.poses[key] && pkg.starredImage === pkg.poses[key]}
+                  onToggleStar={() => pkg.poses[key] && handleToggleStar(pkg.poses[key]!)}
+                  isLocked={!!pkg.poses[key] && pkg.lockedImages.has(pkg.poses[key]!)}
                   onToggleLock={() => pkg.poses[key] && handleToggleLock(pkg.poses[key]!)}
                   onOpen={() => openGallery(pkg.poses, POSE_KEYS, POSE_LABELS, key)} />
               ))}
@@ -1332,7 +1403,7 @@ export default function CharacterPackagePage({
         {activeTab === 'Outfits' && (
           <div>
             <SectionHeader title="Outfit Variations — 7 Costumes" section="outfits" />
-            <LockBanner lockedImage={pkg.lockedImage} onClear={() => setPkg(p => ({ ...p, lockedImage: null }))} />
+            <StarBanner starredImage={pkg.starredImage} onClear={() => setPkg(p => ({ ...p, starredImage: null, lockedImage: null }))} />
             <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:20, lineHeight:1.6 }}>
               Each outfit can be regenerated independently without affecting the others.
             </p>
@@ -1340,7 +1411,9 @@ export default function CharacterPackagePage({
               {OUTFIT_KEYS.map(key => (
                 <ImageTile key={key} url={pkg.outfits[key]} label={OUTFIT_LABELS[key]} width={120} height={160}
                   isLoading={isLoading(`outfits/${key}`)} onRegen={() => handleRegenOne(`outfits/${key}`)}
-                  isLocked={!!pkg.outfits[key] && pkg.lockedImage === pkg.outfits[key]}
+                  isStarred={!!pkg.outfits[key] && pkg.starredImage === pkg.outfits[key]}
+                  onToggleStar={() => pkg.outfits[key] && handleToggleStar(pkg.outfits[key]!)}
+                  isLocked={!!pkg.outfits[key] && pkg.lockedImages.has(pkg.outfits[key]!)}
                   onToggleLock={() => pkg.outfits[key] && handleToggleLock(pkg.outfits[key]!)}
                   onOpen={() => openGallery(pkg.outfits, OUTFIT_KEYS, OUTFIT_LABELS, key)} />
               ))}

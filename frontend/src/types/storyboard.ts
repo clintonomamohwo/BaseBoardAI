@@ -95,8 +95,12 @@ export interface CharacterPackage {
   /** Which variant is currently active for generation. */
   activeVariantId: string
 
-  // ── Locked reference image ────────────────────────────────────────────────
-  /** Image URL locked by the user — passed as reference to all subsequent generations. */
+  // ── Star & lock system ────────────────────────────────────────────────────
+  /** Starred image URL — used as reference for all generations. Also protected from regen. */
+  starredImage: string | null
+  /** Set of image URLs the user has locked (protected from regeneration). */
+  lockedImages: Set<string>
+  /** @deprecated use starredImage */
   lockedImage: string | null
 
   // ── Visual QA Engine ─────────────────────────────────────────────────────
