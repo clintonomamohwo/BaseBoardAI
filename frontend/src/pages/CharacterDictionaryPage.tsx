@@ -624,6 +624,16 @@ export default function CharacterDictionaryPage({
     setPackagedCharIds(prev => new Set([...prev, charId]))
   }
 
+  function handleSavePortrait(charId: string, portrait: string) {
+    const updated = characters.find(c => c.id === charId)
+    if (!updated) return
+    const next = { ...updated, reference_image: portrait }
+    setCharacters(prev => prev.map(c => c.id === charId ? next : c))
+    onUpdateCharacter?.(next)
+    // Keep activePackage in sync so the header avatar updates immediately
+    setActivePackage(prev => prev?.id === charId ? { ...prev, reference_image: portrait } : prev)
+  }
+
   async function handleEditSave(
     updated: CharacterProfile,
     changedField: string,
@@ -715,6 +725,7 @@ export default function CharacterDictionaryPage({
         renderStyle={renderStyle}
         onBack={() => setActivePackage(null)}
         onAutoInitComplete={handlePackageComplete}
+        onSavePortrait={handleSavePortrait}
       />
     )
   }

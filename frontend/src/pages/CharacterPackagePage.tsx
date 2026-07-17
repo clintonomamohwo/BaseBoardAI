@@ -411,14 +411,22 @@ function ImageTile({
 // ---------------------------------------------------------------------------
 
 function OverviewSection({
-  pkg, onUpdate, onGenerateOverview, isGenerating,
+  pkg, onUpdate, onSave, onGenerateOverview, isGenerating,
 }: {
   pkg: CharacterPackage
   onUpdate: (ov: CharacterOverview) => void
+  onSave: () => void
   onGenerateOverview: () => void
   isGenerating: boolean
 }) {
   const ov = pkg.overview!
+  const [saved, setSaved] = useState(false)
+
+  function handleSave() {
+    onSave()
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
 
   const fields: { key: keyof CharacterOverview; label: string; multiline?: boolean }[] = [
     { key:'name',        label:'Name' },
@@ -445,19 +453,32 @@ function OverviewSection({
 
   return (
     <div>
-      {/* Generate / Regenerate Overview button */}
+      {/* Header row: title | AI-Generate | Update */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
         <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500 }}>Character Overview</h2>
-        <button
-          onClick={onGenerateOverview}
-          disabled={isGenerating}
-          style={{
-            fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', textTransform:'uppercase',
-            background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4,
-            padding:'5px 14px', cursor:isGenerating?'wait':'pointer', opacity:isGenerating?0.4:1,
-          }}>
-          {isGenerating ? 'Generating…' : '✦ AI-Generate Overview'}
-        </button>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <button
+            onClick={onGenerateOverview}
+            disabled={isGenerating}
+            style={{
+              fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', textTransform:'uppercase',
+              background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4,
+              padding:'5px 14px', cursor:isGenerating?'wait':'pointer', opacity:isGenerating?0.4:1,
+            }}>
+            {isGenerating ? 'Generating…' : '✦ AI-Generate'}
+          </button>
+          <button
+            onClick={handleSave}
+            style={{
+              fontSize:9, letterSpacing:'0.15em', textTransform:'uppercase', borderRadius:4,
+              padding:'5px 14px', cursor:'pointer', transition:'all 200ms',
+              background: saved ? 'rgba(74,222,128,0.15)' : 'rgba(201,168,76,0.12)',
+              border: saved ? '1px solid rgba(74,222,128,0.5)' : '1px solid rgba(201,168,76,0.5)',
+              color: saved ? '#4ade80' : 'var(--gold)',
+            }}>
+            {saved ? '✓ Saved' : '↑ Update'}
+          </button>
+        </div>
       </div>
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'16px 24px', maxWidth:640 }}>
         {fields.map(({ key, label, multiline }) => (
@@ -472,6 +493,20 @@ function OverviewSection({
             )}
           </div>
         ))}
+      </div>
+      {/* Bottom Update button — visible without scrolling up */}
+      <div style={{ marginTop:20, display:'flex', justifyContent:'flex-end' }}>
+        <button
+          onClick={handleSave}
+          style={{
+            fontSize:9, letterSpacing:'0.15em', textTransform:'uppercase', borderRadius:4,
+            padding:'6px 20px', cursor:'pointer', transition:'all 200ms',
+            background: saved ? 'rgba(74,222,128,0.15)' : 'rgba(201,168,76,0.12)',
+            border: saved ? '1px solid rgba(74,222,128,0.5)' : '1px solid rgba(201,168,76,0.5)',
+            color: saved ? '#4ade80' : 'var(--gold)',
+          }}>
+          {saved ? '✓ Saved' : '↑ Update Overview'}
+        </button>
       </div>
     </div>
   )
@@ -695,6 +730,10 @@ interface Props {
   onBack?: () => void
   /** Called when auto-init for this character completes */
   onAutoInitComplete?: (charId: string) => void
+  /** Called when overview is explicitly saved — receives the latest overview */
+  onSaveOverview?: (charId: string, overview: CharacterOverview) => void
+  /** Called when portrait is generated/updated — receives the data URL */
+  onSavePortrait?: (charId: string, portrait: string) => void
 }
 
 // Detail level only applies when the base render style is a B&W variant.
@@ -755,7 +794,8 @@ function savePkgCache(charId: string, pkg: CharacterPackage): void {
 }
 
 export default function CharacterPackagePage({
-  character, allCharacters = [], scenes, renderStyle = 'bw_sketch', onBack, onAutoInitComplete,
+  character, allCharacters = [], scenes, renderStyle = 'bw_sketch',
+  onBack, onAutoInitComplete, onSaveOverview, onSavePortrait,
 }: Props) {
   // Detect if the base style is B&W so the toggle is shown
   const isBW = renderStyle === 'bw_sketch' || renderStyle === 'bw_detailed'
@@ -813,6 +853,15 @@ export default function CharacterPackagePage({
     }
   }, [pkg.autoInitDone, pkg.portrait, pkg.turnaround, pkg.expressions, pkg.poses, pkg.outfits,
       pkg.props, pkg.turnaround360, pkg.premiumPoses, pkg.materialCloseups]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Notify parent whenever portrait is generated/updated
+  const prevPortraitRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (pkg.portrait && pkg.portrait !== prevPortraitRef.current) {
+      prevPortraitRef.current = pkg.portrait
+      onSavePortrait?.(character.id, pkg.portrait)
+    }
+  }, [pkg.portrait]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shared gallery lightbox state — null = closed
   const [gallery, setGallery] = useState<{ items: GalleryItem[]; index: number } | null>(null)
@@ -1358,6 +1407,10 @@ export default function CharacterPackagePage({
           <OverviewSection
             pkg={pkg}
             onUpdate={ov => setPkg(p => ({ ...p, overview: ov }))}
+            onSave={() => {
+              savePkgCache(character.id, pkgRef.current)
+              onSaveOverview?.(character.id, pkgRef.current.overview!)
+            }}
             onGenerateOverview={handleGenerateOverview}
             isGenerating={overviewGenerating}
           />
