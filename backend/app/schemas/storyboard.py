@@ -244,34 +244,11 @@ class QAScoreResult(BaseModel):
     )
 
 
-class CharacterRelationship(BaseModel):
-    """A directed relationship from this character to another."""
-    target_id: str = Field(description="The ID of the other character, e.g. CHAR_MORGAN")
-    target_name: str = Field(description="Display name of the other character")
-    relationship_type: Literal[
-        "ally", "enemy", "romantic", "mentor", "family", "neutral", "rival"
-    ] = Field(description="Nature of the relationship inferred from script interactions")
-    notes: str | None = Field(None, description="One-sentence rationale from the AI")
-
-
-STORY_ROLE_OPTIONS = Literal["Protagonist", "Antagonist", "Supporting", "Other"]
-
-
 class CharacterProfileBase(BaseModel):
     id: str = Field(description="Unique internal identity token, e.g., CHAR_CLINTON")
     name: str
     facial_blueprint: FacialBlueprint
     wardrobe_defaults: str
-
-    # ── Story role & relationships (set by CHARACTER_PROMPT from script) ──────
-    story_role: STORY_ROLE_OPTIONS | None = Field(
-        None,
-        description="Narrative category: Protagonist | Antagonist | Supporting | Other"
-    )
-    relationships: list[CharacterRelationship] = Field(
-        default_factory=list,
-        description="Directed relationships to other characters inferred from script interactions"
-    )
 
     # ── Character DNA System (CKG) ────────────────────────────────────────────
     # All layers are optional — absent for legacy characters created before the
@@ -502,11 +479,12 @@ class PipelineExecutionRequest(BaseModel):
     """
     project_title: str = Field(default="Untitled PreViz Project")
     global_aesthetic: str = Field(description="e.g., Cinematic High-Contrast, Neon Cyberpunk")
-    render_style: Literal['bw_sketch', 'bw_detailed', 'flat_color', 'full_shaded'] = Field(
+    render_style: Literal['bw_sketch', 'flat_color', 'full_shaded'] = Field(
         'bw_sketch', description="Visual rendering pipeline mode"
     )
+    # pyrefly: ignore [bad-assignment]
     director_style: Literal['balanced', 'cinematic', 'dialogue', 'action', 'intimate'] = Field(
-        'balanced', description="Director AI shot-planning style"
+        'balanced', description=" Director AI shot-planning style"
     )
     reference_style_image: str | None = Field(
         None, description="Optional user-uploaded reference style image encoded as a Base64 data URL string."
@@ -514,7 +492,6 @@ class PipelineExecutionRequest(BaseModel):
     raw_character_notes: str = Field(description="Raw text entered in Step 1 Character Builder")
     raw_world_notes: str = Field(description="Raw text entered in Step 2 World Builder")
     raw_script_text: str = Field(description="The complete raw screenplay pasted in Step 3")
-    skip_images: bool = Field(False, description="If True, skip storyboard image generation (LLM stages only). Use when you want to run character packages first, then generate images separately.")
 
 class StoryboardProjectCreate(BaseModel):
     """
@@ -523,7 +500,7 @@ class StoryboardProjectCreate(BaseModel):
     """
     project_title: str = Field(default="Untitled PreViz Project")
     global_aesthetic: str = Field(description="e.g., Cinematic High-Contrast, Neon Cyberpunk")
-    render_style: Literal['bw_sketch', 'bw_detailed', 'flat_color', 'full_shaded'] = Field(
+    render_style: Literal['bw_sketch', 'flat_color', 'full_shaded'] = Field(
         'bw_sketch', description="Visual rendering pipeline mode"
     )
     characters: list[CharacterProfileBase] = Field(default_factory=list)
@@ -760,6 +737,7 @@ class CharacterQARequest(BaseModel):
     identity: CharacterIdentity
     species_id: str = Field("human", description="Active species key, e.g. 'human', 'elf', 'wolf', 'car', 'horse'")
     variant: CharacterVariant | None = None
+    # pyrefly: ignore [bad-assignment]
     asset_type: Literal["character", "creature", "animal", "robot", "vehicle"] = Field(
         "character",
         description=(
@@ -865,3 +843,61 @@ class RegenerateVisualActionResponse(BaseModel):
     visual_action: str
     animation_beats: list[str] = Field(default_factory=list)
     director_notes: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Standalone save/load schemas (used by /standalone/* endpoints)
+# ---------------------------------------------------------------------------
+
+class StandaloneCharacterSave(BaseModel):
+    """Payload for POST /standalone/characters"""
+    name: str
+    character_data: dict[str, Any] = Field(description="Full CharacterProfileBase JSON")
+    notes: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class StandaloneCharacterResponse(BaseModel):
+    """Response from standalone character endpoints"""
+    id: int
+    name: str
+    character_data: dict[str, Any]
+    notes: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    created_at: str
+
+
+class StandaloneWorldSave(BaseModel):
+    """Payload for POST /standalone/worlds"""
+    name: str
+    world_data: dict[str, Any] = Field(description="Full EnvironmentProfileBase JSON or world bible dict")
+    notes: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class StandaloneWorldResponse(BaseModel):
+    """Response from standalone world endpoints"""
+    id: int
+    name: str
+    world_data: dict[str, Any]
+    notes: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    created_at: str
+
+
+class StandaloneStoryboardSave(BaseModel):
+    """Payload for POST /standalone/storyboards"""
+    title: str
+    storyboard_data: dict[str, Any] = Field(description="Full StoryboardProjectResponse JSON")
+    notes: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class StandaloneStoryboardResponse(BaseModel):
+    """Response from standalone storyboard endpoints"""
+    id: int
+    title: str
+    storyboard_data: dict[str, Any]
+    notes: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    created_at: str
