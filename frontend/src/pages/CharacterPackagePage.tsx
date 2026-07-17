@@ -619,6 +619,33 @@ function resolveRenderStyle(base: RenderStyle | 'bw_detailed', detail: DetailLev
   return base as RenderStyle // flat_color / full_shaded — detail level has no effect
 }
 
+// ---------------------------------------------------------------------------
+// localStorage persistence — keyed by charId so each character is independent
+// ---------------------------------------------------------------------------
+
+const PKG_FIELDS_TO_PERSIST = ['portrait','turnaround','expressions','poses','outfits','props',
+  'turnaround360','premiumPoses','materialCloseups','autoInitDone','overview','renderStyle'] as const
+
+function pkgCacheKey(charId: string): string {
+  return `baseboard_pkg_v1_${charId}`
+}
+
+function loadPkgCache(charId: string): Partial<CharacterPackage> | null {
+  try {
+    const raw = localStorage.getItem(pkgCacheKey(charId))
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch { return null }
+}
+
+function savePkgCache(charId: string, pkg: CharacterPackage): void {
+  try {
+    const subset: Record<string, unknown> = {}
+    for (const k of PKG_FIELDS_TO_PERSIST) subset[k] = pkg[k as keyof CharacterPackage]
+    localStorage.setItem(pkgCacheKey(charId), JSON.stringify(subset))
+  } catch { /* storage full — silent */ }
+}
+
 export default function CharacterPackagePage({
   character, allCharacters = [], scenes, renderStyle = 'bw_sketch', onBack, onAutoInitComplete,
 }: Props) {
@@ -630,18 +657,33 @@ export default function CharacterPackagePage({
 
   const [activeTab, setActiveTab] = useState<PackageTab>('Overview')
   const [pkg, setPkg] = useState<CharacterPackage>(() => {
-    const p = buildEmptyPackage(character, resolveRenderStyle(renderStyle, renderStyle === 'bw_detailed' ? 'detailed' : 'simple'))
-    p.overview = buildOverview(character)
-    p.sceneAppearances = scenes
+    const base = buildEmptyPackage(character, resolveRenderStyle(renderStyle, renderStyle === 'bw_detailed' ? 'detailed' : 'simple'))
+    base.overview = buildOverview(character)
+    base.sceneAppearances = scenes
       .filter(s => s.frames.some(f => f.action_breakdown?.toLowerCase().includes(character.name.split(' ')[0].toLowerCase())))
       .map(s => s.scene_number)
-    p.relationships = buildRelationships(character, allCharacters, scenes)
-    return p
+    base.relationships = buildRelationships(character, allCharacters, scenes)
+    // Restore cached images if available
+    const cached = loadPkgCache(character.id)
+    if (cached) {
+      return { ...base, ...cached, loading: {}, versions: base.versions,
+        sceneAppearances: base.sceneAppearances, relationships: base.relationships,
+        lockedImages: new Set<string>() }
+    }
+    return base
   })
   const [promptDraft, setPromptDraft] = useState(pkg.prompt)
   const [overviewGenerating, setOverviewGenerating] = useState(false)
   const loadedTabs  = useRef<Set<string>>(new Set(['Overview', 'Scenes', 'Relationships']))
   const autoInitRef = useRef(false)
+
+  // Persist images to localStorage whenever pkg changes
+  useEffect(() => {
+    if (pkg.portrait || Object.values(pkg.turnaround).some(Boolean)) {
+      savePkgCache(character.id, pkg)
+    }
+  }, [pkg.portrait, pkg.turnaround, pkg.expressions, pkg.poses, pkg.outfits,
+      pkg.props, pkg.turnaround360, pkg.premiumPoses, pkg.materialCloseups]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shared gallery lightbox state — null = closed
   const [gallery, setGallery] = useState<{ items: GalleryItem[]; index: number } | null>(null)
