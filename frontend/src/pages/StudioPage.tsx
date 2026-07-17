@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { RenderStyle, StoryboardFrame, StoryboardProject, StoryboardScene } from '../types/storyboard'
-import { forgePipeline } from '../api/storyboard'
+import { forgePipeline, upgradeSceneStyle } from '../api/storyboard'
 import PipelineForm from '../components/PipelineForm'
 import EmptyBlueprintState from '../components/EmptyBlueprintState'
 import SceneIndex from '../components/SceneIndex'
@@ -11,6 +11,7 @@ import VaultGrid from '../components/VaultGrid'
 import LockedCutFolder from '../components/LockedCutFolder'
 import BatchExportBar from '../components/BatchExportBar'
 import ConstellationLoader from '../components/ConstellationLoader'
+import UpgradeStyleMenu from '../components/UpgradeStyleMenu'
 
 const RENDER_OPTIONS: { value: RenderStyle; label: string }[] = [
   { value: 'bw_sketch',   label: 'B&W Sketch' },
@@ -42,6 +43,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
   const [rerunAesthetic, setRerunAesthetic] = useState('')
   const [rerunLoading, setRerunLoading] = useState(false)
   const [rerunError, setRerunError]     = useState<string | null>(null)
+  const [projectUpgrading, setProjectUpgrading] = useState(false)
 
   async function handleRerun() {
     if (!project) return
@@ -166,6 +168,44 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
     })
   }
 
+  /** Patch a single frame's image after a style upgrade. */
+  function handleUpgradeFrame(sceneNumber: number, frameNumber: number, newUrl: string) {
+    const patch = (f: StoryboardFrame) =>
+      f.frame_number === frameNumber ? { ...f, generated_image_url: newUrl } : f
+    setProject(prev => {
+      if (!prev) return prev
+      return { ...prev, scenes: prev.scenes.map(s =>
+        s.scene_number !== sceneNumber ? s : { ...s, frames: s.frames.map(patch) }
+      )}
+    })
+    setActiveScene(prev => {
+      if (!prev || prev.scene_number !== sceneNumber) return prev
+      return { ...prev, frames: prev.frames.map(patch) }
+    })
+  }
+
+  /** Upgrade every frame in every scene to a new render style. */
+  async function handleUpgradeProject(targetStyle: string) {
+    if (!project || projectUpgrading) return
+    setProjectUpgrading(true)
+    onNotify?.(`Upgrading entire project to ${targetStyle}…`, 'info')
+    let total = 0, succeeded = 0
+    for (const scene of project.scenes) {
+      try {
+        const result = await upgradeSceneStyle(scene.frames, scene, targetStyle, null)
+        for (const r of result.frames) {
+          if (r.generated_image_url) {
+            handleUpgradeFrame(scene.scene_number, r.frame_number, r.generated_image_url)
+            succeeded++
+          }
+        }
+        total += result.total
+      } catch { /* continue to next scene */ }
+    }
+    setProjectUpgrading(false)
+    onNotify?.(`Upgrade complete — ${succeeded}/${total} frames upgraded`, 'success')
+  }
+
   function handleToggleSelect(key: string) {
     setSelectedKeys((prev) => {
       const next = new Map(prev)
@@ -220,6 +260,14 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
         ))}
         <div className="ml-auto flex items-center gap-3 pb-1">
           {project && <BatchExportBar project={project} scenes={project.scenes} selectedKeys={selectedKeys} />}
+          {project && (
+            <UpgradeStyleMenu
+              currentStyle={project.render_style}
+              onSelect={handleUpgradeProject}
+              loading={projectUpgrading}
+              label="Upgrade Project ▾"
+            />
+          )}
           {project && (
             <button
               onClick={() => setRerunOpen(o => !o)}
@@ -396,11 +444,13 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
               <StoryboardCanvas
                   scene={displayScene}
                   renderStyleLabel={renderStyleLabel}
+                  projectRenderStyle={project?.render_style}
                   selectedKeys={selectedKeys}
                   onToggleSelect={handleToggleSelect}
                   onOpenPlayer={() => setViewMode('player')}
                   onReplaceImage={handleReplaceFrameImage}
                   onVisualActionUpdate={handleVisualActionUpdate}
+                  onUpgradeFrame={handleUpgradeFrame}
                 />
             )}
           </main>

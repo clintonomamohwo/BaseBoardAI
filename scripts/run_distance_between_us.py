@@ -23,7 +23,7 @@ Characters:  Emma Clarke (Toronto), Kai Tanaka (Tokyo), Lucas Ferreira (Toronto)
 Artifacts:   Shared Sketchbook, Sunrise Polaroid, Vintage Camera,
              Cherry Blossom Wish Ribbon, Boarding Pass, Compass Pendant
 Genre:       Contemporary Romance / Drama
-Render:      flat_color
+Render:      bw_sketch
 
 Usage:
     cd /path/to/BaseBoardAI/backend
@@ -63,7 +63,7 @@ import httpx
 # ---------------------------------------------------------------------------
 
 BASE_URL    = "http://localhost:8000"
-RENDER      = "flat_color"
+RENDER      = "bw_sketch"
 SCRIPT_PATH = pathlib.Path(__file__).parent / "the_distance_between_us.md"
 OUT_ROOT    = pathlib.Path(__file__).parent / "output" / "distance_between_us"
 

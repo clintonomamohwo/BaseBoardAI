@@ -416,3 +416,70 @@ export interface PipelineExecutionRequest {
   raw_world_notes: string
   raw_script_text: string
 }
+
+// ---------------------------------------------------------------------------
+// Scene Continuity QA — context-aware, storyboard-plan-driven
+// ---------------------------------------------------------------------------
+
+export interface FrameExpectedContext {
+  scene_number: number
+  frame_number: number
+  location_heading: string
+  time_of_day: string
+  environmental_type: string
+  characters_present: string[]
+  lighting_notes: string
+  mood: string | null
+  shot_type: string
+  generated_prompt: string
+}
+
+export type FrameQACategory =
+  | 'location' | 'time_of_day' | 'lighting' | 'characters'
+  | 'weather' | 'shot_type' | 'mood' | 'prompt_alignment'
+
+export interface FrameQAIssue {
+  category: FrameQACategory
+  severity: 'critical' | 'warning' | 'suggestion'
+  message: string
+  expected: string | null
+  detected: string | null
+  frame_number: number
+}
+
+export interface FrameQAResult {
+  scene_number: number
+  frame_number: number
+  passed: boolean
+  overall: number
+  issues: FrameQAIssue[]
+  continuity_group_id: string
+}
+
+export interface ContinuityGroup {
+  group_id: string
+  location_heading: string
+  time_of_day: string
+  frame_numbers: number[]
+  scene_number: number
+}
+
+export interface SceneContinuityReport {
+  scene_number: number
+  location_heading: string
+  total_frames: number
+  frames_passed: number
+  frames_failed: number
+  overall: number
+  continuity_groups: ContinuityGroup[]
+  frame_results: FrameQAResult[]
+  summary: string
+}
+
+export interface SceneQARequest {
+  scene_number: number
+  location_heading: string
+  time_of_day: string
+  environmental_type: string
+  frames: FrameExpectedContext[]
+}

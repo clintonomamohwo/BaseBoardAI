@@ -43,7 +43,14 @@ import sys
 import time
 import urllib.request
 
-import httpx
+# Guard: must be run with the backend venv Python, not the system Python.
+try:
+    import httpx
+except ModuleNotFoundError:
+    _script = pathlib.Path(__file__).name
+    print(f"\n[ERROR] 'httpx' not found — run with the venv Python:\n")
+    print(f"  cd backend && .venv/bin/python3 ../scripts/{_script}\n")
+    sys.exit(1)
 
 # ---------------------------------------------------------------------------
 # Config

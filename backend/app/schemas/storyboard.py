@@ -299,6 +299,16 @@ class CharacterProfileBase(BaseModel):
         None, description="Which variant is currently active for generation"
     )
 
+    # ── Narrative role & relationships ────────────────────────────────────────
+    story_role: str | None = Field(
+        None,
+        description="Narrative role: Protagonist | Antagonist | Supporting | Other"
+    )
+    relationships: list[dict] = Field(
+        default_factory=list,
+        description="List of relationship objects to other characters (serialised CharacterRelationship)"
+    )
+
 class EnvironmentProfileBase(BaseModel):
     location_name: str = Field(description="e.g., GYM, ALLEYWAY, OFFICE")
     spatial_textures: str = Field(description="Physical properties: industrial concrete, exposed brick")
@@ -532,6 +542,25 @@ class StoryboardProjectResponse(BaseModel):
     truncated: bool = Field(False, description="True if the storyboard was cut off by the model's token limit")
 
 
+class ProjectSummary(BaseModel):
+    """
+    Lightweight project card data for the Project Library list view.
+    Contains no frame-level data — just what the card UI needs.
+    Fetched by GET /storyboard/summaries (fast, no images loaded).
+    """
+    db_id: int
+    project_title: str
+    global_aesthetic: str
+    render_style: str
+    scene_count: int
+    frame_count: int
+    character_count: int
+    color_palettes: list[list[str]] = Field(
+        default_factory=list,
+        description="First color_palette list from each scene (for accent strips)"
+    )
+
+
 # --- STANDALONE RUNNER PAYLOADS ---
 
 class SingleCharacterRequest(BaseModel):
@@ -568,6 +597,70 @@ class ReforgeCompositionRequest(BaseModel):
     scene: ScriptSceneBase
     render_style: Literal['bw_sketch', 'bw_detailed', 'flat_color', 'full_shaded'] = 'bw_sketch'
     reference_style_image: str | None = None
+
+
+class UpgradeStyleRequest(BaseModel):
+    """
+    Payload for POST /storyboard/frame/upgrade-style.
+
+    Upgrades a single frame to a new render style while preserving
+    composition, characters, environment, and layout.
+
+    The current generated_image is passed as img2img source so the model
+    uses it as a composition anchor — only the visual style changes.
+    """
+    frame: StoryboardFrameBase
+    scene: ScriptSceneBase
+    target_style: str = Field(
+        description=(
+            "Target render style key, e.g. 'flat_color', 'concept_art', 'cinematic', 'anime_style'. "
+            "Any key present in STYLE_PREFIXES is valid."
+        )
+    )
+    source_image_b64: str | None = Field(
+        None,
+        description=(
+            "Base64 data URL of the current frame image used as composition reference. "
+            "If provided, img2img preserves framing while upgrading style. "
+            "If omitted, pure text-to-image is used."
+        )
+    )
+    canon_context: dict[str, Any] | None = Field(
+        None,
+        description="Project Canon — injected for character consistency constraints"
+    )
+
+
+class SceneUpgradeRequest(BaseModel):
+    """
+    Payload for POST /storyboard/scene/upgrade-style.
+
+    Upgrades every frame in a scene to a new render style concurrently.
+    Returns a list of UpgradeStyleResponse, one per frame.
+    """
+    frames: list[StoryboardFrameBase]
+    scene: ScriptSceneBase
+    target_style: str
+    source_images: dict[int, str] = Field(
+        default_factory=dict,
+        description="frame_number → base64 data URL of the current image (optional; used as img2img source)"
+    )
+    canon_context: dict[str, Any] | None = None
+
+
+class UpgradeStyleResponse(BaseModel):
+    """Response from POST /storyboard/frame/upgrade-style"""
+    frame_number: int
+    generated_image_url: str | None
+    target_style: str
+
+
+class SceneUpgradeResponse(BaseModel):
+    """Response from POST /storyboard/scene/upgrade-style"""
+    scene_number: int
+    frames: list[UpgradeStyleResponse]
+    total: int
+    succeeded: int
 
 
 class WorldBibleImportRequest(BaseModel):
@@ -811,6 +904,101 @@ class CKGUpdateIdentityRequest(BaseModel):
     identity: CharacterIdentity
     species: SpeciesProfile = Field(default_factory=lambda: SpeciesProfile())  # pyright: ignore[reportCallIssue]
     variants: list[CharacterVariant] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Frame / Scene Continuity QA schemas
+# ---------------------------------------------------------------------------
+
+class FrameExpectedContext(BaseModel):
+    """
+    The authoritative metadata for a single storyboard frame drawn from the
+    storyboard plan.  Passed by the frontend — never inferred.
+    """
+    scene_number: int
+    frame_number: int
+    location_heading: str = Field(
+        description="Canonical slugline from the scene, e.g. 'INT. TORONTO APARTMENT - NIGHT'"
+    )
+    time_of_day: str = Field(description="e.g. 'DAY', 'NIGHT', 'GOLDEN HOUR'")
+    environmental_type: str = Field("Interior", description="'Interior' or 'Exterior'")
+    characters_present: list[str] = Field(default_factory=list)
+    lighting_notes: str = Field("", description="Scene-level lighting descriptor")
+    mood: str | None = None
+    shot_type: str = Field("Wide Shot")
+    generated_prompt: str = Field(
+        description="The assembled image prompt that was sent to the generator"
+    )
+
+
+class FrameQAIssue(BaseModel):
+    """A single detected continuity or context violation."""
+    category: Literal[
+        "location", "time_of_day", "lighting", "characters",
+        "weather", "shot_type", "mood", "prompt_alignment"
+    ]
+    severity: Literal["critical", "warning", "suggestion"]
+    message: str = Field(description="Human-readable description of the issue")
+    expected: str | None = Field(None, description="What the storyboard says it should be")
+    detected: str | None = Field(None, description="What was found in the generated prompt")
+    frame_number: int
+
+
+class FrameQAResult(BaseModel):
+    """QA result for a single frame."""
+    scene_number: int
+    frame_number: int
+    passed: bool
+    overall: float = Field(description="0.0–1.0 confidence score")
+    issues: list[FrameQAIssue] = Field(default_factory=list)
+    continuity_group_id: str = Field(
+        description="e.g. 'S2_INT_TORONTO_APARTMENT_NIGHT' — groups frames that should match"
+    )
+
+
+class ContinuityGroup(BaseModel):
+    """
+    A run of consecutive frames sharing the same expected location + time_of_day.
+    QA only compares frames *within* a group — transitions between groups are
+    intentional and never flagged.
+    """
+    group_id: str
+    location_heading: str
+    time_of_day: str
+    frame_numbers: list[int]
+    scene_number: int
+
+
+class SceneContinuityReport(BaseModel):
+    """
+    Full continuity QA report for a scene (all frames).
+    Contains per-frame results and the continuity groups that were detected.
+    """
+    scene_number: int
+    location_heading: str
+    total_frames: int
+    frames_passed: int
+    frames_failed: int
+    overall: float
+    continuity_groups: list[ContinuityGroup]
+    frame_results: list[FrameQAResult]
+    summary: str = Field(description="One-sentence human-readable summary")
+
+
+class SceneQARequest(BaseModel):
+    """
+    Payload for POST /storyboard/scene/qa-continuity.
+
+    Sends the full set of frames for a scene (including their expected metadata
+    and generated prompts) and returns a SceneContinuityReport.
+    """
+    scene_number: int
+    location_heading: str
+    time_of_day: str
+    environmental_type: str = "Interior"
+    frames: list[FrameExpectedContext] = Field(
+        description="All frames in the scene, each carrying its expected context + generated prompt"
+    )
 
 
 # ---------------------------------------------------------------------------

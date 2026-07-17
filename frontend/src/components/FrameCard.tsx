@@ -1,8 +1,9 @@
 import { useRef, useState, useMemo } from 'react'
 import type { StoryboardFrame, StoryboardScene } from '../types/storyboard'
 import { downloadFramePng } from '../utils/exportFrames'
-import { regenerateVisualAction } from '../api/storyboard'
+import { regenerateVisualAction, upgradeFrameStyle } from '../api/storyboard'
 import GalleryLightbox from './GalleryLightbox'
+import UpgradeStyleMenu from './UpgradeStyleMenu'
 
 interface Props {
   frame: StoryboardFrame
@@ -17,11 +18,16 @@ interface Props {
   onReplaceImage?: (sceneNumber: number, frameNumber: number, dataUrl: string) => void
   /** Called when visual_action is updated so parent can patch project state */
   onVisualActionUpdate?: (sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) => void
+  /** Called when a style upgrade completes for this frame */
+  onUpgradeFrame?: (sceneNumber: number, frameNumber: number, newUrl: string) => void
+  /** Current project render style — shown as ✓ in the upgrade menu */
+  projectRenderStyle?: string
 }
 
 export default function FrameCard({
   frame, scene, isSelected, isFocused = false, frameKey,
   onToggleSelect, onReplaceImage, onVisualActionUpdate,
+  onUpgradeFrame, projectRenderStyle,
 }: Props) {
   const key = frameKey
   const frameId = `${String(scene.scene_number).padStart(2, '0')}${String(frame.frame_number).padStart(1, '0')}`
@@ -36,6 +42,24 @@ export default function FrameCard({
   // Regenerate visual action state
   const [regenLoading, setRegenLoading] = useState(false)
   const [regenError, setRegenError] = useState<string | null>(null)
+  // Style upgrade state
+  const [upgradeLoading, setUpgradeLoading] = useState(false)
+
+  async function handleUpgradeStyle(targetStyle: string) {
+    if (upgradeLoading) return
+    setUpgradeLoading(true)
+    try {
+      const result = await upgradeFrameStyle(
+        frame, scene, targetStyle,
+        frame.generated_image_url ?? null,
+        null,
+      )
+      if (result.generated_image_url && onUpgradeFrame) {
+        onUpgradeFrame(scene.scene_number, frame.frame_number, result.generated_image_url)
+      }
+    } catch { /* leave existing image */ }
+    finally { setUpgradeLoading(false) }
+  }
 
   // Build gallery from all rendered frames in the scene
   const galleryItems = useMemo(() =>
@@ -240,6 +264,16 @@ export default function FrameCard({
               style={{ background: 'rgba(0,0,0,0.6)', color: 'var(--gold)', border: 'none', cursor: 'pointer' }}
               title={galleryItems.length > 1 ? `View all ${galleryItems.length} frames` : 'View full size'}
             >⤢</button>
+          )}
+
+          {/* Upgrade style — only shown when frame has an image */}
+          {frame.generated_image_url && onUpgradeFrame && (
+            <UpgradeStyleMenu
+              currentStyle={projectRenderStyle}
+              onSelect={handleUpgradeStyle}
+              loading={upgradeLoading}
+              compact
+            />
           )}
         </div>
 

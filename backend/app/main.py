@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.session import init_db
 from app.routers.storyboard import router as storyboard_router
+from app.routers.standalone import router as standalone_router
 
 
 @asynccontextmanager
@@ -49,6 +50,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 app.include_router(storyboard_router)
+app.include_router(standalone_router)
 
 
 # ---------------------------------------------------------------------------

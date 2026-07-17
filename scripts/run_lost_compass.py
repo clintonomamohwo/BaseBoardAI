@@ -8,10 +8,9 @@ Runs The Lost Compass through the full BaseBoard pipeline:
   3. character-package/generate-full-pack — turnaround_360 (8 views),
      premium_poses (8), material_closeups (5)               → 21 images/char
 
-Total: 55 images per character × 4 characters = 220 character reference images.
-Expected output: 4 characters, 7 scenes, ~21 frames (3 per scene).
-Script: 7 scenes (dense, hackathon-optimised version).
-Render style: flat_color throughout.
+Total: 55 images per character × 4 characters = 330 character reference images.
+Script: 7 scenes (dense, hackathon-optimized version).
+Render style: full_shaded throughout.
 
 Usage:
     cd /path/to/BaseBoardAI/backend
@@ -50,7 +49,7 @@ import httpx
 # ---------------------------------------------------------------------------
 
 BASE_URL    = "http://localhost:8000"
-RENDER      = "flat_color"
+RENDER      = "full_shaded"
 SCRIPT_PATH = pathlib.Path(__file__).parent / "the_lost_compass.md"
 OUT_ROOT    = pathlib.Path(__file__).parent / "output" / "lost_compass"
 
@@ -80,10 +79,24 @@ Profession: Archaeologist. Personality: Calm, analytical, quietly determined, em
 Artifact: Ancient Atlas Key. Arc: learns to trust others.
 Sleek black fur, field archaeologist gear, silver ear studs.
 
+Li Wei — Fox Humanoid. Origin: Neo Beijing. Faction: Inventors Guild.
+Profession: Quantum Engineer. Personality: Precise, logical, emotionally reserved, fiercely loyal once committed.
+Artifact: Mechanical Cipher Cube. Arc: learns emotion is as valuable as logic.
+Orange-red fox fur, compact build, fingers perpetually stained with quantum fluid.
+
+Aarav Patel — Langur Humanoid. Origin: Neo Jaipur. Faction: Independent Explorer.
+Profession: Holographic Journalist. Personality: Funny, adventurous, emotionally intelligent.
+Artifact: Memory Lens (mounted at temple). Arc: learns responsibility.
+Grey-white fur, lanky build, colourful patterned shirts, Memory Lens always on.
+
 Bella Alvarez — Deer Humanoid. Origin: Neo Mexico City. Faction: Medical Corps.
 Profession: Combat Medic. Personality: Caring, courageous, observant.
 Artifact: Life Crystal (worn around neck). Arc: learns courage. Love interest: Theo.
 Warm brown fur, graceful build, combat medic uniform, Life Crystal glowing gold.
+
+Seraphis — King Cobra Humanoid. Leader of The Obsidian Circle. Antagonist.
+Calculating, ruthless, obsessed with controlling all knowledge.
+Enormous build, hood fanned, obsidian armor, scaled green-black skin.
 """
 
 RAW_WORLD_NOTES = """
@@ -96,8 +109,14 @@ living towers draped in engineered vines. Solar lattices power everything.
 Neo Nairobi, Kenya: City built vertically into cliff faces. Glass corridors connect ancient stone
 foundations to glass-and-steel towers. Below: excavation zones where Keepers sift geological strata.
 
+Neo Beijing, China: Inventors Guild district — labyrinth of exposed machinery, quantum relay towers,
+holo-markets. Neon glyphs flicker in Mandarin and ancient Cantonese script.
+
+Neo Jaipur, India: Pink sandstone facades clad in quantum display panels. Holographic mandalas orbit
+the Jantar Mantar observatory tower. Street artists project light-paintings into the clouds.
+
 Neo New York, USA: Hover-racing circuit in the upper atmosphere. The Manhattan Skyspire punches
-through cloud cover. Times Square has four vertical screens playing races on loop.
+through cloud cover. Times Square has six vertical screens playing races on loop.
 
 Neo Mexico City, Mexico: Medical Corps Megahospital floating on anti-grav supports above ancient
 Aztec canals converted into trauma response channels.
@@ -117,14 +136,10 @@ holographic shrine interfaces. Engineered silence rings the district.
 Factions:
 - The Cartographers: protect knowledge
 - The Keepers: protect history
+- Inventors Guild: protect ancient technology
 - The Obsidian Circle: seek absolute control through knowledge
 
-Antagonist: Seraphis — King Cobra Humanoid. Leader of The Obsidian Circle.
-Calculating, ruthless, obsessed with controlling all knowledge.
-Enormous build, hood fanned, obsidian armor, scaled green-black skin.
-Appears in Scene 5 as the primary villain. Not a playable character.
-
-The Compass of Unity only awakens when four worthy guardians appear.
+The Compass of Unity only awakens when six worthy guardians appear.
 The Vault of Humanity contains the complete history of the human species — not gold, but knowledge.
 Engineering, medicine, history, art, astronomy, navigation, culture — all of it, for everyone.
 """
@@ -165,13 +180,12 @@ def _health_check(client: httpx.Client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Stage 1 — LLM extraction (characters + world + storyboard plan, no images)
+# Stage 1 — Streaming pipeline
 # ---------------------------------------------------------------------------
 
-def run_pipeline(client: httpx.Client, skip_images: bool = False) -> dict:
-    label = "STAGE 1 — LLM EXTRACTION (skip_images=True)" if skip_images else "STAGE 1 — FORGE PIPELINE (flat_color, balanced)"
+def run_pipeline(client: httpx.Client) -> dict:
     print("=" * 60)
-    print(label)
+    print("STAGE 1 — FORGE PIPELINE (flat_color, balanced)")
     print("=" * 60)
 
     payload = {
@@ -182,7 +196,6 @@ def run_pipeline(client: httpx.Client, skip_images: bool = False) -> dict:
         "raw_character_notes": RAW_CHARACTER_NOTES,
         "raw_world_notes": RAW_WORLD_NOTES,
         "raw_script_text": SCRIPT_PATH.read_text(),
-        "skip_images": skip_images,
     }
 
     project: dict = {}
@@ -362,121 +375,23 @@ def run_character_packages(client: httpx.Client, project: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Stage 3 — Storyboard images (reforge all frames on saved project)
-# ---------------------------------------------------------------------------
-
-def run_storyboard_images(client: httpx.Client, project: dict) -> None:
-    """
-    Trigger image generation for every frame in the already-saved project.
-    Calls reforge-composition per frame then immediately persists the result
-    to the DB via PATCH /frame/save-image so the app can display it.
-    """
-    db_id = project.get("db_id")
-    scenes = project.get("scenes", [])
-    total_frames = sum(len(s.get("frames", [])) for s in scenes)
-
-    print("\n" + "=" * 60)
-    print("STAGE 3 — STORYBOARD IMAGES")
-    print(f"  {total_frames} frames  ·  project db_id={db_id}")
-    print("=" * 60)
-
-    if not scenes:
-        print("  No scenes found — skipping.")
-        return
-
-    done = 0
-    for scene in scenes:
-        for frame in scene.get("frames", []):
-            try:
-                resp = client.post(
-                    f"{BASE_URL}/storyboard/frame/reforge-composition",
-                    json={
-                        "frame": frame,
-                        "scene": scene,
-                        "render_style": RENDER,
-                    },
-                    timeout=120,
-                )
-                resp.raise_for_status()
-                result = resp.json()
-                new_url = result.get("generated_image_url")
-                # Patch the frame's image URL in the local project dict
-                frame["generated_image_url"] = new_url
-
-                # Persist the image URL back to the DB so the app can display it
-                client.patch(
-                    f"{BASE_URL}/storyboard/frame/save-image",
-                    json={
-                        "project_id": db_id,
-                        "scene_number": scene.get("scene_number"),
-                        "frame_number": frame.get("frame_number"),
-                        "generated_image_url": new_url,
-                    },
-                    timeout=30,
-                )
-
-                done += 1
-                bar = "█" * done + "░" * (total_frames - done)
-                print(f"\r  [{bar}] {done}/{total_frames}", end="", flush=True)
-            except Exception as e:
-                print(f"\n  ✗ Frame {frame.get('frame_number')} scene {scene.get('scene_number')}: {e}")
-
-    print(f"\n  ✓ {done}/{total_frames} frames generated")
-
-    # Save updated project JSON with image URLs
-    out = OUT_ROOT / "storyboard"
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "project.json").write_text(json.dumps(project, indent=2))
-    print(f"    Saved → {out / 'project.json'}")
-
-
-# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    import argparse
-    parser = argparse.ArgumentParser(description="The Lost Compass — BaseBoard pipeline")
-    parser.add_argument(
-        "--stage3-only",
-        action="store_true",
-        help="Skip Stages 1 & 2 — load saved project.json and regenerate storyboard images only",
-    )
-    args = parser.parse_args()
-
     client = httpx.Client(timeout=900)
     _health_check(client)
 
-    if args.stage3_only:
-        saved_json = OUT_ROOT / "storyboard" / "project.json"
-        if not saved_json.exists():
-            print(f"✗ No saved project found at {saved_json}")
-            print("  Run without --stage3-only first to generate the project.")
-            sys.exit(1)
-        project = json.loads(saved_json.read_text())
-        frames = sum(len(s.get("frames", [])) for s in project.get("scenes", []))
-        print(f"Loaded saved project: {len(project.get('characters', []))} chars, "
-              f"{len(project.get('scenes', []))} scenes, {frames} frames\n")
-        run_storyboard_images(client, project)
-    else:
-        # ── Stage 1: LLM extraction only (no images yet) ──────────────────────
-        project = run_pipeline(client, skip_images=True)
-
-        # ── Stage 2: Full character packages ──────────────────────────────────
-        # Characters are generated first so Visual DNA tokens can be extracted
-        # and injected into storyboard prompts for cross-provider consistency.
-        run_character_packages(client, project)
-
-        # ── Stage 3: Storyboard images (after character packages are ready) ───
-        run_storyboard_images(client, project)
+    project = run_pipeline(client)
+    run_character_packages(client, project)
 
     client.close()
 
     total_chars = len(project.get("characters", []))
     print("=" * 60)
     print("DONE")
-    print(f"  Characters  → {OUT_ROOT / 'characters'}/  ({total_chars} dirs, ~55 images each)")
     print(f"  Storyboard  → {OUT_ROOT / 'storyboard' / 'project.json'}")
+    print(f"  Characters  → {OUT_ROOT / 'characters'}/  ({total_chars} dirs, ~55 images each)")
     print("=" * 60)
 
 

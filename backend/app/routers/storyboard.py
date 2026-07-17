@@ -39,10 +39,15 @@ from app.schemas.storyboard import (
     ImportAssetResponse,
     PipelineExecutionRequest,
     ProjectCanon,
+    ProjectSummary,
     QAScoreResult,
     RegenerateVisualActionRequest,
     RegenerateVisualActionResponse,
     ReforgeCompositionRequest,
+    SceneContinuityReport,
+    SceneQARequest,
+    SceneUpgradeRequest,
+    SceneUpgradeResponse,
     ScriptSceneBase,
     SingleCharacterRequest,
     SingleEnvironmentRequest,
@@ -51,12 +56,15 @@ from app.schemas.storyboard import (
     StoryboardFrameBase,
     StoryboardProjectCreate,
     StoryboardProjectResponse,
+    UpgradeStyleRequest,
+    UpgradeStyleResponse,
     WorldBibleImportRequest,
     WorldBibleImportResult,
 )
 from app.core.identity_system import (
     build_identity_prompt,
     compute_qa_score,
+    compute_scene_continuity,
     get_species,
     SPECIES_REGISTRY,
 )
@@ -1046,6 +1054,122 @@ def reforge_composition(payload: ReforgeCompositionRequest) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Render Upgrade — upgrade a frame or scene to a new visual style
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/frame/upgrade-style",
+    response_model=UpgradeStyleResponse,
+    summary="Upgrade a frame's render style while preserving composition",
+)
+def upgrade_frame_style(payload: UpgradeStyleRequest) -> UpgradeStyleResponse:
+    """
+    Upgrades a single storyboard frame to a new render style.
+
+    The current frame image (source_image_b64) is passed as an img2img reference
+    so the composition, character poses, camera angle, and environment are
+    preserved.  Only the visual style changes.
+
+    target_style can be any key in STYLE_PREFIXES:
+      Storyboard: bw_sketch, bw_detailed, pencil_rough, ink_clean, marker_grey
+      Color:      flat_color, flat_animation, cell_shaded, comic_book,
+                  anime_style, pixar_style, ghibli_style
+      Concept:    concept_art, digital_painting, watercolor, oil_painting
+      Cinematic:  full_shaded, cinematic, hyperrealistic, noir, neon_cyberpunk
+    """
+    from app.core.prompt_builder import STYLE_PREFIXES
+    if payload.target_style not in STYLE_PREFIXES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown target_style '{payload.target_style}'. "
+                   f"Valid keys: {sorted(STYLE_PREFIXES)}",
+        )
+    new_image_url = generate_frame_image(
+        payload.frame,
+        payload.scene,
+        reference_style_image=payload.source_image_b64,
+        render_style=payload.target_style,
+        canon_context=payload.canon_context,
+    )
+    return UpgradeStyleResponse(
+        frame_number=payload.frame.frame_number,
+        generated_image_url=new_image_url,
+        target_style=payload.target_style,
+    )
+
+
+@router.post(
+    "/scene/upgrade-style",
+    response_model=SceneUpgradeResponse,
+    summary="Upgrade every frame in a scene to a new render style (concurrent)",
+)
+def upgrade_scene_style(payload: SceneUpgradeRequest) -> SceneUpgradeResponse:
+    """
+    Upgrades every frame in a scene to a new render style concurrently.
+
+    Each frame's current image (payload.source_images[frame_number]) is used
+    as an img2img source to preserve composition.  Frames missing from
+    source_images get a pure text-to-image upgrade instead.
+
+    Returns one UpgradeStyleResponse per frame, including failed frames
+    (generated_image_url=None) so the caller can display partial results
+    immediately and retry failures individually.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.core.prompt_builder import STYLE_PREFIXES
+
+    if payload.target_style not in STYLE_PREFIXES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown target_style '{payload.target_style}'. "
+                   f"Valid keys: {sorted(STYLE_PREFIXES)}",
+        )
+
+    def _upgrade_one(frame: StoryboardFrameBase) -> UpgradeStyleResponse:
+        src = payload.source_images.get(frame.frame_number)
+        url = generate_frame_image(
+            frame,
+            payload.scene,
+            reference_style_image=src,
+            render_style=payload.target_style,
+            canon_context=payload.canon_context,
+        )
+        return UpgradeStyleResponse(
+            frame_number=frame.frame_number,
+            generated_image_url=url,
+            target_style=payload.target_style,
+        )
+
+    results: dict[int, UpgradeStyleResponse] = {}
+    max_workers = min(len(payload.frames), 6)   # cap concurrency
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_upgrade_one, f): f.frame_number for f in payload.frames}
+        for future in as_completed(futures):
+            fn = futures[future]
+            try:
+                results[fn] = future.result()
+            except Exception as exc:
+                logger.warning("Upgrade failed for frame %s: %s", fn, exc)
+                results[fn] = UpgradeStyleResponse(
+                    frame_number=fn,
+                    generated_image_url=None,
+                    target_style=payload.target_style,
+                )
+
+    # Return in original frame order
+    ordered = [results[f.frame_number] for f in payload.frames if f.frame_number in results]
+    succeeded = sum(1 for r in ordered if r.generated_image_url is not None)
+
+    return SceneUpgradeResponse(
+        scene_number=payload.scene.scene_number,
+        frames=ordered,
+        total=len(ordered),
+        succeeded=succeeded,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Frame image persist — write generated_image_url back to DB
 # ---------------------------------------------------------------------------
 
@@ -1380,6 +1504,41 @@ def character_qa_score(payload: CharacterQARequest) -> QAScoreResult:
 
 
 @router.post(
+    "/scene/qa-continuity",
+    response_model=SceneContinuityReport,
+    summary="Run context-aware continuity QA on all frames in a scene",
+)
+def scene_qa_continuity(payload: SceneQARequest) -> SceneContinuityReport:
+    """
+    Context-Aware Continuity QA Engine.
+
+    Validates every frame in a scene against the *expected* storyboard context —
+    not against the previous frame.  Frames are grouped into ContinuityGroups
+    (runs of consecutive frames sharing the same location + time-of-day).
+    Transitions between groups are intentional and never flagged.
+
+    Per-frame checks:
+      - Location: generated prompt reflects the expected location slugline
+      - Time-of-day: prompt reflects expected lighting phase (day / night / golden hour)
+      - Characters: expected characters_present appear in the prompt
+      - Lighting: scene lighting notes are represented in the prompt
+      - Shot type: expected shot type keywords present in the prompt
+
+    Returns a SceneContinuityReport with:
+      - Per-frame pass/fail + issue list
+      - Continuity groups
+      - Scene-level overall score + summary
+    """
+    return compute_scene_continuity(
+        scene_number=payload.scene_number,
+        location_heading=payload.location_heading,
+        time_of_day=payload.time_of_day,
+        environmental_type=payload.environmental_type,
+        frames=payload.frames,
+    )
+
+
+@router.post(
     "/character-package/import-asset",
     response_model=ImportAssetResponse,
     summary="Import a user-uploaded reference image into a character's identity",
@@ -1560,6 +1719,51 @@ def create_storyboard_project(payload: StoryboardProjectCreate, db: DbSession) -
     db.add(project)
     db.commit()
     return _orm_to_response(_load_project_or_404(project.db_id, db))
+
+@router.get("/summaries", response_model=list[ProjectSummary])
+def list_project_summaries(db: DbSession) -> list[ProjectSummary]:
+    """
+    Fast library list — returns only card-level metadata for every project.
+    No frame data, no character JSON blobs, no images are loaded.
+    Suitable for the Project Library page where only counts + palette are needed.
+    """
+    from sqlalchemy import func
+    # Load just the project rows + scene rows (color_palette only); no frames
+    projects = (
+        db.query(StoryboardProjectORM)
+        .options(
+            joinedload(StoryboardProjectORM.characters).load_only(  # type: ignore[attr-defined]
+                CharacterProfileORM.id
+            ),
+            joinedload(StoryboardProjectORM.scenes).load_only(  # type: ignore[attr-defined]
+                ScriptSceneORM.id,
+                ScriptSceneORM.color_palette,
+            ),
+        )
+        .all()
+    )
+
+    summaries: list[ProjectSummary] = []
+    for p in projects:
+        # Frame count via a cheap aggregate — avoids loading frame rows
+        frame_count: int = (
+            db.query(func.count(StoryboardFrameORM.id))
+            .join(ScriptSceneORM, StoryboardFrameORM.scene_id == ScriptSceneORM.id)
+            .filter(ScriptSceneORM.project_id == p.db_id)
+            .scalar() or 0
+        )
+        summaries.append(ProjectSummary(
+            db_id=p.db_id,
+            project_title=p.project_title,
+            global_aesthetic=p.global_aesthetic,
+            render_style=p.render_style,
+            scene_count=len(p.scenes),
+            frame_count=frame_count,
+            character_count=len(p.characters),
+            color_palettes=[s.color_palette for s in p.scenes if s.color_palette],
+        ))
+    return summaries
+
 
 @router.get("/", response_model=list[StoryboardProjectResponse])
 def list_storyboard_projects(db: DbSession) -> list[StoryboardProjectResponse]:

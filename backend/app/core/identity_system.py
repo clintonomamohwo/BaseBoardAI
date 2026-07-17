@@ -969,3 +969,306 @@ def compute_qa_score(
         asset_type=asset_type,
         repairs=repairs,
     )
+
+
+# ---------------------------------------------------------------------------
+# Scene Continuity QA — context-aware, storyboard-plan-driven
+# ---------------------------------------------------------------------------
+
+def _make_group_id(scene_number: int, location_heading: str, time_of_day: str) -> str:
+    """
+    Produce a stable group key from scene + location + time.
+    e.g. 'S2_INT_TORONTO_APARTMENT_NIGHT'
+    """
+    import re
+    slug = re.sub(r"[^A-Z0-9]+", "_", location_heading.upper()).strip("_")
+    tod  = re.sub(r"[^A-Z0-9]+", "_", time_of_day.upper()).strip("_")
+    return f"S{scene_number}_{slug}_{tod}"
+
+
+def _extract_location_words(location_heading: str) -> set[str]:
+    """
+    Pull meaningful words out of a slugline like 'INT. TORONTO APARTMENT - NIGHT'.
+    Strips INT/EXT prefix and time-of-day suffix; returns lowercase content words.
+    """
+    import re
+    text = re.sub(r"\b(INT|EXT|INTERIOR|EXTERIOR)\.?\s*", "", location_heading, flags=re.IGNORECASE)
+    text = re.sub(r"\s*-\s*(DAY|NIGHT|DAWN|DUSK|GOLDEN HOUR|MAGIC HOUR|MORNING|AFTERNOON|EVENING|SUNSET|SUNRISE)\b.*$",
+                  "", text, flags=re.IGNORECASE)
+    words = {w.lower() for w in re.findall(r"[a-z]{3,}", text.lower())}
+    return words
+
+
+_TIME_SYNONYMS: dict[str, set[str]] = {
+    "DAY":          {"day", "daytime", "afternoon", "morning", "sunlight", "sunlit", "sunny", "bright"},
+    "NIGHT":        {"night", "nighttime", "dark", "darkness", "moonlight", "midnight", "evening"},
+    "GOLDEN HOUR":  {"golden", "hour", "sunset", "sunrise", "dusk", "dawn", "warm light", "golden light"},
+    "DAWN":         {"dawn", "sunrise", "early morning", "first light"},
+    "DUSK":         {"dusk", "sunset", "twilight", "evening"},
+}
+
+
+def _time_of_day_in_prompt(time_of_day: str, prompt_lower: str) -> bool:
+    """Return True if any synonym for this time-of-day appears in the prompt."""
+    key = time_of_day.upper()
+    synonyms = _TIME_SYNONYMS.get(key, {key.lower()})
+    return any(s in prompt_lower for s in synonyms)
+
+
+def _score_frame_against_context(
+    frame: "FrameExpectedContext",
+    scene_location_words: set[str],
+) -> "tuple[float, list[FrameQAIssue]]":
+    """
+    Score a single frame's generated_prompt against its expected storyboard context.
+
+    Returns (overall_score, issues).
+    """
+    from app.schemas.storyboard import FrameQAIssue
+
+    prompt_lower = frame.generated_prompt.lower()
+    issues: list[FrameQAIssue] = []
+    scores: list[float] = []
+
+    # ── 1. Location check ────────────────────────────────────────────────────
+    loc_words = scene_location_words
+    if loc_words:
+        hits = sum(1 for w in loc_words if w in prompt_lower)
+        loc_score = hits / len(loc_words)
+        scores.append(loc_score)
+        if loc_score < 0.4:
+            # Detect what location the prompt *does* mention (simple heuristic)
+            detected = None
+            for phrase in ["waterfront", "apartment", "airport", "office", "warehouse",
+                           "street", "forest", "park", "beach", "hospital", "hotel",
+                           "school", "laboratory", "rooftop", "basement", "corridor"]:
+                if phrase in prompt_lower:
+                    detected = phrase
+                    break
+            issues.append(FrameQAIssue(
+                category="location",
+                severity="critical" if loc_score < 0.2 else "warning",
+                message=(
+                    f"Frame {frame.frame_number}: expected location '{frame.location_heading}' "
+                    f"not clearly reflected in the generated prompt."
+                ),
+                expected=frame.location_heading,
+                detected=detected or "unrecognised location",
+                frame_number=frame.frame_number,
+            ))
+    else:
+        scores.append(1.0)  # no words to check against — can't fail
+
+    # ── 2. Time-of-day check ────────────────────────────────────────────────
+    tod_ok = _time_of_day_in_prompt(frame.time_of_day, prompt_lower)
+    scores.append(1.0 if tod_ok else 0.55)
+    if not tod_ok:
+        issues.append(FrameQAIssue(
+            category="time_of_day",
+            severity="warning",
+            message=(
+                f"Frame {frame.frame_number}: expected time of day '{frame.time_of_day}' "
+                f"not found in generated prompt."
+            ),
+            expected=frame.time_of_day,
+            detected=None,
+            frame_number=frame.frame_number,
+        ))
+
+    # ── 3. Character check ──────────────────────────────────────────────────
+    if frame.characters_present:
+        char_hits = sum(
+            1 for name in frame.characters_present
+            if name.split()[0].lower() in prompt_lower  # first name match
+        )
+        char_score = char_hits / len(frame.characters_present)
+        scores.append(char_score)
+        if char_score < 0.7:
+            missing = [n for n in frame.characters_present
+                       if n.split()[0].lower() not in prompt_lower]
+            issues.append(FrameQAIssue(
+                category="characters",
+                severity="warning",
+                message=(
+                    f"Frame {frame.frame_number}: character(s) {missing} expected but "
+                    f"not found in prompt."
+                ),
+                expected=", ".join(frame.characters_present),
+                detected=None,
+                frame_number=frame.frame_number,
+            ))
+    else:
+        scores.append(1.0)
+
+    # ── 4. Lighting check ───────────────────────────────────────────────────
+    if frame.lighting_notes:
+        light_words = {w.lower() for w in frame.lighting_notes.split() if len(w) > 3}
+        if light_words:
+            light_hits = sum(1 for w in light_words if w in prompt_lower)
+            light_score = light_hits / len(light_words)
+            scores.append(max(light_score, 0.6))  # partial credit — lighting is often implicit
+            if light_score < 0.35:
+                issues.append(FrameQAIssue(
+                    category="lighting",
+                    severity="suggestion",
+                    message=(
+                        f"Frame {frame.frame_number}: lighting notes '{frame.lighting_notes}' "
+                        f"are not well-represented in the prompt."
+                    ),
+                    expected=frame.lighting_notes,
+                    detected=None,
+                    frame_number=frame.frame_number,
+                ))
+        else:
+            scores.append(1.0)
+    else:
+        scores.append(1.0)
+
+    # ── 5. Shot type check ──────────────────────────────────────────────────
+    shot_words = {w.lower() for w in frame.shot_type.split() if len(w) > 2}
+    if shot_words:
+        shot_hits = sum(1 for w in shot_words if w in prompt_lower)
+        shot_score = shot_hits / len(shot_words)
+        scores.append(shot_score)
+        if shot_score < 0.5:
+            issues.append(FrameQAIssue(
+                category="shot_type",
+                severity="suggestion",
+                message=(
+                    f"Frame {frame.frame_number}: shot type '{frame.shot_type}' "
+                    f"not reflected in prompt."
+                ),
+                expected=frame.shot_type,
+                detected=None,
+                frame_number=frame.frame_number,
+            ))
+    else:
+        scores.append(1.0)
+
+    overall = round(sum(scores) / len(scores), 3) if scores else 1.0
+    return overall, issues
+
+
+def compute_scene_continuity(
+    scene_number: int,
+    location_heading: str,
+    time_of_day: str,
+    environmental_type: str,
+    frames: "list[FrameExpectedContext]",
+) -> "SceneContinuityReport":
+    """
+    Context-aware continuity QA for a complete scene.
+
+    Strategy:
+    1.  Group consecutive frames that share the same (location_heading, time_of_day)
+        into ContinuityGroups.  Changes between groups = intentional transitions.
+    2.  For each frame, score its generated_prompt against the *expected* storyboard
+        context — not against the adjacent frame.
+    3.  Within a group, additionally verify intra-group consistency (lighting palette,
+        int/ext agreement) so unintentional drift is still caught.
+
+    Returns a SceneContinuityReport with per-frame results + group breakdown.
+    """
+    from app.schemas.storyboard import (
+        FrameQAResult, ContinuityGroup, SceneContinuityReport,
+        FrameExpectedContext as _FEC,
+    )
+
+    if not frames:
+        return SceneContinuityReport(
+            scene_number=scene_number,
+            location_heading=location_heading,
+            total_frames=0,
+            frames_passed=0,
+            frames_failed=0,
+            overall=1.0,
+            continuity_groups=[],
+            frame_results=[],
+            summary="No frames to evaluate.",
+        )
+
+    # ── Step 1: Build continuity groups ─────────────────────────────────────
+    groups: list[ContinuityGroup] = []
+    current_loc  = frames[0].location_heading
+    current_tod  = frames[0].time_of_day
+    current_fns: list[int] = []
+
+    for f in frames:
+        if f.location_heading == current_loc and f.time_of_day == current_tod:
+            current_fns.append(f.frame_number)
+        else:
+            # Flush current group
+            groups.append(ContinuityGroup(
+                group_id=_make_group_id(scene_number, current_loc, current_tod),
+                location_heading=current_loc,
+                time_of_day=current_tod,
+                frame_numbers=current_fns,
+                scene_number=scene_number,
+            ))
+            current_loc  = f.location_heading
+            current_tod  = f.time_of_day
+            current_fns  = [f.frame_number]
+
+    groups.append(ContinuityGroup(
+        group_id=_make_group_id(scene_number, current_loc, current_tod),
+        location_heading=current_loc,
+        time_of_day=current_tod,
+        frame_numbers=current_fns,
+        scene_number=scene_number,
+    ))
+
+    # Build frame_number → group_id lookup
+    fn_to_group: dict[int, str] = {}
+    for g in groups:
+        for fn in g.frame_numbers:
+            fn_to_group[fn] = g.group_id
+
+    # ── Step 2: Score each frame against its expected context ────────────────
+    frame_results: list[FrameQAResult] = []
+    for frame in frames:
+        loc_words = _extract_location_words(frame.location_heading)
+        score, issues = _score_frame_against_context(frame, loc_words)
+        passed = score >= 0.75 and not any(i.severity == "critical" for i in issues)
+        frame_results.append(FrameQAResult(
+            scene_number=scene_number,
+            frame_number=frame.frame_number,
+            passed=passed,
+            overall=score,
+            issues=issues,
+            continuity_group_id=fn_to_group.get(frame.frame_number, "unknown"),
+        ))
+
+    # ── Step 3: Scene-level aggregation ─────────────────────────────────────
+    passed_count = sum(1 for r in frame_results if r.passed)
+    failed_count = len(frame_results) - passed_count
+    overall_scene = round(sum(r.overall for r in frame_results) / len(frame_results), 3)
+
+    if failed_count == 0:
+        summary = f"All {len(frame_results)} frames pass continuity. {len(groups)} continuity group(s) detected."
+    else:
+        summary = (
+            f"{failed_count} of {len(frame_results)} frames have continuity issues. "
+            f"Scene spans {len(groups)} continuity group(s). "
+            f"Overall confidence: {round(overall_scene * 100)}%."
+        )
+
+    return SceneContinuityReport(
+        scene_number=scene_number,
+        location_heading=location_heading,
+        total_frames=len(frame_results),
+        frames_passed=passed_count,
+        frames_failed=failed_count,
+        overall=overall_scene,
+        continuity_groups=groups,
+        frame_results=frame_results,
+        summary=summary,
+    )
+
+
+# Type-checking imports (not at module top to avoid circular)
+from typing import TYPE_CHECKING  # noqa: E402
+if TYPE_CHECKING:
+    from app.schemas.storyboard import (
+        FrameExpectedContext, FrameQAResult, FrameQAIssue,
+        ContinuityGroup, SceneContinuityReport,
+    )

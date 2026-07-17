@@ -582,7 +582,26 @@ export default function CharacterDictionaryPage({
   const [search,           setSearch]           = useState('')
   const [activeTag,        setActiveTag]        = useState<string>('All')
   const [activePackage,    setActivePackage]    = useState<CharacterProfile | null>(null)
-  const [packagedCharIds,  setPackagedCharIds]  = useState<Set<string>>(new Set())
+  // packagedCharIds: in-memory set updated by onAutoInitComplete —
+  // also checked against localStorage so progress survives page refresh
+  const [packagedCharIds,  setPackagedCharIds]  = useState<Set<string>>(() => {
+    // Pre-populate from localStorage on first render: any char whose cached package
+    // has autoInitDone=true is already "ready" without needing to open the package first
+    const ready = new Set<string>()
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (!key?.startsWith('baseboard_pkg_v1_')) continue
+        const raw = localStorage.getItem(key)
+        if (!raw) continue
+        const data = JSON.parse(raw)
+        if (data.autoInitDone) {
+          ready.add(key.replace('baseboard_pkg_v1_', ''))
+        }
+      }
+    } catch { /* localStorage unavailable — use empty set */ }
+    return ready
+  })
   const [impactState,      setImpactState]      = useState<{
     impact: ContinuityImpactResult
     pendingChar: CharacterProfile
@@ -682,10 +701,14 @@ export default function CharacterDictionaryPage({
   // Continuity impact modal
   const showModal = impactState !== null
 
-  // Full-screen character package view
+  // Full-screen character package view.
+  // key={activePackage.id} ensures React unmounts and freshly mounts the page
+  // whenever the active character changes — so useState initialiser re-runs,
+  // the localStorage cache is re-read, and autoInitRef resets to false.
   if (activePackage) {
     return (
       <CharacterPackagePage
+        key={activePackage.id}
         character={activePackage}
         allCharacters={characters}
         scenes={scenes}
@@ -772,11 +795,24 @@ export default function CharacterDictionaryPage({
                 return appearsInScene ? count + 1 : count
               }, 0)
 
-              // packagedCharIds marks chars whose auto-init completed —
-              // treat that as portrait + core sections having been generated
-              const packagedSections = packagedCharIds.has(char.id)
-                ? ['portrait', 'turnaround_front', 'expression_neutral', 'pose_standing', 'outfit_default']
-                : []
+              // Derive which sections are actually complete from the localStorage cache
+              const packagedSections: string[] = (() => {
+                try {
+                  const raw = localStorage.getItem(`baseboard_pkg_v1_${char.id}`)
+                  if (!raw) return []
+                  const data = JSON.parse(raw)
+                  const sections: string[] = []
+                  if (data.portrait)                                             sections.push('portrait')
+                  if (data.turnaround?.front)                                   sections.push('turnaround_front')
+                  if (data.expressions?.neutral)                                sections.push('expression_neutral')
+                  if (data.poses?.standing)                                     sections.push('pose_standing')
+                  if (data.outfits?.default)                                    sections.push('outfit_default')
+                  if (data.props && Object.values(data.props).some(Boolean))    sections.push('props')
+                  if (data.overview)                                            sections.push('overview')
+                  if (data.autoInitDone)                                        sections.push('relationships')
+                  return sections
+                } catch { return [] }
+              })()
 
               return (
                 <CharacterRow

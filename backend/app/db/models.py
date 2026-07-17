@@ -8,6 +8,11 @@ Design decisions:
 - StoryboardProject  →  1-N  →  CharacterProfile
 - StoryboardProject  →  1-N  →  ScriptScene
 - ScriptScene        →  1-N  →  StoryboardFrame (stored inline as JSON for now)
+
+Standalone tables (project-independent):
+- StandaloneCharacter  — single character saved outside any project
+- StandaloneWorld      — single location/environment saved outside any project
+- StandaloneStoryboard — scenes + frames saved outside any project
 """
 
 from __future__ import annotations
@@ -179,3 +184,60 @@ class StoryboardFrameORM(Base):
     scene: Mapped[ScriptSceneORM] = relationship(
         "ScriptSceneORM", back_populates="frames"
     )
+
+
+# ---------------------------------------------------------------------------
+# StandaloneCharacter
+# ---------------------------------------------------------------------------
+
+
+class StandaloneCharacterORM(Base):
+    """A character saved independently — not tied to any project."""
+    __tablename__ = "standalone_characters"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    char_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    wardrobe_defaults: Mapped[str] = mapped_column(Text, nullable=False)
+    facial_blueprint: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    story_role: Mapped[str | None] = mapped_column(Text, nullable=True)
+    relationships: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    # Full CharacterProfileBase blob — preserves all DNA layers, variants, etc.
+    full_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)  # user-given nickname/tag
+
+
+# ---------------------------------------------------------------------------
+# StandaloneWorld
+# ---------------------------------------------------------------------------
+
+
+class StandaloneWorldORM(Base):
+    """A world/environment saved independently — not tied to any project."""
+    __tablename__ = "standalone_worlds"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    location_name: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    spatial_textures: Mapped[str] = mapped_column(Text, nullable=False)
+    lighting_keys: Mapped[str] = mapped_column(Text, nullable=False)
+    # Full EnvironmentProfileBase blob
+    full_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# StandaloneStoryboard
+# ---------------------------------------------------------------------------
+
+
+class StandaloneStoryboardORM(Base):
+    """Scenes + frames saved independently — not tied to any project."""
+    __tablename__ = "standalone_storyboards"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    global_aesthetic: Mapped[str] = mapped_column(Text, nullable=False)
+    render_style: Mapped[str] = mapped_column(String, nullable=False, default="bw_sketch")
+    # Full list[ScriptSceneBase] blob — scenes + frames stored as JSON
+    scenes: Mapped[list[Any]] = mapped_column(JSON, nullable=False)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)

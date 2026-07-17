@@ -6,11 +6,14 @@ import type {
   CreativeKnowledgeGraph,
   PipelineExecutionRequest,
   QAScoreResult,
+  SceneContinuityReport,
+  SceneQARequest,
   SpeciesProfile,
   StoryboardFrame,
   StoryboardProject,
   StoryboardScene,
 } from '../types/storyboard'
+import type { SceneUpgradeResult, FrameUpgradeResult } from '../types/renderUpgrade'
 
 /** Minimal character fields the backend character-package endpoints accept. */
 export interface CharacterPackageInput {
@@ -105,6 +108,22 @@ export async function forgePipelineStream(
       } catch { /* malformed SSE chunk — skip */ }
     }
   }
+}
+
+export interface ProjectSummary {
+  db_id: number
+  project_title: string
+  global_aesthetic: string
+  render_style: string
+  scene_count: number
+  frame_count: number
+  character_count: number
+  color_palettes: string[][]
+}
+
+export async function listProjectSummaries(): Promise<ProjectSummary[]> {
+  const res = await fetch(`${BASE_URL}/storyboard/summaries`)
+  return handleResponse<ProjectSummary[]>(res)
 }
 
 export async function listProjects(): Promise<StoryboardProject[]> {
@@ -355,6 +374,64 @@ export async function runCharacterQA(
     }),
   })
   return handleResponse<QAScoreResult>(res)
+}
+
+/** Run context-aware continuity QA on all frames in a scene. */
+export async function runSceneQA(request: SceneQARequest): Promise<SceneContinuityReport> {
+  const res = await fetch(`${BASE_URL}/storyboard/scene/qa-continuity`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  return handleResponse<SceneContinuityReport>(res)
+}
+
+/** Upgrade a single frame to a new render style. */
+export async function upgradeFrameStyle(
+  frame: StoryboardFrame,
+  scene: StoryboardScene,
+  targetStyle: string,
+  sourceImageB64?: string | null,
+  canonContext?: Record<string, unknown> | null,
+): Promise<FrameUpgradeResult> {
+  const res = await fetch(`${BASE_URL}/storyboard/frame/upgrade-style`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      frame,
+      scene,
+      target_style: targetStyle,
+      source_image_b64: sourceImageB64 ?? null,
+      canon_context: canonContext ?? null,
+    }),
+  })
+  return handleResponse<FrameUpgradeResult>(res)
+}
+
+/** Upgrade every frame in a scene to a new render style concurrently. */
+export async function upgradeSceneStyle(
+  frames: StoryboardFrame[],
+  scene: StoryboardScene,
+  targetStyle: string,
+  canonContext?: Record<string, unknown> | null,
+): Promise<SceneUpgradeResult> {
+  // Pass existing images as img2img sources to preserve composition
+  const sourceImages: Record<number, string> = {}
+  for (const f of frames) {
+    if (f.generated_image_url) sourceImages[f.frame_number] = f.generated_image_url
+  }
+  const res = await fetch(`${BASE_URL}/storyboard/scene/upgrade-style`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      frames,
+      scene,
+      target_style: targetStyle,
+      source_images: sourceImages,
+      canon_context: canonContext ?? null,
+    }),
+  })
+  return handleResponse<SceneUpgradeResult>(res)
 }
 
 export interface ImportAssetResponse {

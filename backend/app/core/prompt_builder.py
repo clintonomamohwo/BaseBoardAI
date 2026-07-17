@@ -35,12 +35,43 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 STYLE_PREFIXES: dict[str, str] = {
-    "bw_sketch":   "clean minimal black and white line art, simple outline only, no shading, no cross-hatching, no fill, no texture, loose gestural sketch, artist rough, white background. ",
-    "bw_detailed": "black and white ink illustration, bold clean outlines, detailed crosshatch shading, high contrast shadows, no color, professional comic book art, white background. ",
-    "flat_color":  "2D animation cel, cartoon illustration, flat solid color fills, clean vector outlines, no gradients, no photo realism, Studio Ghibli style. ",
-    "full_shaded": "2D animated film frame, cinematic cartoon, volumetric lighting, expressive character art, no photo realism. ",
+    # ── Core pipeline styles ──────────────────────────────────────────────────
+    "bw_sketch":        "clean minimal black and white line art, simple outline only, no shading, no cross-hatching, no fill, no texture, loose gestural sketch, artist rough, white background. ",
+    "bw_detailed":      "black and white ink illustration, bold clean outlines, detailed crosshatch shading, high contrast shadows, no color, professional comic book art, white background. ",
+    "flat_color":       "2D animation cel, cartoon illustration, flat solid color fills, clean vector outlines, no gradients, no photo realism, Studio Ghibli style. ",
+    "full_shaded":      "2D animated film frame, cinematic cartoon, volumetric lighting, expressive character art, no photo realism. ",
+
+    # ── Storyboard tier (line art variants) ──────────────────────────────────
+    "pencil_rough":     "rough pencil sketch, loose gestural lines, construction lines visible, artist sketchbook, no color, white background. ",
+    "ink_clean":        "clean professional ink drawing, precise linework, no fill, no color, comic book inking style, white background. ",
+    "marker_grey":      "grey marker illustration, warm tones, clean outlines, slight texture, concept art board, no color photo. ",
+
+    # ── Color tier ────────────────────────────────────────────────────────────
+    "flat_animation":   "2D animation cel, bold flat colors, black outlines, no gradients, Saturday morning cartoon style. ",
+    "cell_shaded":      "cell-shaded illustration, bold outlines, two-tone shading, vivid colors, anime style. ",
+    "pixar_style":      "3D CGI cartoon render, Pixar animation style, soft subsurface lighting, expressive characters, vivid colors. ",
+    "ghibli_style":     "Studio Ghibli watercolor illustration, soft painterly style, lush environment, warm colors, hand-painted feel. ",
+    "comic_book":       "American comic book art, bold inks, halftone dots, dynamic composition, high contrast colors, Ben-Day dots. ",
+    "anime_style":      "Japanese anime illustration, clean linework, expressive eyes, dramatic lighting, saturated colors, cel animation. ",
+
+    # ── Concept art tier ─────────────────────────────────────────────────────
+    "concept_art":      "professional concept art, detailed environment, painterly style, cinematic lighting, production design quality, artstation trending. ",
+    "digital_painting": "digital oil painting, rich textures, soft blending, detailed lighting, impressionist technique, gallery quality. ",
+    "watercolor":       "loose watercolor illustration, wet-on-wet technique, soft edges, transparent washes, delicate paper texture, no harsh outlines. ",
+    "oil_painting":     "classical oil painting style, rich impasto texture, dramatic chiaroscuro lighting, old master technique, museum quality. ",
+
+    # ── Cinematic tier ────────────────────────────────────────────────────────
+    "cinematic":        "cinematic film frame, anamorphic lens flare, color graded, depth of field, atmospheric haze, movie still, 35mm film. ",
+    "hyperrealistic":   "hyperrealistic digital render, photorealistic lighting, 8K detail, subsurface scattering, physically based rendering, no cartoon. ",
+    "noir":             "film noir style, high contrast black and white photography, deep shadows, harsh rim lighting, moody atmosphere, vintage. ",
+    "neon_cyberpunk":   "cyberpunk neon-lit scene, rain-soaked streets, holographic signs, atmospheric fog, dramatic color contrast, blade runner aesthetic. ",
 }
 DEFAULT_STYLE_PREFIX = STYLE_PREFIXES["bw_sketch"]
+
+# Ordered upgrade pipeline stages — used by the Render Upgrade UI
+UPGRADE_PIPELINE: list[str] = [
+    "bw_sketch", "ink_clean", "flat_color", "cell_shaded", "concept_art", "cinematic",
+]
 
 # Negative constraints appended for B&W modes
 _BW_SKETCH_NEGATIVES   = ", simple outlines only, no shading, no crosshatch, no texture, no color, no photo"

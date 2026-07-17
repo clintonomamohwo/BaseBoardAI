@@ -117,8 +117,13 @@ export default function App() {
   }
 
   function switchTab(tab: StudioTab) {
-    setStudioTab(tab)
-    setTabKey(k => k + 1)
+    setStudioTab(prev => {
+      // Only bump tabKey when actually switching to a different tab.
+      // Re-clicking the same tab must NOT remount — that would wipe
+      // CharacterPackagePage React state (generated images).
+      if (prev !== tab) setTabKey(k => k + 1)
+      return tab
+    })
   }
 
   function handleDeleteScene(sceneNumber: number) {

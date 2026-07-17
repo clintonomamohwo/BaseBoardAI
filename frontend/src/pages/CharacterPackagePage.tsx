@@ -33,6 +33,7 @@ import {
   regenerateCharacterImage,
   generateCharacterOverview,
   generateFullCharacterPack,
+  runCharacterQA,
 } from '../api/storyboard'
 import GalleryLightbox, { type GalleryItem } from '../components/GalleryLightbox'
 import IdentityUploader from '../components/IdentityUploader'
@@ -243,6 +244,93 @@ function StarBanner({ starredImage, onClear }: { starredImage: string | null; on
       <button onClick={onClear} title="Clear star" style={{ background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4, padding:'4px 10px', fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', cursor:'pointer', opacity:0.7, textTransform:'uppercase' }}>
         Clear
       </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// GeneratedImagePicker — pick any already-generated image into an identity slot
+// ---------------------------------------------------------------------------
+
+type RefSlot = 'reference_primary' | 'reference_front' | 'reference_left' | 'reference_right' | 'reference_back'
+const REF_SLOTS: { key: RefSlot; label: string }[] = [
+  { key: 'reference_primary', label: 'Primary' },
+  { key: 'reference_front',   label: 'Front'   },
+  { key: 'reference_left',    label: 'Left'    },
+  { key: 'reference_right',   label: 'Right'   },
+  { key: 'reference_back',    label: 'Back'    },
+]
+
+interface GeneratedImagePickerProps {
+  images: { url: string; label: string }[]
+  onSelect: (url: string, slot: RefSlot) => void
+}
+
+function GeneratedImagePicker({ images, onSelect }: GeneratedImagePickerProps) {
+  const [pendingUrl, setPendingUrl] = useState<string | null>(null)
+
+  if (images.length === 0) return null
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <p style={{ fontSize: 9, letterSpacing: '0.3em', textTransform: 'uppercase', color: 'var(--gold)', opacity: 0.6, marginBottom: 10 }}>
+        Use Generated Image
+      </p>
+      {/* Thumbnail row */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: pendingUrl ? 12 : 0 }}>
+        {images.map(({ url, label }) => (
+          <div key={url} style={{ position: 'relative' }}>
+            <img
+              src={url}
+              alt={label}
+              title={`Use "${label}" as identity reference`}
+              onClick={() => setPendingUrl(pendingUrl === url ? null : url)}
+              style={{
+                width: 64, height: 80, objectFit: 'cover', borderRadius: 5, cursor: 'pointer',
+                border: pendingUrl === url
+                  ? '2px solid var(--gold)'
+                  : '1px solid var(--border)',
+                transition: 'border 120ms',
+              }}
+            />
+            <p style={{ fontSize: 7, color: 'var(--text-muted)', opacity: 0.5, textAlign: 'center', marginTop: 2, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Slot selector — only shown after picking a thumbnail */}
+      {pendingUrl && (
+        <div style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 14px' }}>
+          <p style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6, marginBottom: 8, letterSpacing: '0.1em' }}>
+            Assign to slot:
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {REF_SLOTS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => { onSelect(pendingUrl, key); setPendingUrl(null) }}
+                style={{
+                  padding: '5px 14px', borderRadius: 999, fontSize: 9, cursor: 'pointer',
+                  border: '1px solid rgba(201,168,76,0.5)',
+                  background: 'transparent', color: 'var(--gold)',
+                  letterSpacing: '0.1em', textTransform: 'uppercase',
+                  transition: 'background 120ms',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(201,168,76,0.12)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              onClick={() => setPendingUrl(null)}
+              style={{ padding: '5px 14px', borderRadius: 999, fontSize: 9, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', opacity: 0.5, letterSpacing: '0.1em' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -623,8 +711,14 @@ function resolveRenderStyle(base: RenderStyle | 'bw_detailed', detail: DetailLev
 // localStorage persistence — keyed by charId so each character is independent
 // ---------------------------------------------------------------------------
 
-const PKG_FIELDS_TO_PERSIST = ['portrait','turnaround','expressions','poses','outfits','props',
-  'turnaround360','premiumPoses','materialCloseups','autoInitDone','overview','renderStyle'] as const
+// Only persist lightweight metadata — NOT images.
+// Image data URLs are large (50–200 KB each) and will exceed the 5 MB
+// localStorage quota for any character with a full package, causing silent
+// write failures and the cache to never be written at all.
+// Images stay in React state for the lifetime of the tab session.
+// On a hard page refresh the user will need to regenerate, but switching
+// tabs within the app preserves everything via React state (see tabKey fix).
+const PKG_FIELDS_TO_PERSIST = ['autoInitDone', 'overview', 'renderStyle'] as const
 
 function pkgCacheKey(charId: string): string {
   return `baseboard_pkg_v1_${charId}`
@@ -633,8 +727,10 @@ function pkgCacheKey(charId: string): string {
 function loadPkgCache(charId: string): Partial<CharacterPackage> | null {
   try {
     const raw = localStorage.getItem(pkgCacheKey(charId))
-    if (!raw) return null
-    return JSON.parse(raw)
+    if (!raw) { console.log('[PKG CACHE] miss for', charId); return null }
+    const data = JSON.parse(raw)
+    console.log('[PKG CACHE] hit for', charId, '| autoInitDone:', data.autoInitDone, '| portrait:', !!data.portrait, '| turnaround keys with images:', Object.entries(data.turnaround ?? {}).filter(([,v])=>!!v).map(([k])=>k))
+    return data
   } catch { return null }
 }
 
@@ -642,6 +738,7 @@ function savePkgCache(charId: string, pkg: CharacterPackage): void {
   try {
     const subset: Record<string, unknown> = {}
     for (const k of PKG_FIELDS_TO_PERSIST) subset[k] = pkg[k as keyof CharacterPackage]
+    console.log('[PKG CACHE] saving', charId, '| autoInitDone:', pkg.autoInitDone, '| portrait:', !!pkg.portrait)
     localStorage.setItem(pkgCacheKey(charId), JSON.stringify(subset))
   } catch { /* storage full — silent */ }
 }
@@ -677,12 +774,19 @@ export default function CharacterPackagePage({
   const loadedTabs  = useRef<Set<string>>(new Set(['Overview', 'Scenes', 'Relationships']))
   const autoInitRef = useRef(false)
 
-  // Persist images to localStorage whenever pkg changes
+  // Persist images (and autoInitDone) to localStorage.
+  // We use a ref-based approach to avoid stale-closure bugs: the effect always
+  // reads from a ref that tracks the latest pkg value, so savePkgCache is
+  // guaranteed to write the most recent state rather than a stale snapshot.
+  const pkgRef = useRef(pkg)
+  pkgRef.current = pkg  // keep ref in sync on every render
+
   useEffect(() => {
-    if (pkg.portrait || Object.values(pkg.turnaround).some(Boolean)) {
-      savePkgCache(character.id, pkg)
+    const p = pkgRef.current
+    if (p.autoInitDone || p.portrait || Object.values(p.turnaround).some(Boolean)) {
+      savePkgCache(character.id, p)
     }
-  }, [pkg.portrait, pkg.turnaround, pkg.expressions, pkg.poses, pkg.outfits,
+  }, [pkg.autoInitDone, pkg.portrait, pkg.turnaround, pkg.expressions, pkg.poses, pkg.outfits,
       pkg.props, pkg.turnaround360, pkg.premiumPoses, pkg.materialCloseups]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shared gallery lightbox state — null = closed
@@ -702,15 +806,18 @@ export default function CharacterPackagePage({
   // Auto-init: generate all default sections when package first mounts
   // ---------------------------------------------------------------------------
   useEffect(() => {
+    console.log('[AUTO-INIT] mount check | autoInitRef:', autoInitRef.current, '| pkg.autoInitDone:', pkg.autoInitDone, '| portrait:', !!pkg.portrait)
     if (autoInitRef.current || pkg.autoInitDone) return
     // Skip auto-init if images already exist — don't regenerate on every mount
     const alreadyHasImages = pkg.portrait || Object.values(pkg.turnaround).some(Boolean)
+    console.log('[AUTO-INIT] alreadyHasImages:', alreadyHasImages)
     if (alreadyHasImages) {
       setPkg(p => ({ ...p, autoInitDone: true }))
       AUTO_INIT_SECTIONS.forEach(s => loadedTabs.current.add(s.charAt(0).toUpperCase() + s.slice(1) as PackageTab))
       loadedTabs.current.add('Portrait')
       return
     }
+    console.log('[AUTO-INIT] FIRING autoInit()')
     autoInitRef.current = true
     autoInit()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -930,6 +1037,42 @@ export default function CharacterPackagePage({
       })
     } catch { /* leave existing */ }
     finally { setLoading(sectionKey, false) }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Visual QA
+  // ---------------------------------------------------------------------------
+
+  async function handleRunQA() {
+    if (!pkg.identity) {
+      alert('Set character identity first (Identity tab)')
+      return
+    }
+    setLoading('qa', true)
+    try {
+      const result = await runCharacterQA(
+        pkg.prompt,
+        pkg.identity,
+        pkg.species?.species_id ?? 'human',
+        pkg.variants.find(v => v.id === pkg.activeVariantId),
+        (pkg.classification as 'character' | 'creature' | 'animal' | 'robot' | 'vehicle' | null) ?? 'character',
+      )
+      setPkg(p => ({ ...p, qaResult: result }))
+    } catch { /* leave existing */ }
+    finally { setLoading('qa', false) }
+  }
+
+  function handleRepair(action: QARepairAction) {
+    if (action.endpoint === '/storyboard/frame/reforge-composition' || action.category === 'identity') {
+      handleRegenOne('portrait')
+    } else if (action.category === 'composition') {
+      handleRegenOne('turnaround/front')
+    } else if (action.category === 'props') {
+      const firstPropKey = Object.keys(pkg.props)[0]
+      if (firstPropKey) handleRegenOne(`props/${firstPropKey}`)
+    } else {
+      handleRegenOne('portrait')
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1264,6 +1407,33 @@ export default function CharacterPackagePage({
                 ))}
               </div>
             </div>
+
+            {/* Use Generated Image → Identity Slot */}
+            {(() => {
+              const generated: { url: string; label: string }[] = []
+              if (pkg.portrait) generated.push({ url: pkg.portrait, label: 'Portrait' })
+              Object.entries(pkg.turnaround).forEach(([k, v]) => {
+                if (v) generated.push({ url: v, label: { front:'Front', three_q_front:'¾ Front', side:'Side', three_q_back:'¾ Back', back:'Back' }[k] ?? k })
+              })
+              Object.entries(pkg.expressions).forEach(([k, v]) => {
+                if (v) generated.push({ url: v, label: k.charAt(0).toUpperCase() + k.slice(1) })
+              })
+              Object.entries(pkg.poses).forEach(([k, v]) => {
+                if (v) generated.push({ url: v, label: k.charAt(0).toUpperCase() + k.slice(1) })
+              })
+              if (generated.length === 0) return null
+              const handlePickIdentity = (url: string, slot: RefSlot) => {
+                const base: import('../types/storyboard').CharacterIdentity = pkg.identity ?? {
+                  name: character.name, face_description: null, hair_description: null,
+                  eye_description: null, body_proportions: null, age: null,
+                  distinct_markers: null, signature_accessories: [],
+                  reference_primary: null, reference_front: null, reference_left: null,
+                  reference_right: null, reference_back: null,
+                }
+                setPkg(p => ({ ...p, identity: { ...base, [slot]: url } }))
+              }
+              return <GeneratedImagePicker images={generated} onSelect={handlePickIdentity} />
+            })()}
 
             {/* Reference Image Upload */}
             {pkg.identity ? (
@@ -1639,8 +1809,8 @@ export default function CharacterPackagePage({
             </div>
             <VisualQAPanel
               qaResult={pkg.qaResult}
-              onRunQA={() => { /* placeholder — wire to runCharacterQA API in a future step */ }}
-              onRepair={(_action: QARepairAction) => { /* placeholder — wire per-category repair endpoints */ }}
+              onRunQA={handleRunQA}
+              onRepair={handleRepair}
               loading={isLoading('qa')}
             />
           </div>

@@ -9,7 +9,7 @@
 import { useState, useEffect } from 'react'
 import logoSrc from '../assets/logo.png'
 import type { StoryboardProject } from '../types/storyboard'
-import { listProjects, getProject, deleteProject } from '../api/storyboard'
+import { listProjectSummaries, type ProjectSummary, getProject, deleteProject } from '../api/storyboard'
 
 const RENDER_LABELS: Record<string, string> = {
   bw_sketch:   'B&W Sketch',
@@ -24,25 +24,30 @@ interface Props {
 }
 
 export default function ProjectLibraryPage({ onLoadProject, onNewProject, onLanding }: Props) {
-  const [projects,  setProjects]  = useState<StoryboardProject[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState<string | null>(null)
+  const [projects,   setProjects]   = useState<ProjectSummary[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [confirmId,  setConfirmId]  = useState<number | null>(null)
+  // Track which project is being opened so we can show a spinner on its card
+  const [openingId,  setOpeningId]  = useState<number | null>(null)
 
   useEffect(() => {
-    listProjects()
+    listProjectSummaries()
       .then(setProjects)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [])
 
   async function handleLoad(dbId: number) {
+    setOpeningId(dbId)
     try {
       const project = await getProject(dbId)
       onLoadProject(project)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load project')
+    } finally {
+      setOpeningId(null)
     }
   }
 
@@ -161,15 +166,16 @@ export default function ProjectLibraryPage({ onLoadProject, onNewProject, onLand
         {!loading && projects.length > 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
             {projects.map((p) => {
-              const sceneCount = p.scenes.length
-              const frameCount = p.scenes.reduce((s, sc) => s + sc.frames.length, 0)
-              const charCount  = p.characters.length
+              const sceneCount = p.scene_count
+              const frameCount = p.frame_count
+              const charCount  = p.character_count
               const styleLabel = RENDER_LABELS[p.render_style] ?? p.render_style
-              const isDeleting = deletingId === p.db_id
-              const isConfirming = confirmId === p.db_id
+              const isDeleting   = deletingId === p.db_id
+              const isConfirming = confirmId  === p.db_id
+              const isOpening    = openingId  === p.db_id
 
               // Derive a muted color from the first scene's palette if available
-              const accentColor = p.scenes[0]?.color_palette?.[0] ?? null
+              const accentColor = p.color_palettes?.[0]?.[0] ?? null
 
               return (
                 <div key={p.db_id}
@@ -246,9 +252,9 @@ export default function ProjectLibraryPage({ onLoadProject, onNewProject, onLand
                     </div>
 
                     {/* Color palette preview */}
-                    {p.scenes[0]?.color_palette?.length > 0 && (
+                    {p.color_palettes?.length > 0 && (
                       <div style={{ display: 'flex', gap: 3, marginBottom: 14 }}>
-                        {p.scenes.flatMap(s => s.color_palette).slice(0, 8).map((hex, i) => (
+                        {p.color_palettes.flat().slice(0, 8).map((hex, i) => (
                           <div key={i} title={hex} style={{
                             width: 16, height: 8, borderRadius: 2,
                             background: hex, flexShrink: 0,
@@ -285,18 +291,23 @@ export default function ProjectLibraryPage({ onLoadProject, onNewProject, onLand
                     ) : (
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button className="btn-tactile"
-                          onClick={() => p.db_id != null && handleLoad(p.db_id)}
+                          onClick={() => !isOpening && p.db_id != null && handleLoad(p.db_id)}
+                          disabled={isOpening}
                           style={{
-                            flex: 1, padding: '8px 16px', borderRadius: 4, cursor: 'pointer',
-                            border: '1px solid var(--gold)', background: 'var(--gold)',
-                            color: 'var(--bg-base)', fontSize: 10, letterSpacing: '0.2em',
+                            flex: 1, padding: '8px 16px', borderRadius: 4,
+                            cursor: isOpening ? 'wait' : 'pointer',
+                            border: '1px solid var(--gold)',
+                            background: isOpening ? 'transparent' : 'var(--gold)',
+                            color: isOpening ? 'var(--gold)' : 'var(--bg-base)',
+                            fontSize: 10, letterSpacing: '0.2em',
                             textTransform: 'uppercase', fontWeight: 700,
                             transition: 'background 150ms ease, color 150ms ease',
+                            opacity: isOpening ? 0.6 : 1,
                           }}
-                          onMouseEnter={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--gold)' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'var(--gold)'; e.currentTarget.style.color = 'var(--bg-base)' }}
+                          onMouseEnter={e => { if (!isOpening) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--gold)' } }}
+                          onMouseLeave={e => { if (!isOpening) { e.currentTarget.style.background = 'var(--gold)'; e.currentTarget.style.color = 'var(--bg-base)' } }}
                         >
-                          Open →
+                          {isOpening ? 'Loading…' : 'Open →'}
                         </button>
                         <button className="btn-tactile"
                           onClick={() => setConfirmId(p.db_id)}
