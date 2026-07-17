@@ -166,41 +166,47 @@ TURNAROUND_LAYOUT = SheetLayout(
 
 
 # ---------------------------------------------------------------------------
-# Poses — 2 × 2 grid (4 core poses, 1024 × 1024 canvas)
+# Poses — 4 × 2 grid (7 poses + 1 spare, 2048 × 1024 canvas)
 # ---------------------------------------------------------------------------
 
 POSES_LAYOUT = SheetLayout(
-    template="poses_2x2",
-    canvas_width=1024,
+    template="poses_4x2",
+    canvas_width=2048,
     canvas_height=1024,
     rows=2,
-    cols=2,
+    cols=4,
     padding=40,
     cells=(
-        SheetCell("standing",   "Idle",    0, 0, "standing relaxed, arms at sides, full body"),
-        SheetCell("walking",    "Walk",    0, 1, "mid-stride walking, natural gait, full body"),
-        SheetCell("running",    "Run",     1, 0, "running at full speed, dynamic lean, full body"),
-        SheetCell("hero_pose",  "Hero",    1, 1, "heroic stance, confident, chin up, full body"),
+        SheetCell("standing",       "Standing",       0, 0, "standing relaxed, arms at sides, full body front view"),
+        SheetCell("walking",        "Walking",        0, 1, "mid-stride walking, natural gait, full body"),
+        SheetCell("running",        "Running",        0, 2, "running at full speed, dynamic forward lean, full body"),
+        SheetCell("sitting",        "Sitting",        0, 3, "sitting down, relaxed posture, full body"),
+        SheetCell("pointing",       "Pointing",       1, 0, "pointing forward with one arm extended, full body"),
+        SheetCell("holding_object", "Holding Object", 1, 1, "holding an object in both hands, full body"),
+        SheetCell("hero_pose",      "Hero Pose",      1, 2, "heroic stance, confident, chin up, full body"),
     ),
 )
 
 
 # ---------------------------------------------------------------------------
-# Outfits — 2 × 2 grid (4 outfits, 1024 × 1024 canvas)
+# Outfits — 4 × 2 grid (7 outfits + 1 spare, 2048 × 1024 canvas)
 # ---------------------------------------------------------------------------
 
 OUTFITS_LAYOUT = SheetLayout(
-    template="outfits_2x2",
-    canvas_width=1024,
+    template="outfits_4x2",
+    canvas_width=2048,
     canvas_height=1024,
     rows=2,
-    cols=2,
+    cols=4,
     padding=40,
     cells=(
         SheetCell("default", "Default", 0, 0, "default signature outfit, full body front view"),
-        SheetCell("casual",  "Casual",  0, 1, "casual everyday clothes, full body front view"),
+        SheetCell("casual",  "Casual",  0, 1, "casual everyday clothes, relaxed fit, full body front view"),
+        SheetCell("formal",  "Formal",  0, 2, "formal attire, elegant, full body front view"),
+        SheetCell("travel",  "Travel",  0, 3, "travel outfit, practical layers, full body front view"),
         SheetCell("combat",  "Combat",  1, 0, "combat or action-ready gear, full body front view"),
-        SheetCell("formal",  "Formal",  1, 1, "formal attire, full body front view"),
+        SheetCell("winter",  "Winter",  1, 1, "winter outfit, warm coat and layers, full body front view"),
+        SheetCell("summer",  "Summer",  1, 2, "summer outfit, light breathable clothing, full body front view"),
     ),
 )
 
