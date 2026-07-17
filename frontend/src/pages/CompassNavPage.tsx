@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import logoSrc from '../assets/logo.png'
 import { useCompassNeedle } from '../hooks/useCompassNeedle'
 
-type Section = 'storyboard' | 'characters' | 'world-bible' | 'inspector'
+type Section = 'storyboard' | 'characters' | 'world-bible' | 'library'
 
 interface Props {
   onSelect: (section: Section) => void
@@ -18,7 +18,7 @@ interface SectionDef {
 }
 
 const SECTIONS: SectionDef[] = [
-  { id: 'inspector',   label: 'INSPECTOR',   sub: 'Refine every detail',   dir: 'N' },
+  { id: 'library',     label: 'LIBRARY',     sub: 'Browse saved projects', dir: 'N' },
   { id: 'world-bible', label: 'WORLD BIBLE', sub: 'Build your universe',   dir: 'S' },
   { id: 'storyboard',  label: 'STORYBOARD',  sub: 'Visualize your scenes', dir: 'W' },
   { id: 'characters',  label: 'CHARACTERS',  sub: 'Bring people to life',  dir: 'E' },

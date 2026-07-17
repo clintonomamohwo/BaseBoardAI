@@ -10,10 +10,10 @@
 import { useEffect, useRef, useState } from 'react'
 
 const SECTION_ANGLES: Record<string, number> = {
-  storyboard:  -20,
-  characters:   20,
-  'world-bible': 5,
-  inspector:   -5,
+  inspector:    0,    // N
+  characters:   90,   // E
+  'world-bible': 180, // S
+  storyboard:  -90,   // W
 }
 
 const LERP_FACTOR = 0.08   // lower = more damping
@@ -42,9 +42,8 @@ export function useCompassNeedle(
       const cy = r.top + r.height / 2
       const dx = e.clientX - cx
       const dy = e.clientY - cy
-      // Clamp to ±12 degrees — subtle, never dramatic
-      const raw = Math.atan2(dx, -dy) * (180 / Math.PI)
-      target.current = Math.max(-12, Math.min(12, raw * 0.12))
+      // Full 360° — needle points toward the cursor
+      target.current = Math.atan2(dx, -dy) * (180 / Math.PI)
     }
 
     window.addEventListener('mousemove', onMove, { passive: true })
@@ -59,7 +58,12 @@ export function useCompassNeedle(
       if (mq.matches) {
         current.current = target.current
       } else {
-        current.current += (target.current - current.current) * LERP_FACTOR
+        // Keep current in [-180, 180] so the shortest-path diff stays valid
+        // no matter how many full rotations the needle has made.
+        current.current = ((current.current + 180) % 360 + 360) % 360 - 180
+        let diff = target.current - current.current
+        diff = ((diff + 180) % 360 + 360) % 360 - 180
+        current.current += diff * LERP_FACTOR
       }
       const rounded = Math.round(current.current * 100) / 100
       setAngle(rounded)

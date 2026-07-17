@@ -9,6 +9,7 @@ Runs The Lost Compass through the full BaseBoard pipeline:
      premium_poses (8), material_closeups (5)               → 21 images/char
 
 Total: 55 images per character × 4 characters = 220 character reference images.
+Expected output: 4 characters, 7 scenes, ~21 frames (3 per scene).
 Script: 7 scenes (dense, hackathon-optimised version).
 Render style: flat_color throughout.
 
@@ -79,15 +80,10 @@ Profession: Archaeologist. Personality: Calm, analytical, quietly determined, em
 Artifact: Ancient Atlas Key. Arc: learns to trust others.
 Sleek black fur, field archaeologist gear, silver ear studs.
 
-
 Bella Alvarez — Deer Humanoid. Origin: Neo Mexico City. Faction: Medical Corps.
 Profession: Combat Medic. Personality: Caring, courageous, observant.
 Artifact: Life Crystal (worn around neck). Arc: learns courage. Love interest: Theo.
 Warm brown fur, graceful build, combat medic uniform, Life Crystal glowing gold.
-
-Seraphis — King Cobra Humanoid. Leader of The Obsidian Circle. Antagonist.
-Calculating, ruthless, obsessed with controlling all knowledge.
-Enormous build, hood fanned, obsidian armor, scaled green-black skin.
 """
 
 RAW_WORLD_NOTES = """
@@ -122,6 +118,11 @@ Factions:
 - The Cartographers: protect knowledge
 - The Keepers: protect history
 - The Obsidian Circle: seek absolute control through knowledge
+
+Antagonist: Seraphis — King Cobra Humanoid. Leader of The Obsidian Circle.
+Calculating, ruthless, obsessed with controlling all knowledge.
+Enormous build, hood fanned, obsidian armor, scaled green-black skin.
+Appears in Scene 5 as the primary villain. Not a playable character.
 
 The Compass of Unity only awakens when four worthy guardians appear.
 The Vault of Humanity contains the complete history of the human species — not gold, but knowledge.
@@ -164,12 +165,13 @@ def _health_check(client: httpx.Client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Stage 1 — Streaming pipeline
+# Stage 1 — LLM extraction (characters + world + storyboard plan, no images)
 # ---------------------------------------------------------------------------
 
-def run_pipeline(client: httpx.Client) -> dict:
+def run_pipeline(client: httpx.Client, skip_images: bool = False) -> dict:
+    label = "STAGE 1 — LLM EXTRACTION (skip_images=True)" if skip_images else "STAGE 1 — FORGE PIPELINE (flat_color, balanced)"
     print("=" * 60)
-    print("STAGE 1 — FORGE PIPELINE (flat_color, balanced)")
+    print(label)
     print("=" * 60)
 
     payload = {
@@ -180,6 +182,7 @@ def run_pipeline(client: httpx.Client) -> dict:
         "raw_character_notes": RAW_CHARACTER_NOTES,
         "raw_world_notes": RAW_WORLD_NOTES,
         "raw_script_text": SCRIPT_PATH.read_text(),
+        "skip_images": skip_images,
     }
 
     project: dict = {}
@@ -359,6 +362,61 @@ def run_character_packages(client: httpx.Client, project: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Stage 3 — Storyboard images (reforge all frames on saved project)
+# ---------------------------------------------------------------------------
+
+def run_storyboard_images(client: httpx.Client, project: dict) -> None:
+    """
+    Trigger image generation for every frame in the already-saved project.
+    Uses /forge-pipeline-stream with skip_images=False on the saved project's
+    db_id by calling the reforge-composition endpoint per frame instead.
+    """
+    db_id = project.get("db_id")
+    scenes = project.get("scenes", [])
+    total_frames = sum(len(s.get("frames", [])) for s in scenes)
+
+    print("\n" + "=" * 60)
+    print("STAGE 3 — STORYBOARD IMAGES")
+    print(f"  {total_frames} frames  ·  project db_id={db_id}")
+    print("=" * 60)
+
+    if not scenes:
+        print("  No scenes found — skipping.")
+        return
+
+    done = 0
+    for scene in scenes:
+        for frame in scene.get("frames", []):
+            try:
+                resp = client.post(
+                    f"{BASE_URL}/storyboard/reforge-composition",
+                    json={
+                        "frame": frame,
+                        "scene": scene,
+                        "render_style": RENDER,
+                    },
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                # Patch the frame's image URL in the local project dict
+                frame["generated_image_url"] = result.get("generated_image_url")
+                done += 1
+                bar = "█" * done + "░" * (total_frames - done)
+                print(f"\r  [{bar}] {done}/{total_frames}", end="", flush=True)
+            except Exception as e:
+                print(f"\n  ✗ Frame {frame.get('frame_number')} scene {scene.get('scene_number')}: {e}")
+
+    print(f"\n  ✓ {done}/{total_frames} frames generated")
+
+    # Save updated project JSON with image URLs
+    out = OUT_ROOT / "storyboard"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "project.json").write_text(json.dumps(project, indent=2))
+    print(f"    Saved → {out / 'project.json'}")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -366,16 +424,24 @@ def main() -> None:
     client = httpx.Client(timeout=900)
     _health_check(client)
 
-    project = run_pipeline(client)
+    # ── Stage 1: LLM extraction only (no images yet) ──────────────────────
+    project = run_pipeline(client, skip_images=True)
+
+    # ── Stage 2: Full character packages ──────────────────────────────────
+    # Characters are generated first so Visual DNA tokens can be extracted
+    # and injected into storyboard prompts for cross-provider consistency.
     run_character_packages(client, project)
+
+    # ── Stage 3: Storyboard images (after character packages are ready) ───
+    run_storyboard_images(client, project)
 
     client.close()
 
     total_chars = len(project.get("characters", []))
     print("=" * 60)
     print("DONE")
-    print(f"  Storyboard  → {OUT_ROOT / 'storyboard' / 'project.json'}")
     print(f"  Characters  → {OUT_ROOT / 'characters'}/  ({total_chars} dirs, ~55 images each)")
+    print(f"  Storyboard  → {OUT_ROOT / 'storyboard' / 'project.json'}")
     print("=" * 60)
 
 

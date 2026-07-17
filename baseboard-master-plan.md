@@ -5,33 +5,38 @@
 **Goal:** Bring the BaseBoard AI frontend from a bare Vite/React skeleton into a
 fully-functional PreViz workstation that satisfies the locked Master Technical Brief.
 
-**Current Status: Phase 1 complete. Phase 2 (Cinematic Director Engine) now planned.**
+**Current Status: Phase 1 ✅ · Phase 2 (Director Engine) ✅ · Phase 3 (Gemini + Story Intelligence) ✅**
 
 ### Backend
-- 3-Stage LLM pipeline (character → world → storyboard) via IBM WatsonX
-- Pollinations.ai + Hugging Face image generation, base64-encoded, stored in SQLite
-- Full FastAPI CRUD + 4 pipeline endpoints + 5 character package endpoints
-- Pydantic v2 schemas and SQLAlchemy ORM with deferred image column
+- 3-Stage LLM pipeline (character → world → storyboard) via IBM WatsonX **or** Google Gemini
+- Multi-provider image generation: Pollinations · Google Gemini (`gemini-3.1-flash-lite-image`) · HuggingFace
+- Gemini Vision for anatomy audit, Visual QA, and Visual DNA extraction
+- Provider routing via `.env` — `TEXT_PROVIDER` / `IMAGE_PROVIDER` / `VISION_PROVIDER`
+- `google-genai` SDK (new, replaces deprecated `google-generativeai`)
 - `render_style` field (`bw_sketch` | `bw_detailed` | `flat_color` | `full_shaded`)
+- `story_role` field on characters (`Protagonist` | `Antagonist` | `Supporting` | `Other`)
+- `relationships[]` on characters — AI-inferred from script (`ally` | `enemy` | `romantic` | `mentor` | `family` | `neutral` | `rival`)
 - `reference_style_image` Base64 img2img support with 3-branch dispatch
-- `CHARACTER_OVERVIEW_PROMPT` — LLM expansion of raw character into full narrative profile
 - Model fallback chain (auto-retries down 4-model chain on 429 rate-limit)
+- SSE streaming pipeline (`/forge-pipeline-stream`) with per-stage + per-image progress events
 
 ### Frontend
-- All planned sub-tasks 9–21 are either complete or in scope (20 & 21 pending)
-- Full premium cinematic redesign, CSS motion system, dark/light theme
-- Genesis Engine pipeline with 12-task animated progress screen
-- Complete Character Package system (auto-generation, full reference pack, detail toggle)
-- Relationship graph, version history, per-image regeneration, ZIP exports
+- All planned sub-tasks complete
+- Genesis Engine: 12-task animated pipeline with SSE live progress
+- PipelineForm: upgraded from blocking to SSE stream with 4-stage live progress cards
+- Character Dictionary: story role badges (gold/red/blue), relationship panel per character
+- `RenderStyle` type includes `bw_detailed`
+- `StoryboardFrame` type includes `lens_prompt_suffix`
+- `demoProject.ts` — all 4 characters have `story_role` + `relationships[]`
 
 ### Current App Flow
 1. **Landing Page** — rotating compass, gold title, "Enter Studio →" CTA
 2. **New Project** — 3-card selector: Genesis Upload · Start Blank · Load from Library
-3. **Genesis Engine** — 12-task animated pipeline (character → world → storyboard → images)
+3. **Genesis Engine** — 12-task animated pipeline with SSE real-time progress per stage + per image
 4. **Creative Director's Report** — post-analysis summary with countdown to Studio
 5. **Studio** — 44px top bar, 3-tab nav (Storyboard · Characters · World Bible)
    - Storyboard: 3-panel layout (scene index + canvas + inspector), animatic player, vault, locked cut
-   - Characters: Character Dictionary → Character Package (12 tabs)
+   - Characters: Character Dictionary (role filter + relationship graph) → Character Package (12 tabs)
    - World Bible: location cards with sub-tabs (Locations · Factions · Lore · Artifacts · Timelines)
 6. **Project Library** — browse / load / delete saved projects
 

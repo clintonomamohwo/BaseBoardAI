@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import type { RenderStyle, StoryboardProject } from '../types/storyboard'
-import { forgePipeline } from '../api/storyboard'
+import { forgePipelineStream } from '../api/storyboard'
 import StyleReferenceUploader from './StyleReferenceUploader'
-import ConstellationLoader from './ConstellationLoader'
 
 type RS = RenderStyle
 const RENDER_OPTIONS: { value: RS; label: string }[] = [
@@ -10,6 +9,21 @@ const RENDER_OPTIONS: { value: RS; label: string }[] = [
   { value: 'flat_color',  label: 'Flat Color' },
   { value: 'full_shaded', label: 'Full Shaded' },
 ]
+
+interface Stage {
+  id: string
+  label: string
+  icon: string
+}
+
+const STAGES: Stage[] = [
+  { id: 'chars',      label: 'Extracting Characters', icon: '👤' },
+  { id: 'world',      label: 'Building World Bible',  icon: '🌍' },
+  { id: 'storyboard', label: 'Generating Storyboard', icon: '🎬' },
+  { id: 'images',     label: 'Generating Images',     icon: '🖼'  },
+]
+
+type StageStatus = 'pending' | 'running' | 'done'
 
 interface Props {
   onComplete: (project: StoryboardProject) => void
@@ -27,26 +41,81 @@ export default function PipelineForm({ onComplete, onNotify }: Props) {
   const [loading, setLoading]       = useState(false)
   const [error, setError]           = useState<string | null>(null)
 
+  // Progress state
+  const [stageStatus,   setStageStatus]   = useState<Record<string, StageStatus>>({})
+  const [statusLine,    setStatusLine]    = useState('')
+  const [imagesDone,    setImagesDone]    = useState(0)
+  const [imagesTotal,   setImagesTotal]   = useState(0)
+
+  function setStatus(id: string, s: StageStatus) {
+    setStageStatus(prev => ({ ...prev, [id]: s }))
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setLoading(true); setError(null)
+    setLoading(true)
+    setError(null)
+    setStageStatus({})
+    setStatusLine('Starting pipeline…')
+    setImagesDone(0)
+    setImagesTotal(0)
     onNotify?.('Pipeline started…', 'info')
+
     try {
-      const p = await forgePipeline({
-        project_title: title || 'Untitled PreViz Project',
-        global_aesthetic: aesthetic,
-        render_style: renderStyle,
-        reference_style_image: refImage,
-        raw_character_notes: charNotes,
-        raw_world_notes: worldNotes,
-        raw_script_text: script,
-      })
+      let finalProject: StoryboardProject | null = null
+
+      await forgePipelineStream(
+        {
+          project_title:         title || 'Untitled PreViz Project',
+          global_aesthetic:      aesthetic,
+          render_style:          renderStyle,
+          reference_style_image: refImage,
+          raw_character_notes:   charNotes,
+          raw_world_notes:       worldNotes,
+          raw_script_text:       script,
+        },
+        (ev) => {
+          if (ev.event === 'stage_start') {
+            setStatus(ev.stage, 'running')
+            const labels: Record<string, string> = {
+              chars:      'Extracting characters…',
+              world:      'Building world bible…',
+              storyboard: 'Generating storyboard…',
+              images:     `Generating images (0 / ${ev.total ?? '?'})…`,
+            }
+            setStatusLine(labels[ev.stage] ?? `Running ${ev.stage}…`)
+            if (ev.stage === 'images') setImagesTotal(ev.total ?? 0)
+          } else if (ev.event === 'stage_done') {
+            setStatus(ev.stage, 'done')
+            if (ev.stage === 'chars')
+              setStatusLine(`${ev.count} character${ev.count !== 1 ? 's' : ''} extracted…`)
+            else if (ev.stage === 'world')
+              setStatusLine(`${ev.count} environment${ev.count !== 1 ? 's' : ''} built…`)
+            else if (ev.stage === 'storyboard')
+              setStatusLine(`${ev.frames} frames across ${ev.scenes} scenes — generating images…`)
+            else if (ev.stage === 'images')
+              setStatusLine('All images generated — saving…')
+          } else if (ev.event === 'image_progress') {
+            setImagesDone(ev.done)
+            setImagesTotal(ev.total)
+            setStatusLine(`Generating images (${ev.done} / ${ev.total})…`)
+          } else if (ev.event === 'complete') {
+            finalProject = ev.project
+          } else if (ev.event === 'error') {
+            throw new Error(ev.detail)
+          }
+        }
+      )
+
+      if (!finalProject) throw new Error('Pipeline ended without a result.')
       onNotify?.('Pipeline complete ✓')
-      onComplete(p)
+      onComplete(finalProject)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Pipeline failed')
       onNotify?.('Pipeline failed', 'info')
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+    }
   }
 
   const inputS: React.CSSProperties = {
@@ -60,25 +129,84 @@ export default function PipelineForm({ onComplete, onNotify }: Props) {
     color: 'var(--gold)', opacity: 0.6, textTransform: 'uppercase', marginBottom: 6,
   }
 
+  // ── Loading state — live progress ────────────────────────────────────────
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center gap-6 anim-gold-assemble" style={{ minHeight: 300 }}>
-        {/* Scan line overlay */}
-        <div className="relative w-48 h-32 overflow-hidden rounded"
-          style={{ border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
-          <div className="absolute inset-x-0 h-px"
-            style={{ background: 'var(--gold)', opacity: 0.6, animation: 'scan-line 1.2s linear infinite', top: 0 }} />
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span style={{ fontSize: 9, letterSpacing: '0.3em', color: 'var(--gold)', opacity: 0.3, textTransform: 'uppercase' }}>
-              Assembling…
-            </span>
-          </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, minHeight: 300, paddingTop: 12 }}>
+        <p style={{ fontSize: 9, letterSpacing: '0.35em', color: 'var(--gold)', opacity: 0.5, textTransform: 'uppercase', textAlign: 'center', margin: 0 }}>
+          3-Stage Continuity Pipeline
+        </p>
+
+        {/* Stage cards */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {STAGES.map((stage) => {
+            const s = stageStatus[stage.id] ?? 'pending'
+            const isDone = s === 'done'
+            const isRun  = s === 'running'
+            // Image stage gets a sub-progress bar
+            const imgPct = stage.id === 'images' && imagesTotal > 0
+              ? imagesDone / imagesTotal
+              : isDone ? 1 : isRun ? 0.4 : 0
+
+            return (
+              <div key={stage.id} style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '10px 14px', borderRadius: 6,
+                background: isDone ? 'rgba(201,168,76,0.05)' : isRun ? 'rgba(201,168,76,0.03)' : 'var(--bg-surface)',
+                border: `1px solid ${isDone ? 'rgba(201,168,76,0.3)' : isRun ? 'rgba(201,168,76,0.15)' : 'var(--border)'}`,
+                opacity: s === 'pending' ? 0.3 : 1,
+                transition: 'all 250ms ease',
+              }}>
+                <span style={{ fontSize: 15, lineHeight: 1 }}>{stage.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                    <span style={{ fontSize: 12, color: isDone ? 'var(--text-base)' : isRun ? 'var(--gold)' : 'var(--text-muted)', transition: 'color 250ms ease' }}>
+                      {stage.id === 'images' && imagesTotal > 0
+                        ? `Generating Images (${imagesDone} / ${imagesTotal})`
+                        : stage.label}
+                    </span>
+                    {/* Status dot / checkmark */}
+                    <div style={{
+                      width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
+                      border: isDone ? 'none' : `1.5px solid ${isRun ? 'var(--gold)' : 'var(--border)'}`,
+                      background: isDone ? 'var(--gold)' : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      transition: 'all 250ms ease',
+                    }}>
+                      {isDone && (
+                        <svg width="8" height="7" viewBox="0 0 8 7" fill="none">
+                          <path d="M1 3.5 L3 5.5 L7 1.5" stroke="var(--bg-base)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                      {isRun && (
+                        <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--gold)', animation: 'pulse-gold 1s ease-in-out infinite' }} />
+                      )}
+                    </div>
+                  </div>
+                  {/* Progress bar */}
+                  <div style={{ height: 2, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%', borderRadius: 2,
+                      width: `${(isDone ? 1 : isRun ? (stage.id === 'images' && imagesTotal > 0 ? imgPct : 0.4) : 0) * 100}%`,
+                      background: isDone ? 'var(--gold)' : 'linear-gradient(90deg, var(--gold-dim), var(--gold))',
+                      transition: stage.id === 'images' ? 'width 300ms ease' : 'width 600ms ease',
+                    }} />
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </div>
-        <ConstellationLoader message="Pipeline running…" />
+
+        {/* Current status line */}
+        <p style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--gold)', opacity: 0.6, textTransform: 'uppercase', textAlign: 'center', margin: 0 }}>
+          {statusLine}
+        </p>
       </div>
     )
   }
 
+  // ── Form ─────────────────────────────────────────────────────────────────
   return (
     <form onSubmit={handleSubmit} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div style={{ textAlign: 'center', marginBottom: 4 }}>

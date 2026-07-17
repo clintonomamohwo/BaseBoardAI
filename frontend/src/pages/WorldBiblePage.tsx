@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import React, { useState, useRef } from 'react'
 import { saveAs } from 'file-saver'
 import JSZip from 'jszip'
 import type { StoryboardProject, StoryboardScene, StoryboardFrame } from '../types/storyboard'
@@ -412,10 +412,59 @@ function Lightbox({
 }
 
 // ---------------------------------------------------------------------------
+// CanonSection — generic empty/list display for non-location tabs
+// ---------------------------------------------------------------------------
+
+function CanonSection<T extends Record<string, unknown>>({
+  title,
+  items,
+  emptyLabel,
+  renderItem,
+  extra,
+}: {
+  title: string
+  items: T[]
+  emptyLabel: string
+  renderItem: (item: T) => React.ReactNode
+  extra?: React.ReactNode
+}) {
+  if (extra && items.length === 0) {
+    return (
+      <div style={{ maxWidth: 680 }}>
+        <p style={{ fontSize: 9, letterSpacing: '0.2em', color: 'var(--gold)', opacity: 0.4, textTransform: 'uppercase', marginBottom: 14 }}>{title}</p>
+        {extra}
+      </div>
+    )
+  }
+  if (items.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3">
+        <p className="text-[var(--text-base)]/20 text-sm tracking-widest uppercase">{emptyLabel}</p>
+        <p className="text-[9px] text-[var(--text-base)]/10 tracking-wider">Run the pipeline to extract world data</p>
+      </div>
+    )
+  }
+  return (
+    <div style={{ maxWidth: 680 }}>
+      <p style={{ fontSize: 9, letterSpacing: '0.2em', color: 'var(--gold)', opacity: 0.4, textTransform: 'uppercase', marginBottom: 14 }}>{title}</p>
+      {extra}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {items.map((item, i) => (
+          <div key={i} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 5, padding: '10px 14px' }}>
+            {renderItem(item)}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export default function WorldBiblePage({ scenes, project, renderStyle = 'bw_sketch', onDeleteScene, onUpdateSceneFrames, onNotify }: Props) {
+  const [activeTab,       setActiveTab]       = useState('Locations')
   const [lightbox,        setLightbox]        = useState<LightboxState | null>(null)
   const [impactState,     setImpactState]     = useState<{
     impact: ContinuityImpactResult
@@ -497,35 +546,105 @@ export default function WorldBiblePage({ scenes, project, renderStyle = 'bw_sket
 
       {/* Sub-tabs */}
       <div className="flex gap-0 px-6 border-b border-[var(--border)] flex-shrink-0">
-        {SUB_TABS.map((tab, i) => (
-          <button key={tab} className={`relative px-4 py-2.5 text-[9px] tracking-widest uppercase transition-all ${
-            i === 0 ? 'text-[var(--gold)] tab-active' : 'text-[var(--text-base)]/30 hover:text-[var(--text-base)]/60'
-          }`}>
+        {SUB_TABS.map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className="relative px-4 py-2.5 text-[9px] tracking-widest uppercase transition-all"
+            style={{
+              color: activeTab === tab ? 'var(--gold)' : 'var(--text-base)',
+              opacity: activeTab === tab ? 1 : 0.3,
+              borderBottom: activeTab === tab ? '1px solid var(--gold)' : '1px solid transparent',
+              marginBottom: -1,
+            }}
+          >
             {tab}
           </button>
         ))}
       </div>
 
-      {/* List */}
+      {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-6">
-        {scenes.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-3">
-            <p className="text-[var(--text-base)]/20 text-sm tracking-widest uppercase">No locations yet</p>
-            <p className="text-[9px] text-[var(--text-base)]/10 tracking-wider">Run the pipeline to build your world bible</p>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 680 }}>
-            {scenes.map((scene) => (
-              <LocationRow
-                key={scene.scene_number}
-                scene={scene}
-                onDelete={() => onDeleteScene?.(scene.scene_number)}
-                onOpenLightbox={(frames, idx) => setLightbox({ frames, index: idx })}
-                onUploadLocationImage={project ? handleUploadLocationImage : undefined}
-              />
-            ))}
-          </div>
+
+        {/* Locations */}
+        {activeTab === 'Locations' && (
+          scenes.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64 gap-3">
+              <p className="text-[var(--text-base)]/20 text-sm tracking-widest uppercase">No locations yet</p>
+              <p className="text-[9px] text-[var(--text-base)]/10 tracking-wider">Run the pipeline to build your world bible</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 680 }}>
+              {scenes.map((scene) => (
+                <LocationRow
+                  key={scene.scene_number}
+                  scene={scene}
+                  onDelete={() => onDeleteScene?.(scene.scene_number)}
+                  onOpenLightbox={(frames, idx) => setLightbox({ frames, index: idx })}
+                  onUploadLocationImage={project ? handleUploadLocationImage : undefined}
+                />
+              ))}
+            </div>
+          )
         )}
+
+        {/* Factions */}
+        {activeTab === 'Factions' && (
+          <CanonSection
+            title="Factions"
+            items={project?.canon?.character_identities ? Object.entries(project.canon.character_identities).map(([k, v]) => ({ id: k, ...(v as object) })) : []}
+            emptyLabel="No factions extracted yet"
+            renderItem={(item: Record<string, unknown>) => (
+              <div style={{ fontSize: 11, color: 'var(--text-base)', opacity: 0.8 }}>{item.id as string}</div>
+            )}
+          />
+        )}
+
+        {/* Lore */}
+        {activeTab === 'Lore' && (
+          <CanonSection
+            title="Lore"
+            items={[]}
+            emptyLabel="No lore entries yet"
+            renderItem={() => null}
+            extra={
+              project?.canon?.world_bible_summary ? (
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, opacity: 0.75, maxWidth: 620 }}>
+                  {project.canon.world_bible_summary}
+                </p>
+              ) : null
+            }
+          />
+        )}
+
+        {/* Artifacts */}
+        {activeTab === 'Artifacts' && (
+          <CanonSection
+            title="Artifacts"
+            items={project?.canon?.props ? Object.entries(project.canon.props).map(([k, v]) => ({ id: k, ...(typeof v === 'object' && v !== null ? v : {}) })) : []}
+            emptyLabel="No artifacts extracted yet"
+            renderItem={(item: Record<string, unknown>) => (
+              <div style={{ fontSize: 11, color: 'var(--text-base)', opacity: 0.8 }}>{item.id as string}</div>
+            )}
+          />
+        )}
+
+        {/* Timelines */}
+        {activeTab === 'Timelines' && (
+          <CanonSection
+            title="Timeline"
+            items={Array.isArray(project?.canon?.timeline) ? project!.canon!.timeline as Record<string, unknown>[] : []}
+            emptyLabel="No timeline entries yet"
+            renderItem={(item: Record<string, unknown>) => (
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                {item.date && <span style={{ fontSize: 10, color: 'var(--gold)', opacity: 0.7, minWidth: 80, flexShrink: 0 }}>{String(item.date)}</span>}
+                {item.event && <span style={{ fontSize: 11, color: 'var(--text-base)', opacity: 0.8 }}>{String(item.event)}</span>}
+                {!item.date && !item.event && <span style={{ fontSize: 11, color: 'var(--text-base)', opacity: 0.8 }}>{JSON.stringify(item)}</span>}
+              </div>
+            )}
+          />
+        )}
+
       </div>
     </div>
   )

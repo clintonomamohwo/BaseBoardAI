@@ -73,6 +73,10 @@ class CharacterProfileORM(Base):
     # and avoids a separate table for a tightly coupled value object.
     facial_blueprint: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
+    # Story role & relationships — set by CHARACTER_PROMPT, nullable for backwards compat
+    story_role: Mapped[str | None] = mapped_column(Text, nullable=True)
+    relationships: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+
     project_id: Mapped[int] = mapped_column(
         ForeignKey("storyboard_projects.db_id"), nullable=False
     )
@@ -160,6 +164,7 @@ class StoryboardFrameORM(Base):
     lens: Mapped[str | None] = mapped_column(Text, nullable=True)
     focal_length: Mapped[str | None] = mapped_column(Text, nullable=True)
     depth_style: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lens_prompt_suffix: Mapped[str | None] = mapped_column(Text, nullable=True)
     locked_fields: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     # ── Cinematic Brain decisions (Fix 3) ─────────────────────────────────────

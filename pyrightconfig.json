@@ -5,6 +5,5 @@
   "pythonPlatform": "Darwin",
   "typeCheckingMode": "basic",
   "useLibraryCodeForTypes": true,
-  "include": ["backend/app"],
-  "extraPaths": ["backend/.venv/lib/python3.13/site-packages"]
+  "include": ["backend/app"]
 }

@@ -240,22 +240,6 @@ export default function LandingPage({ onNewProject, onEnter, onDemo, idle = fals
         </span>
       </button>
 
-      {/* Scroll hint with bouncing arrow */}
-      <div
-        className="flex flex-col items-center gap-2 mt-10"
-        style={{ color: 'var(--gold)', opacity: 0.25, zIndex: 10, position: 'relative' }}
-      >
-        <span style={{ fontSize: 10, letterSpacing: '0.3em', textTransform: 'uppercase' }}>Scroll to begin</span>
-        <span
-          style={{
-            fontSize: 16,
-            display: 'inline-block',
-            animation: 'scroll-bounce 2.2s ease-in-out infinite',
-          }}
-        >
-          ↓
-        </span>
-      </div>
     </div>
   )
 }

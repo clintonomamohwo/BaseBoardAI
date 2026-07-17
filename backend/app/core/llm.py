@@ -14,6 +14,11 @@ Each function:
   4. Parses the JSON
   5. Validates each item against the relevant Pydantic schema
   6. Raises HTTPException(502) on any failure — never silently swallows errors
+
+Scene chunking (invoke_storyboard_stage):
+  Long screenplays are split into individual scene blocks (by INT./EXT. heading)
+  and each block is sent as a separate LLM call, then merged.  This avoids
+  output-token limits that cause mid-JSON truncation on large scripts.
 """
 
 from __future__ import annotations
@@ -53,6 +58,7 @@ FALLBACK_MODELS: list[str] = [
 _FALLBACK_TOKENS = (
     "429",
     "consumption_limit_reached",
+    "token_quota_reached",        # account-level quota exhausted — try next model
     "model_no_support_for_function",
     "is not supported",
     "not supported for this environment",
@@ -88,12 +94,29 @@ def _build_llm(model_id: str | None = None, max_new_tokens: int = 4096) -> ChatW
 
 def _invoke_with_fallback(prompt_text: str, max_new_tokens: int = 4096) -> str:
     """
-    Invoke the LLM with automatic model fallback on 429 rate-limit errors.
+    Invoke the configured TEXT_PROVIDER with automatic fallback.
 
-    Tries settings.WATSONX_MODEL_ID first, then each model in FALLBACK_MODELS
-    (skipping any that duplicate the primary). Raises the last exception if all
-    models are exhausted.
+    TEXT_PROVIDER=watsonx (default):
+        Tries settings.WATSONX_MODEL_ID first, then each model in FALLBACK_MODELS
+        on 429 / rate-limit errors.
+
+    TEXT_PROVIDER=gemini:
+        Routes directly to _GeminiTextProvider from ai_factory.py.
+        No WatsonX calls are made.
+
+    Raises the last exception if all candidates are exhausted.
     """
+    if settings.TEXT_PROVIDER.lower() == "gemini":
+        try:
+            from app.core.ai_factory import AIFactory
+            return AIFactory.get_text_provider().generate(prompt_text, max_tokens=max_new_tokens)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Gemini text provider failed (%s) — falling back to WatsonX.", exc
+            )
+            # Fall through to WatsonX below
+
     primary = settings.WATSONX_MODEL_ID
     candidates = [primary] + [m for m in FALLBACK_MODELS if m != primary]
 
@@ -128,34 +151,49 @@ def _parse_json_response(raw: str) -> tuple[Any, bool]:
     `truncated` is True only when path 3 (truncation recovery) was used.
     Raises ValueError with context if all attempts fail.
     """
-    cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+    text = raw.strip()
+
+    # ── Pass 1: strip any markdown code fence (handles leading prose + fence) ──
+    # Matches ```json ... ``` or ``` ... ``` anywhere in the response
+    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        candidate = fence_match.group(1).strip()
+        try:
+            return json.loads(candidate), False
+        except json.JSONDecodeError:
+            pass
+
+    # ── Pass 2: strip leading/trailing fences with anchors (older pattern) ───
+    cleaned = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```\s*$", "", cleaned.strip())
     try:
         return json.loads(cleaned), False
     except json.JSONDecodeError:
         pass
 
-    # Fallback: extract the first complete JSON array or object
-    match = re.search(r"(\[.*\]|\{.*\})", raw, flags=re.DOTALL)
+    # ── Pass 3: extract first complete JSON array or object from anywhere ────
+    match = re.search(r"(\[.*\]|\{.*\})", text, flags=re.DOTALL)
     if match:
         try:
             return json.loads(match.group(1)), False
         except json.JSONDecodeError:
             pass
 
-    # Truncation recovery: the model was cut off mid-output (token limit hit).
-    # Find the last closing brace }, close the array there, and parse what we have.
-    array_start = raw.find("[")
+    # ── Pass 4: truncation recovery ──────────────────────────────────────────
+    # Model was cut off mid-output — recover fully-formed leading objects by
+    # walking backwards through closing-braces until a valid parse is found.
+    array_start = text.find("[")
     if array_start != -1:
-        last_brace = raw.rfind("}")
-        if last_brace != -1 and last_brace > array_start:
-            attempt = raw[array_start : last_brace + 1] + "\n]"
+        # Collect all positions of "}" in the text (descending order).
+        brace_positions = [i for i, ch in enumerate(text) if ch == "}" and i > array_start]
+        for pos in reversed(brace_positions):
+            attempt = text[array_start : pos + 1] + "\n]"
             try:
                 result = json.loads(attempt)
                 if isinstance(result, list) and result:
                     return result, True  # partial recovery — caller must warn user
             except json.JSONDecodeError:
-                pass
+                continue
 
     raise ValueError(f"LLM returned invalid JSON.\nRaw output:\n{raw[:500]}")
 
@@ -242,6 +280,91 @@ _STYLE_GUIDANCE: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Scene chunking helpers
+# ---------------------------------------------------------------------------
+
+# Matches either:
+#   **SCENE N — ...  (markdown bold heading used in this project's screenplays)
+#   INT. / EXT. / INT/EXT. / EXT/INT. at line start  (standard sluglines)
+_SCENE_BOUNDARY_RE = re.compile(
+    r"^(?:\*\*SCENE\s+\d+|[ \t]*(?:INT\.|EXT\.|INT/EXT\.|EXT/INT\.))",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Maximum number of screenplay scene-blocks to send in a single LLM call.
+# Keeping this low avoids hitting the model's output-token limit.
+_SCENES_PER_CHUNK = 3
+
+
+def _split_into_scene_blocks(script_text: str) -> list[str]:
+    """
+    Split a screenplay into individual scene blocks.
+
+    Boundaries are detected by:
+      • ``**SCENE N —`` markdown headings (this project's screenplay format)
+      • Standard sluglines: INT. / EXT. / INT/EXT. / EXT/INT. at line start
+
+    Returns a list of non-empty strings.  Any preamble before the first
+    detected boundary is discarded (it is world/character metadata, not
+    screenplay action).  Falls back to returning the whole text as one block
+    when no boundaries are found.
+    """
+    boundaries = [m.start() for m in _SCENE_BOUNDARY_RE.finditer(script_text)]
+    if not boundaries:
+        return [script_text]
+
+    blocks: list[str] = []
+    for idx, start in enumerate(boundaries):
+        end = boundaries[idx + 1] if idx + 1 < len(boundaries) else len(script_text)
+        block = script_text[start:end].strip()
+        if block:
+            blocks.append(block)
+
+    return blocks if blocks else [script_text]
+
+
+def _invoke_storyboard_chunk(
+    chunk_text: str,
+    character_context: str,
+    world_context: str,
+    global_aesthetic: str,
+    render_style: str,
+    director_style: str,
+    scene_number_offset: int,
+) -> tuple[list[ScriptSceneBase], bool]:
+    """
+    Invoke the storyboard LLM for a single chunk of screenplay text.
+    Renumbers scene_number fields so they are contiguous across chunks.
+    """
+    template = PromptTemplate(
+        input_variables=[
+            "character_context", "world_context", "raw_script_text",
+            "global_aesthetic", "render_style", "director_style", "shot_distribution_guidance",
+        ],
+        template=STORYBOARD_PROMPT,
+    )
+    prompt_text = template.format(
+        character_context=character_context,
+        world_context=world_context,
+        raw_script_text=chunk_text,
+        global_aesthetic=global_aesthetic,
+        render_style=render_style,
+        director_style=director_style,
+        shot_distribution_guidance=_STYLE_GUIDANCE.get(director_style, _STYLE_GUIDANCE["balanced"]),
+    )
+    raw_response = _invoke_with_fallback(prompt_text, max_new_tokens=16384)
+    parsed, truncated = _parse_json_response(raw_response)
+    if not isinstance(parsed, list):
+        parsed = [parsed]
+    scenes: list[ScriptSceneBase] = []
+    for i, item in enumerate(parsed):
+        # Re-number scenes so the merged list is contiguous.
+        item["scene_number"] = scene_number_offset + i + 1
+        scenes.append(ScriptSceneBase.model_validate(item))
+    return scenes, truncated
+
+
 def invoke_storyboard_stage(
     characters: list[CharacterProfileBase],
     environments: list[EnvironmentProfileBase],
@@ -252,8 +375,14 @@ def invoke_storyboard_stage(
 ) -> tuple[list[ScriptSceneBase], bool]:
     """
     Run STORYBOARD_PROMPT with compiled character + world context and the raw screenplay.
+
+    Long screenplays are automatically split into scene chunks (≤ _SCENES_PER_CHUNK
+    sluglines per call) and each chunk is sent as a separate LLM invocation to avoid
+    hitting output-token limits.  Results are merged into a single flat list.
+
     Returns a (scenes, truncated) tuple.
-    `truncated` is True when the LLM output was cut off and only partial scenes were recovered.
+    `truncated` is True when any chunk's LLM output was cut off and only partial
+    scenes were recovered.
     Raises HTTPException(502) on LLM or validation failure.
     """
     try:
@@ -263,27 +392,35 @@ def invoke_storyboard_stage(
         world_context = json.dumps(
             [e.model_dump() for e in environments], indent=2
         )
-        template = PromptTemplate(
-            input_variables=[
-                "character_context", "world_context", "raw_script_text",
-                "global_aesthetic", "render_style", "director_style", "shot_distribution_guidance",
-            ],
-            template=STORYBOARD_PROMPT,
-        )
-        prompt_text = template.format(
-            character_context=character_context,
-            world_context=world_context,
-            raw_script_text=raw_script_text,
-            global_aesthetic=global_aesthetic,
-            render_style=render_style,
-            director_style=director_style,
-            shot_distribution_guidance=_STYLE_GUIDANCE.get(director_style, _STYLE_GUIDANCE["balanced"]),
-        )
-        raw_response = _invoke_with_fallback(prompt_text, max_new_tokens=16384)
-        parsed, truncated = _parse_json_response(raw_response)
-        if not isinstance(parsed, list):
-            parsed = [parsed]
-        return [ScriptSceneBase.model_validate(item) for item in parsed], truncated
+
+        # ── Split screenplay into scene blocks ───────────────────────────────
+        scene_blocks = _split_into_scene_blocks(raw_script_text)
+
+        # ── Group blocks into chunks of _SCENES_PER_CHUNK ────────────────────
+        chunks: list[str] = []
+        for i in range(0, len(scene_blocks), _SCENES_PER_CHUNK):
+            chunk_blocks = scene_blocks[i : i + _SCENES_PER_CHUNK]
+            chunks.append("\n\n".join(chunk_blocks))
+
+        # ── Invoke LLM per chunk, merge results ──────────────────────────────
+        all_scenes: list[ScriptSceneBase] = []
+        any_truncated = False
+        for chunk_text in chunks:
+            chunk_scenes, chunk_truncated = _invoke_storyboard_chunk(
+                chunk_text,
+                character_context,
+                world_context,
+                global_aesthetic,
+                render_style,
+                director_style,
+                scene_number_offset=len(all_scenes),
+            )
+            all_scenes.extend(chunk_scenes)
+            if chunk_truncated:
+                any_truncated = True
+
+        return all_scenes, any_truncated
+
     except Exception as e:
         raise HTTPException(
             status_code=502,

@@ -199,12 +199,19 @@ def generate_character_package(
     ),
 ) -> dict:
     """
-    Generates the requested image sections for a character and returns them
-    as a dict keyed by section name. Each image is a base64 data URL.
-    Only requested sections are computed — callers fetch lazily per tab.
+    Generates the requested image sections for a character.
+
+    expressions, poses, and outfits each generate ONE grid sheet via
+    generate_sheet_image(), then deterministically slice it with sheet_slicer.
+    turnaround uses the same sheet approach (5×1 grid).
+    portrait is a single standalone call.
+
+    Returns the same {section: {cell_id: data_url}} dict the frontend expects.
     """
-    from app.core.image import _generate_pollinations
+    from app.core.image import generate_sheet_image, _generate_pollinations
     from app.core.prompt_builder import STYLE_PREFIXES as _STYLE_PREFIXES
+    from app.core.sheet_layouts import get_layout
+    from app.core.sheet_slicer import slice_sheet
 
     base = _char_base_desc(char_data)
     result: dict = {}
@@ -214,31 +221,30 @@ def generate_character_package(
         result["portrait"] = _generate_pollinations(prompt)
 
     if "turnaround" in sections:
-        result["turnaround"] = {}
-        for key, view_desc in _TURNAROUND_ANGLES:
-            prompt = _pkg_prompt(base, view_desc, render_style)
-            result["turnaround"][key] = _generate_pollinations(prompt)
+        layout = get_layout("turnaround")
+        sheet_prompt = layout.prompt_prefix(base)
+        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+        result["turnaround"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "expressions" in sections:
-        result["expressions"] = {}
-        for expr in _EXPRESSIONS:
-            prompt = _pkg_prompt(base, f"{expr} facial expression, head and shoulders", render_style)
-            result["expressions"][expr] = _generate_pollinations(prompt)
+        layout = get_layout("expressions")
+        sheet_prompt = layout.prompt_prefix(base)
+        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+        result["expressions"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "poses" in sections:
-        result["poses"] = {}
-        for key, pose_desc in _POSES:
-            prompt = _pkg_prompt(base, pose_desc, render_style)
-            result["poses"][key] = _generate_pollinations(prompt)
+        layout = get_layout("poses")
+        sheet_prompt = layout.prompt_prefix(base)
+        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+        result["poses"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "outfits" in sections:
-        result["outfits"] = {}
-        for key, outfit_desc in _OUTFITS:
-            prompt = _pkg_prompt(base, outfit_desc, render_style)
-            result["outfits"][key] = _generate_pollinations(prompt)
+        layout = get_layout("outfits")
+        sheet_prompt = layout.prompt_prefix(base)
+        sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+        result["outfits"] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     if "props" in sections:
-        # Auto-detect props from wardrobe description
         wardrobe = char_data.get("wardrobe_defaults", "")
         prop_words = [w.strip() for w in wardrobe.replace(",", " ").replace(".", " ").split() if len(w) > 3]
         prop_items = prop_words[:5] or ["prop", "accessory", "tool", "object", "item"]
@@ -255,42 +261,59 @@ def generate_character_package(
     return result
 
 
-@router.post("/character-package/generate-one", summary="Regenerate a single character image")
+@router.post("/character-package/generate-one", summary="Regenerate a single character image cell")
 def regenerate_character_image(
     char_data: dict = Body(...),
     section: str = Body(..., description="e.g. 'portrait', 'turnaround/front', 'expressions/happy'"),
     render_style: str = Body("bw_sketch"),
 ) -> dict:
     """
-    Regenerate exactly one image within a section. Returns { image_url: str|null }.
-    `section` uses slash notation: 'turnaround/front', 'expressions/angry', 'poses/running', etc.
+    Regenerate exactly one cell within a sheet section.
+
+    For sheet-based sections (turnaround, expressions, poses, outfits,
+    turnaround_360, premium_poses, material_closeups) a fresh full sheet is
+    generated and the requested cell is sliced out.  This keeps cell geometry
+    consistent with bulk generation.
+
+    For portrait (single image) the original single-call path is used.
+
+    Returns { image_url: str | null }.
     """
-    from app.core.image import _generate_pollinations, _STYLE_PREFIXES
+    from app.core.image import generate_sheet_image, _generate_pollinations
+    from app.core.sheet_layouts import LAYOUTS, get_layout
+    from app.core.sheet_slicer import slice_cell
+
+    # Section-name → layout key mapping
+    _SECTION_LAYOUT: dict[str, str] = {
+        "turnaround":       "turnaround",
+        "expressions":      "expressions",
+        "poses":            "poses",
+        "outfits":          "outfits",
+        "turnaround_360":   "turnaround_360",
+        "premium_poses":    "premium_poses",
+        "material_closeups":"material_closeups",
+    }
 
     base = _char_base_desc(char_data)
 
     if section == "portrait":
         prompt = _pkg_prompt(base, "hero portrait, neutral pose, looking at camera, bust shot", render_style)
-    elif section.startswith("turnaround/"):
-        key = section.split("/", 1)[1]
-        view_desc = dict(_TURNAROUND_ANGLES).get(key, key.replace("_", " "))
-        prompt = _pkg_prompt(base, view_desc, render_style)
-    elif section.startswith("expressions/"):
-        expr = section.split("/", 1)[1]
-        prompt = _pkg_prompt(base, f"{expr} facial expression, head and shoulders", render_style)
-    elif section.startswith("poses/"):
-        key = section.split("/", 1)[1]
-        pose_desc = dict(_POSES).get(key, key.replace("_", " "))
-        prompt = _pkg_prompt(base, pose_desc, render_style)
-    elif section.startswith("outfits/"):
-        key = section.split("/", 1)[1]
-        outfit_desc = dict(_OUTFITS).get(key, key.replace("_", " ") + " outfit")
-        prompt = _pkg_prompt(base, outfit_desc, render_style)
-    else:
-        prompt = _pkg_prompt(base, section.replace("/", " ").replace("_", " "), render_style)
+        return {"image_url": _generate_pollinations(prompt)}
 
-    url = _generate_pollinations(prompt)
-    return {"image_url": url}
+    if "/" in section:
+        section_name, cell_id = section.split("/", 1)
+        layout_key = _SECTION_LAYOUT.get(section_name)
+        if layout_key:
+            layout = get_layout(layout_key)
+            sheet_prompt = layout.prompt_prefix(base)
+            sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+            if sheet_url:
+                return {"image_url": slice_cell(sheet_url, layout, cell_id)}
+            return {"image_url": None}
+
+    # Fallback: unknown section — generate a single image directly
+    prompt = _pkg_prompt(base, section.replace("/", " ").replace("_", " "), render_style)
+    return {"image_url": _generate_pollinations(prompt)}
 
 
 # ---------------------------------------------------------------------------
@@ -346,36 +369,28 @@ def generate_full_character_pack(
     ),
 ) -> dict:
     """
-    Premium generation endpoint.  Produces:
-      - turnaround_360: 8-view 360° character turntable (deg_000 … deg_315)
-      - premium_poses: T-pose, A-pose + 6 extended action poses
-      - material_closeups: face, hair, fabric, hand, eye close-up reference sheets
-    Returns each section as a dict of key → base64 data URL.
+    Premium generation endpoint.  Each target generates ONE sheet image then
+    slices it deterministically — same approach as /generate.
+
+      - turnaround_360: 4×2 grid → 8 views sliced
+      - premium_poses:  4×2 grid → 8 poses sliced
+      - material_closeups: 3×2 grid → 6 closeups sliced
+
+    Returns each section as a dict of cell_id → base64 data URL.
     """
-    from app.core.image import _generate_pollinations
-    from app.core.prompt_builder import STYLE_PREFIXES as _STYLE_PREFIXES
+    from app.core.image import generate_sheet_image
+    from app.core.sheet_layouts import get_layout
+    from app.core.sheet_slicer import slice_sheet
 
     base = _char_base_desc(char_data)
     result: dict = {}
 
-    if "turnaround_360" in targets:
-        result["turnaround_360"] = {}
-        for key, view_desc in _TURNAROUND_360:
-            prompt = _pkg_prompt(base, view_desc, render_style)
-            result["turnaround_360"][key] = _generate_pollinations(prompt)
-
-    if "premium_poses" in targets:
-        result["premium_poses"] = {}
-        for key, pose_desc in _PREMIUM_POSES:
-            prompt = _pkg_prompt(base, pose_desc, render_style)
-            result["premium_poses"][key] = _generate_pollinations(prompt)
-
-    if "material_closeups" in targets:
-        result["material_closeups"] = {}
-        for key, mat_desc in _MATERIAL_CLOSEUPS:
-            prefix = _STYLE_PREFIXES.get(render_style, _STYLE_PREFIXES["bw_sketch"])
-            prompt = (prefix + f"{base}, {mat_desc}, technical reference, isolated white background")[:450]
-            result["material_closeups"][key] = _generate_pollinations(prompt)
+    for target in ("turnaround_360", "premium_poses", "material_closeups"):
+        if target in targets:
+            layout = get_layout(target)
+            sheet_prompt = layout.prompt_prefix(base)
+            sheet_url = generate_sheet_image(sheet_prompt, layout.canvas_width, layout.canvas_height)
+            result[target] = slice_sheet(sheet_url, layout) if sheet_url else {}
 
     return result
 
@@ -554,6 +569,8 @@ def _build_project_orm(
                 name=char.name,
                 wardrobe_defaults=char.wardrobe_defaults,
                 facial_blueprint=char.facial_blueprint.model_dump(),
+                story_role=char.story_role,
+                relationships=[r.model_dump() for r in char.relationships] if char.relationships else [],
             )
         )
     for scene_data in payload.scenes:
@@ -625,12 +642,18 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
         global_aesthetic=project.global_aesthetic,
         render_style=project.render_style,
         canon=canon,
+        truncated=False,
         characters=[
             CharacterProfileBase(
                 id=c.char_id,
                 name=c.name,
                 wardrobe_defaults=c.wardrobe_defaults,
                 facial_blueprint=FacialBlueprint.model_validate(c.facial_blueprint),
+                identity=getattr(c, "identity", None),
+                classification=getattr(c, "classification", None),
+                active_variant_id=getattr(c, "active_variant_id", None),
+                story_role=getattr(c, "story_role", None),
+                relationships=getattr(c, "relationships", None) or [],
             )
             for c in project.characters
         ],
@@ -672,6 +695,7 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
                         lens=f.lens,
                         focal_length=f.focal_length,
                         depth_style=f.depth_style,
+                        lens_prompt_suffix=f.lens_prompt_suffix,
                         locked_fields=f.locked_fields or [],
                         # Cinematic Brain decisions (Fix 3)
                         auto_selected=f.auto_selected or {},
@@ -770,21 +794,23 @@ def forge_storyboard_pipeline_stream(
             canon = _build_canon(characters, environments, payload.global_aesthetic, payload.render_style, scenes)
             canon_context = canon.model_dump()
 
-            # ── Image generation — one event per frame ───────────────────────
-            yield _sse("stage_start", {"stage": "images", "total": total_frames})
-            done_count = 0
-            for scene in scenes:
-                for frame in scene.frames:
-                    frame.generated_image_url = generate_frame_image(
-                        frame, scene,
-                        reference_style_image=payload.reference_style_image,
-                        render_style=payload.render_style,
-                        canon_context=canon_context,
-                    )
-                    done_count += 1
-                    yield _sse("image_progress", {"done": done_count, "total": total_frames})
-
-            yield _sse("stage_done", {"stage": "images"})
+            # ── Image generation — skipped when skip_images=True ─────────────
+            if getattr(payload, "skip_images", False):
+                yield _sse("stage_done", {"stage": "images_skipped", "total": total_frames})
+            else:
+                yield _sse("stage_start", {"stage": "images", "total": total_frames})
+                done_count = 0
+                for scene in scenes:
+                    for frame in scene.frames:
+                        frame.generated_image_url = generate_frame_image(
+                            frame, scene,
+                            reference_style_image=payload.reference_style_image,
+                            render_style=payload.render_style,
+                            canon_context=canon_context,
+                        )
+                        done_count += 1
+                        yield _sse("image_progress", {"done": done_count, "total": total_frames})
+                yield _sse("stage_done", {"stage": "images"})
 
             # ── Persist ──────────────────────────────────────────────────────
             project_data = StoryboardProjectCreate(

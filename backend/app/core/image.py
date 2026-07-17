@@ -219,24 +219,112 @@ def generate_frame_image(
     try:
         prompt = _build_image_prompt(frame, scene, render_style, canon_context)
         ref_b64 = _strip_data_url_header(reference_style_image) if reference_style_image else None
+        provider = settings.IMAGE_PROVIDER.lower()
 
-        # Branch 1: bw_sketch + reference → sketch-intersection path
+        # ── Gemini Imagen branch (falls back to Pollinations on failure) ──────
+        if provider == "gemini":
+            try:
+                from app.core.ai_factory import AIFactory
+                result = AIFactory.get_image_provider().generate(
+                    prompt,
+                    reference_b64=ref_b64,
+                    width=settings.POLLINATIONS_WIDTH,
+                    height=settings.POLLINATIONS_HEIGHT,
+                )
+                if result:
+                    return result
+                raise RuntimeError("Gemini Imagen returned None")
+            except Exception as exc:
+                logger.warning(
+                    "Gemini Imagen failed for frame %s (%s) — falling back to Pollinations.",
+                    frame.frame_number, exc,
+                )
+                provider = "pollinations"  # fall through to Pollinations branches below
+
+        # ── Branch 1: bw_sketch + reference → sketch-intersection path ───────
         if ref_b64 and render_style == 'bw_sketch':
             sketch_prompt = _inject_sketch_constraints(prompt)
-            if settings.IMAGE_PROVIDER == "huggingface":
+            if provider == "huggingface":
                 return _generate_huggingface_img2img(sketch_prompt, ref_b64, strength=0.78)
             return _generate_pollinations_img2img(sketch_prompt, ref_b64)
 
-        # Branch 2: reference present, other render style → standard img2img
+        # ── Branch 2: reference present, other render style → img2img ────────
         if ref_b64:
-            if settings.IMAGE_PROVIDER == "huggingface":
+            if provider == "huggingface":
                 return _generate_huggingface_img2img(prompt, ref_b64, strength=0.55)
             return _generate_pollinations_img2img(prompt, ref_b64)
 
-        # Branch 3: no reference → text-to-image
-        if settings.IMAGE_PROVIDER == "huggingface":
+        # ── Branch 3: no reference → text-to-image ────────────────────────────
+        if provider == "huggingface":
             return _generate_huggingface(prompt)
         return _generate_pollinations(prompt)
     except Exception as e:
         logger.error("Image generation failed for frame %s: %s", frame.frame_number, e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Sheet image generation (one call → full grid)
+# ---------------------------------------------------------------------------
+
+def generate_sheet_image(
+    sheet_prompt: str,
+    canvas_width: int,
+    canvas_height: int,
+) -> str | None:
+    """
+    Generate a single full-grid sheet image using the active image provider.
+
+    The prompt is the full sheet generation prompt produced by
+    SheetLayout.prompt_prefix().  The canvas dimensions come from the layout
+    manifest so the image matches the grid geometry exactly.
+
+    Returns a base64 data URL on success, or None on any failure.
+    Never raises — sheet generation is non-fatal.
+    """
+    try:
+        provider = settings.IMAGE_PROVIDER.lower()
+
+        if provider == "gemini":
+            try:
+                from app.core.ai_factory import AIFactory
+                result = AIFactory.get_image_provider().generate(
+                    sheet_prompt,
+                    width=canvas_width,
+                    height=canvas_height,
+                )
+                if result:
+                    return result
+                raise RuntimeError("Gemini Imagen returned None")
+            except Exception as exc:
+                logger.warning(
+                    "Gemini Imagen sheet generation failed (%s) — falling back to Pollinations.", exc
+                )
+                provider = "pollinations"
+
+        # Pollinations: encode prompt and request exact canvas dimensions
+        encoded = urllib.parse.quote(sheet_prompt)
+        url = (
+            f"https://image.pollinations.ai/prompt/{encoded}"
+            f"?width={canvas_width}"
+            f"&height={canvas_height}"
+            f"&model=flux"
+            f"&nologo=true"
+        )
+        for attempt, delay in enumerate(_RETRY_DELAYS, start=1):
+            if delay:
+                time.sleep(delay)
+            try:
+                response = httpx.get(url, timeout=90, follow_redirects=True)
+                if response.status_code == 200:
+                    return _convert_bytes_to_data_url(response.content)
+                logger.warning(
+                    "Pollinations sheet attempt %d/%d returned %s",
+                    attempt, len(_RETRY_DELAYS), response.status_code,
+                )
+            except httpx.TimeoutException:
+                logger.warning("Pollinations sheet attempt %d/%d timed out", attempt, len(_RETRY_DELAYS))
+        return None
+    except Exception as exc:
+        logger.error("Sheet image generation failed: %s", exc)
         return None

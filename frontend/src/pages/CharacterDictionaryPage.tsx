@@ -293,6 +293,27 @@ function CharacterRow({
               })()}
             </div>
 
+            {/* Story role badge */}
+            {char.story_role && (
+              <span style={{
+                fontSize: 7, letterSpacing: '0.15em', textTransform: 'uppercase',
+                flexShrink: 0, borderRadius: 999, padding: '2px 7px',
+                border: `1px solid ${
+                  char.story_role === 'Protagonist' ? 'rgba(201,168,76,0.5)' :
+                  char.story_role === 'Antagonist'  ? 'rgba(220,60,60,0.5)'  :
+                  char.story_role === 'Supporting'  ? 'rgba(100,160,220,0.5)' :
+                  'rgba(150,150,150,0.3)'
+                }`,
+                color:
+                  char.story_role === 'Protagonist' ? 'var(--gold)' :
+                  char.story_role === 'Antagonist'  ? '#e06060' :
+                  char.story_role === 'Supporting'  ? '#7ab0dc' :
+                  'var(--text-muted)',
+              }}>
+                {char.story_role}
+              </span>
+            )}
+
             {/* Scene count badge */}
             {sceneCount > 0 && (
               <span style={{
@@ -404,6 +425,35 @@ function CharacterRow({
                 ))}
               </div>
             </div>
+
+            {/* Relationships panel */}
+            {char.relationships && char.relationships.length > 0 && (
+              <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+                <p style={{ fontSize: 8, letterSpacing: '0.2em', color: 'var(--gold)', textTransform: 'uppercase', opacity: 0.6, marginBottom: 8 }}>Relationships</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {char.relationships.map((rel: { target_name: string; relationship_type: string; notes?: string }, i: number) => {
+                    const typeColor: Record<string, string> = {
+                      ally: '#4ade80', enemy: '#e06060', romantic: '#f472b6',
+                      mentor: '#a78bfa', family: '#fb923c', rival: '#facc15', neutral: 'var(--text-muted)',
+                    }
+                    const col = typeColor[rel.relationship_type] ?? 'var(--text-muted)'
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                        <span style={{ fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: col, border: `1px solid ${col}33`, borderRadius: 999, padding: '2px 6px', flexShrink: 0 }}>
+                          {rel.relationship_type}
+                        </span>
+                        <div>
+                          <span style={{ fontSize: 11, color: 'var(--text-base)', fontWeight: 500 }}>{rel.target_name}</span>
+                          {rel.notes && (
+                            <p style={{ fontSize: 10, color: 'var(--text-muted)', opacity: 0.65, marginTop: 1, lineHeight: 1.4 }}>{rel.notes}</p>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Wardrobe + edit fields */}
             <div style={{ padding: '0 14px 12px', borderTop: '1px solid var(--border)' }}>
@@ -530,6 +580,7 @@ export default function CharacterDictionaryPage({
 }: Props) {
   const [characters,       setCharacters]       = useState(initialCharacters)
   const [search,           setSearch]           = useState('')
+  const [activeTag,        setActiveTag]        = useState<string>('All')
   const [activePackage,    setActivePackage]    = useState<CharacterProfile | null>(null)
   const [packagedCharIds,  setPackagedCharIds]  = useState<Set<string>>(new Set())
   const [impactState,      setImpactState]      = useState<{
@@ -538,10 +589,13 @@ export default function CharacterDictionaryPage({
   } | null>(null)
   const [isRegenerating,   setIsRegenerating]   = useState(false)
 
-  const filtered = characters.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.id.toLowerCase().includes(search.toLowerCase())
-  )
+  const filtered = characters.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase()) ||
+      c.id.toLowerCase().includes(search.toLowerCase())
+    const matchesTag = activeTag === 'All' ||
+      (c.story_role ?? 'Other') === activeTag
+    return matchesSearch && matchesTag
+  })
 
   function handleDelete(id: string) {
     setCharacters(prev => prev.filter(c => c.id !== id))
@@ -671,10 +725,20 @@ export default function CharacterDictionaryPage({
       {/* Filter row */}
       <div className="flex gap-1 px-6 py-3 border-b border-[var(--border)] flex-shrink-0">
         {['All', ...ROLE_TAGS].map((tag) => (
-          <button key={tag} className="text-[9px] tracking-widest px-3 py-1 rounded-full uppercase transition-all border border-[var(--border)] text-[var(--text-base)]/40 hover:border-[var(--gold)]/40 hover:text-[var(--gold)]/70">
-            {tag}
-          </button>
-        ))}
+            <button
+              key={tag}
+              onClick={() => setActiveTag(tag)}
+              className="text-[9px] tracking-widest px-3 py-1 rounded-full uppercase transition-all border"
+              style={{
+                borderColor: activeTag === tag ? 'var(--gold)' : 'var(--border)',
+                color: activeTag === tag ? 'var(--gold)' : 'var(--text-base)',
+                opacity: activeTag === tag ? 1 : 0.4,
+                background: activeTag === tag ? 'rgba(201,168,76,0.08)' : 'transparent',
+              }}
+            >
+              {tag}
+            </button>
+          ))}
         <div className="ml-auto">
           <input
             value={search}

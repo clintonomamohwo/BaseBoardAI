@@ -142,7 +142,11 @@ export default function App() {
   if (view === 'compass') return (
     <CompassNavPage
       entering
-      onSelect={(s) => { switchTab(s as StudioTab); setView('studio') }}
+      onSelect={(s) => {
+        if (s === 'library') { setView('library'); return }
+        switchTab(s as StudioTab)
+        setView('studio')
+      }}
     />
   )
 

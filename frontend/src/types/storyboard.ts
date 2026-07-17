@@ -3,7 +3,7 @@
  * Field names match snake_case backend fields.
  */
 
-export type RenderStyle = 'bw_sketch' | 'flat_color' | 'full_shaded'
+export type RenderStyle = 'bw_sketch' | 'bw_detailed' | 'flat_color' | 'full_shaded'
 
 // ---------------------------------------------------------------------------
 // Character Package — rich per-character reference data (frontend-only state)
@@ -211,6 +211,16 @@ export interface QAScoreResult {
   repairs: QARepairAction[]
 }
 
+export type StoryRoleType = 'Protagonist' | 'Antagonist' | 'Supporting' | 'Other'
+export type RelationshipType = 'ally' | 'enemy' | 'romantic' | 'mentor' | 'family' | 'neutral' | 'rival'
+
+export interface CharacterRelationshipEntry {
+  target_id: string
+  target_name: string
+  relationship_type: RelationshipType
+  notes?: string | null
+}
+
 export interface CharacterProfile {
   id: string
   name: string
@@ -218,6 +228,10 @@ export interface CharacterProfile {
   wardrobe_defaults: string
   /** User-uploaded reference image (base64 data URL). Not stored in DB — frontend only. */
   reference_image?: string
+  /** Narrative story role — set by AI from script analysis */
+  story_role?: StoryRoleType | null
+  /** Directed relationships to other characters — set by AI from script analysis */
+  relationships?: CharacterRelationshipEntry[]
   // ── Character DNA System layers (CKG) ────────────────────────────────────
   identity?: CharacterIdentity | null
   species?: SpeciesProfile
@@ -287,6 +301,7 @@ export interface StoryboardFrame {
   lens?: string | null
   focal_length?: string | null
   depth_style?: string | null
+  lens_prompt_suffix?: string | null
   /** Fields explicitly locked by the user — Cinematic Brain never overwrites these. */
   locked_fields?: string[]
   /**

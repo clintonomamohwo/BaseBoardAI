@@ -1,5 +1,5 @@
 
-CHARACTER_PROMPT = """You are an expert Character Concept Artist. Convert the raw character notes below into a JSON array.
+CHARACTER_PROMPT = """You are an expert Character Concept Artist and Story Analyst. Convert the raw character notes and screenplay below into a JSON array.
 
 RULES:
 - Output ONLY a valid JSON array. No prose, no markdown, no explanation — raw JSON only.
@@ -14,8 +14,35 @@ RULES:
     "distinct_markers": "<scars, tattoos, or null>",
     "fixed_seed_reference": null
   }},
-  "wardrobe_defaults": "<signature clothing and accessories as a single sentence>"
+  "wardrobe_defaults": "<signature clothing and accessories as a single sentence>",
+  "story_role": "<one of: Protagonist | Antagonist | Supporting | Other — based on their centrality and function in the story>",
+  "relationships": [
+    {{
+      "target_id": "CHAR_<UPPERCASED_FIRSTNAME_OF_OTHER_CHARACTER>",
+      "target_name": "<full name of the other character>",
+      "relationship_type": "<one of: ally | enemy | romantic | mentor | family | neutral | rival — inferred strictly from their interactions in the script>",
+      "notes": "<one sentence explaining why this relationship type was chosen>"
+    }}
+  ]
 }}
+
+STORY ROLE RULES:
+- Protagonist: the central character the story follows most closely
+- Antagonist: the character whose goals most directly oppose the Protagonist
+- Supporting: characters who serve the main story but are not central
+- Other: characters with very minor or unclear roles
+
+RELATIONSHIP RULES:
+- Only include relationships between characters who directly interact in the script
+- Infer the type from actions, dialogue, and conflict — not assumptions about names
+- ally: cooperate toward a shared goal
+- enemy: actively work against each other
+- romantic: express or imply romantic feelings
+- mentor: one guides or teaches the other
+- family: related by blood or deeply family-like bond
+- rival: compete but without outright hostility
+- neutral: interact but with no clear positive or negative dynamic
+- If only one character is present, set "relationships" to []
 
 Raw character notes:
 {raw_character_notes}

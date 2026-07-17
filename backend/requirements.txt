@@ -9,3 +9,5 @@ langchain-ibm>=0.1.0
 ibm-watsonx-ai>=1.1.2
 sqlalchemy>=2.0.36
 alembic==1.13.1
+Pillow>=10.0.0
+google-genai>=1.0.0

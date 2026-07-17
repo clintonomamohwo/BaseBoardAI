@@ -178,7 +178,7 @@ def build_frame_prompt(
     lens_suffix  = _get_lens_suffix(frame)
 
     # Detect any CHAR_ID tokens in the action text for canon lookup
-    char_ids = re.findall(r"\bCHAR_[A-Z]+\b", frame.action_breakdown)
+    char_ids = re.findall(r"\bCHAR_[A-Z]+\b", frame.action_breakdown or "")
     canon_str   = _get_canon_constraints(char_ids, canon_context)
     ability_str = _get_ability_modifiers(char_ids, canon_context)
 
@@ -202,6 +202,19 @@ def build_frame_prompt(
     body += _NEGATIVES.get(render_style, "")
 
     full = style_prefix + body
+
+    # ── Visual DNA injection ─────────────────────────────────────────────────
+    # If the Project Canon contains visual_dna tokens (extracted by Gemini Vision
+    # after Imagen character generation), prefix the prompt with them so that
+    # Pollinations / open-source models stay anchored to the Imagen reference.
+    if canon_context:
+        visual_dna: dict[str, str] = canon_context.get("visual_dna", {})
+        if visual_dna:
+            char_names = list(getattr(frame, "characters_present", None) or [])
+            if char_names:
+                from app.core.visual_qa import inject_visual_dna_prefix
+                full = inject_visual_dna_prefix(full, char_names, visual_dna)
+
     return full[:_MAX_PROMPT_LENGTH]
 
 

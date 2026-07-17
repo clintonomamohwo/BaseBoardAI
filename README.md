@@ -5,9 +5,9 @@
 
 > *Where Stories Become Worlds.*
 
-**BaseBoard AI** is a cinematic pre-visualization platform that transforms a screenplay, novel, or story document into a fully produced storyboard — complete with a locked character bible, scene-by-scene world map, and AI-generated frame imagery — in under a minute.
+**BaseBoard AI** is a cinematic pre-visualization platform that transforms a screenplay, novel, or story document into a fully produced storyboard — complete with a locked character bible, scene-by-scene world map, AI-generated frame imagery, and a character relationship graph — in under a minute.
 
-Built on IBM watsonx AI, React 19, and FastAPI. No drawing skills required.
+Built on IBM watsonx AI + Google Gemini, React 19, and FastAPI.
 
 ---
 
@@ -17,7 +17,13 @@ Built on IBM watsonx AI, React 19, and FastAPI. No drawing skills required.
 
 - Python 3.11 or higher
 - Node.js 20 or higher
-- An [IBM watsonx](https://www.ibm.com/watsonx) account with a Project ID and API key
+- One of:
+  - An [IBM watsonx](https://www.ibm.com/watsonx) account with a Project ID and API key *(for text/LLM)*
+  - A [Google Gemini](https://aistudio.google.com/app/apikey) API key *(for text, vision, and image generation)*
+
+> **Tip:** The default setup uses **WatsonX for text** (characters, world bible, storyboard planning) and **Google Gemini for images and vision** — you need both keys for the full experience. Pollinations.ai is the zero-config fallback for images and requires no key.
+
+---
 
 ### 1. Clone the Repository
 
@@ -25,6 +31,8 @@ Built on IBM watsonx AI, React 19, and FastAPI. No drawing skills required.
 git clone https://github.com/clintonomamohwo/BaseBoardAI.git
 cd BaseBoardAI
 ```
+
+---
 
 ### 2. Backend Setup
 
@@ -45,21 +53,32 @@ cp .env.example .env
 Edit `.env` with your credentials:
 
 ```dotenv
-# IBM watsonx — required
-WATSONX_API_KEY=your_api_key_here
-WATSONX_PROJECT_ID=your_project_id_here
+# ── Provider routing ──────────────────────────────────────────────────────
+# TEXT_PROVIDER:   watsonx | gemini
+TEXT_PROVIDER=watsonx
+
+# IMAGE_PROVIDER:  pollinations | gemini | huggingface
+# pollinations = free, no API key required (recommended for getting started)
+# gemini       = higher quality, requires GEMINI_API_KEY
+IMAGE_PROVIDER=pollinations
+
+# VISION_PROVIDER: gemini (only option — required for anatomy audit)
+VISION_PROVIDER=gemini
+
+# ── IBM watsonx ───────────────────────────────────────────────────────────
+WATSONX_API_KEY=your_watsonx_api_key
+WATSONX_PROJECT_ID=your_project_id
 WATSONX_URL=https://us-south.ml.cloud.ibm.com
 WATSONX_MODEL_ID=meta-llama/llama-3-3-70b-instruct
 
-# Image generation — Pollinations requires no API key
-IMAGE_PROVIDER=pollinations
+# ── Google Gemini ─────────────────────────────────────────────────────────
+# Get your key at: https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_TEXT_MODEL=gemini-3.5-flash
+GEMINI_FAST_MODEL=gemini-3.5-flash
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-lite-image
 
-# Only required if IMAGE_PROVIDER=huggingface
-HF_API_TOKEN=
-HF_IMAGE_MODEL=stabilityai/stable-diffusion-xl-base-1.0
-HF_IMG2IMG_MODEL=stabilityai/stable-diffusion-xl-refiner-1.0
-
-# Canvas dimensions
+# ── Pollinations (no key needed) ──────────────────────────────────────────
 POLLINATIONS_WIDTH=768
 POLLINATIONS_HEIGHT=512
 ```
@@ -67,11 +86,12 @@ POLLINATIONS_HEIGHT=512
 Start the backend:
 
 ```bash
-source .venv/bin/activate    
 uvicorn app.main:app --reload
 # API runs at  http://localhost:8000
 # Auto-docs at http://localhost:8000/docs
 ```
+
+---
 
 ### 3. Frontend Setup
 
@@ -81,16 +101,25 @@ cd ../frontend
 # Install dependencies
 npm install
 
-# Optional: override backend URL (defaults to http://localhost:8000)
-# Create .env.local and add:
-# VITE_API_URL=http://localhost:8000
-
 # Start the dev server
 npm run dev
 # App runs at http://localhost:5173
 ```
 
-Open `http://localhost:5173` in your browser. You are ready.
+Open `http://localhost:5173` in your browser.
+
+---
+
+### Minimal Setup (Free, No API Key Required)
+
+If you just want to try the app with zero credentials:
+
+1. Set `IMAGE_PROVIDER=pollinations` in `.env` (no key needed)
+2. Set `VISION_PROVIDER=gemini` and add your free Gemini key (free tier available at [aistudio.google.com](https://aistudio.google.com/app/apikey))
+3. Set `TEXT_PROVIDER=gemini` and reuse the same Gemini key
+4. Leave all WatsonX fields empty
+
+Everything except WatsonX-specific model fallbacks will work on the free Gemini tier.
 
 ---
 
@@ -98,15 +127,13 @@ Open `http://localhost:5173` in your browser. You are ready.
 
 BaseBoard AI is built for writers, directors, game designers, and creative teams who need to move from idea to visual production blueprint without an army of artists or weeks of pre-production.
 
-Upload a PDF, Word document, screenplay, or Markdown file. The **Genesis Engine** — a three-stage IBM watsonx AI pipeline — automatically:
+You give it a screenplay or story document. It gives you back:
 
-1. Extracts your characters and builds a facial blueprint for each one
-2. Maps every location into a world bible with environmental and lighting data
-3. Breaks your script into cinematography-ready scenes and frames
-4. Runs the **Director Engine** to plan shot composition, lens selection, and rhythm before any image is generated
-5. Generates storyboard thumbnails for every frame
-
-The result is a premium dark-mode **Studio** with a three-column storyboard canvas, animatic player, character dictionary, world bible, and a full **Character Package** system for every character.
+- A **locked character bible** with facial blueprints, wardrobe, story roles, and relationship graph
+- A **world map** with location profiles, lighting keys, and spatial textures
+- A **storyboard** with cinematographer-directed shot cards (shot type, camera angle, movement, lighting, mood, dialogue, director's rationale)
+- **AI-generated frame images** for every shot
+- A full **Character Package** for each character (portrait, turnaround, expressions, poses, outfits)
 
 ---
 
@@ -114,28 +141,30 @@ The result is a premium dark-mode **Studio** with a three-column storyboard canv
 
 | Feature | Description |
 |---|---|
-| **Genesis Engine** | One-click full pipeline: characters → world → storyboard → Director Engine → images |
-| **Director Engine** | Cinematic planning layer between LLM output and image generation |
-| **Shot Balancer** | Tracks 10 shot-type categories, enforces composition diversity across all frames |
-| **Lens Planner** | 13 focal length profiles (24mm Anamorphic, 85mm Portrait, 35mm Tracking, etc.) |
-| **Continuity Engine** | Scans the entire project for impact when any canonical asset changes |
-| **Three-Level Action** | `narrative_action` (author) / `visual_action` (AI staging) / `animation_beats` (Maya/Unreal) |
-| **Character Package** | Portrait, 5-angle turnaround, 9 expressions, 7 poses, 7 outfits, props, 360° premium pack |
-| **Character Identity System** | Identity / Species / Variants / Rendering Style stored as independent layers |
-| **Visual QA Engine** | Per-frame confidence score across Identity, Species, Anatomy, Composition, Lighting, Props, Continuity |
-| **Creative Knowledge Graph** | Single source of truth for every AI generation in the project |
-| **Three Render Styles** | B&W Sketch, Flat Color, Full Shaded |
-| **Reference Image (img2img)** | Upload a visual reference; all frames generated with img2img consistency |
-| **Asset Locking** | Lock frames, specific fields, or entire characters so re-runs never overwrite approved work |
-| **Regenerate Selectively** | Regenerate one frame's image, staging direction, or composition without touching anything else |
-| **Continuity Impact Modal** | Shows exactly which frames and assets are affected before any regeneration begins |
-| **World Bible Import** | Import a DOCX, PDF, or Markdown world-building document directly into the project |
-| **Animatic Player** | Step through frames with captions and sound cues |
-| **Locked Cut + Export** | Flag frames, build a curated cut, export as PNG + production manifest ZIP |
-| **Project Library** | All projects persisted in the backend database |
-| **BMS Motion System** | "Modern Heritage" micro-animation system (Director's Light, Compass, Brass Reflection) |
-| **LLM Fallback Chain** | Auto-walks four watsonx models on rate-limit; never drops the pipeline |
-| **Dark / Light Theme** | System-aware with localStorage persistence |
+| **3-Stage AI Pipeline** | Characters → World Bible → Storyboard, each validated by Pydantic schemas |
+| **Genesis Engine** | Animated 12-task pipeline screen with per-stage live progress bars |
+| **Director Engine** | AI cinematographer — assigns shot type, lens, camera movement, and lighting per frame |
+| **Creative Knowledge Graph (CKG)** | Single source of truth for all AI generation — characters, species, variants, abilities |
+| **Character DNA System** | 3-layer identity (who · what · how) — identity, species, physical form, variants |
+| **Story Roles** | AI assigns Protagonist / Antagonist / Supporting / Other from script analysis |
+| **Relationship Graph** | AI infers ally / enemy / romantic / mentor / family / neutral / rival from script interactions |
+| **Character Package** | Auto-generated portrait, 5-view turnaround, expressions, poses, outfit sheets |
+| **Visual QA Engine** | Gemini Vision audits every generated image for anatomy mutations, deformities, and continuity |
+| **Visual DNA Token** | Gemini Vision describes a character's appearance as a reusable prompt prefix |
+| **Continuity Engine** | Detects and flags frames affected by character or world edits |
+| **Animatic Player** | Plays all storyboard frames as a sequential animatic with per-frame timing |
+| **Vault Grid** | Gallery view of all generated frame images with lightbox |
+| **Locked Cut Folder** | Pin and protect specific frames from pipeline re-runs |
+| **Batch Export** | Export selected frames as PNG files or JSON |
+| **Multi-Provider Images** | Pollinations (free) · Gemini Imagen · HuggingFace — switch via `.env` |
+| **Multi-Provider Text** | IBM WatsonX (default) · Google Gemini — switch via `TEXT_PROVIDER` |
+| **Model Fallback Chain** | WatsonX auto-retries through 4 models on 429 rate-limit |
+| **4 Render Styles** | B&W Sketch · B&W Detailed · Flat Color · Full Shaded |
+| **5 Director Styles** | Balanced · Cinematic · Dialogue · Action · Intimate |
+| **Project Library** | Save, browse, load, and delete projects (SQLite persistence) |
+| **World Bible** | Locations, factions, lore entries, timeline — importable from documents |
+| **Dark / Light Theme** | Full dark-first theme with toggle |
+| **Demo Project** | Instant demo — "The Lost Compass" Sci-Fi adventure, no upload required |
 
 ---
 
@@ -143,57 +172,60 @@ The result is a premium dark-mode **Studio** with a three-column storyboard canv
 
 ### Creating a Project
 
-1. Open `http://localhost:5173` and click **New Project**.
-2. Choose a creation path:
-   - **Upload Story** — drag and drop a PDF, DOCX, TXT, FDX, or Markdown file, pick a render style, click **Analyse Script →**
-   - **Use Template** — download the structured Markdown scaffold, fill it in, upload it (highest AI accuracy)
-   - **Start Blank** — open the Studio with an empty project and the manual pipeline form
-3. Watch the Genesis Engine process 12 analysis tasks in real time.
-4. Review the **Creative Director's Report** — genre, runtime estimate, character and scene counts, detected themes.
-5. Click **Enter Studio →**.
+1. Click **Enter Studio** on the landing page
+2. Choose a creation method:
+   - **Genesis Upload** — upload a PDF, DOCX, or TXT screenplay/story document
+   - **Start Blank** — jump straight to the Studio's manual pipeline form
+   - **Load from Library** — open a previously saved project
+3. If using Genesis Upload: the **Genesis Engine** runs the full pipeline with a live 4-stage progress screen (Characters → World Bible → Storyboard → Images)
+4. After the pipeline completes, the **Creative Director's Report** summarises what was found
+5. Click **Enter Studio** to open the full workstation
 
 ### Working in the Studio
 
-- **Scene Index** (left column) — click any scene to load its frames. Drag to reorder. Delete scenes you do not need.
-- **Storyboard Canvas** (centre) — each frame shows the generated image, shot type, camera movement, duration, and visual action. Click the image for a full-screen gallery lightbox. Use **▼ Full Sheet** to expand the complete production sheet.
-- **Action Timeline** — click the toggle below the frame grid to reveal the per-scene beat sheet with running timestamps and dialogue indicators.
-- **Regenerate Visual Action** — in any expanded production sheet, click **↺ Regenerate Visual Action** to get a new AI staging direction without regenerating the image.
-- **Studio Inspector** (right column) — scene metadata, color palette, emotional tone, lighting notes, and a reference image uploader for img2img.
-- **Animatic Player** — click the **Player** tab to step through frames with action breakdowns as captions.
-- **Vault** — the **Vault** tab shows every frame in every scene in a gallery grid.
-- **Locked Cut** — toggle frames (★) to lock them, then open the **Locked Cut** tab to see your curated selection. Use **Batch Export** to download as a ZIP.
-- **Re-run** — click **↺ Re-run** to re-execute the pipeline with a new render style or aesthetic. Artist-uploaded frames (marked ◈) are never overwritten.
+The Studio has three tabs:
+
+**STORYBOARD** — 3-panel layout:
+- Left: Scene Index (reorderable scene list)
+- Centre: Storyboard Canvas (frame cards with generated images)
+- Right: Studio Inspector (shot details, director notes, lens data, regeneration controls)
+
+Additional views: Animatic Player · Vault Grid · Locked Cut Folder
+
+**CHARACTERS** — Character Dictionary with:
+- Filter by story role (Protagonist / Antagonist / Supporting / Other)
+- Search by name or ID
+- Expand any character for portrait, blueprint details, and relationship graph
+- Open full **Character Package** for portrait · turnaround · expressions · poses · outfits
+
+**WORLD BIBLE** — Location cards with:
+- Sub-tabs: Locations · Factions · Lore · Artifacts · Timelines
+- Import from a world bible document
 
 ### Character Dictionary
 
-1. Navigate to the **CHARACTERS** tab in the top bar.
-2. Each character is listed with an AI-generated portrait thumbnail (generated on first expand).
-3. Click any character to expand their facial blueprint, wardrobe, and portrait.
-4. Edit character fields inline — the Continuity Engine scans for affected frames and shows the **Continuity Impact Modal** before regenerating.
-5. Click **✦ Full Package** to open the Character Package suite.
+Each character card shows:
+- **Story role badge** — colour-coded: gold (Protagonist), red (Antagonist), blue (Supporting)
+- **Completion bar** — fills as Character Package sections are generated
+- **Relationship panel** — expands to show all AI-inferred relationships with type badges:
+  - 🟢 ally · 🔴 enemy · 🩷 romantic · 🟣 mentor · 🟠 family · 🟡 rival · ⬜ neutral
 
 ### Character Package
 
-Each character has a full reference suite across these tabs:
-
-- **Identity** — upload up to 5 canonical reference images (Primary, Front, Left, Right, Back). BaseBoard extracts identity fields automatically from every upload. A single portrait is enough.
-- **Overview** — LLM-generated biography, personality, goals, and fears.
-- **Portrait** — hero portrait image.
-- **Turnaround** — 5-angle character sheet (front, ¾ front, side, ¾ back, back).
-- **Expressions** — 9-state expression grid (neutral, happy, laughing, angry, sad, surprised, fearful, thinking, crying).
-- **Poses** — 7 standard poses (standing, walking, running, sitting, pointing, holding object, hero pose).
-- **Outfits** — 7 outfit variants (default, casual, formal, travel, combat, winter, summer).
-- **Props** — auto-detected prop references from the wardrobe description.
-- **Species** — select the character's anatomy type (Human, Elf, Wolf, Dragon, Robot, Vampire, Custom). Species controls QA Engine anatomy validation and injects the appropriate prompt prefix. Human is the default.
-- **Variants** — manage appearance variants: Default, Battle Armor, Winter Outfit, Elf Form, Vampire Form, Future Version, or create your own. Variants inherit the base identity — only outfit, hair, accessories, species, and age change.
-- **Relationships** — SVG node graph of connections to other characters (ally, enemy, romantic, mentor, family, rival).
-- **Quality** — Visual QA Engine: overall confidence score (0–100%) and per-category breakdown across Identity, Species, Anatomy, Composition, Lighting, Props, and Continuity.
-
-Click **Full Pack** to generate the premium 360° turnaround (8 angles), premium poses (T-pose, A-pose, fighting stance, etc.), and material close-ups (face, hair, fabric, hands, eyes). All generated sections are version-tracked.
+Click **✦ Full Package** on any character to open their dedicated production package:
+- **Overview** — AI-generated biography, personality, goals, fears
+- **Portrait** — hero portrait
+- **Turnaround** — 5-view reference sheet (front / ¾ front / side / ¾ back / back)
+- **Expressions** — facial expression sheet (neutral, happy, angry, sad, etc.)
+- **Poses** — action pose library
+- **Outfits** — outfit variant sheets
+- **Props** — signature props and accessories
 
 ### World Bible
 
-Navigate to the **WORLD** tab to see every detected location with its emotional tone, color palette, environmental type, time-of-day descriptor, and all storyboard frames shot there. Upload a location reference image to propagate it as an img2img anchor across all frames in that location. Import an external world-building document via **Import World Bible**.
+- Upload a `.pdf`, `.docx`, or `.txt` world document
+- AI extracts: environments, factions, lore entries, timeline events
+- Merge into an existing project or start fresh
 
 ---
 
@@ -202,86 +234,87 @@ Navigate to the **WORLD** tab to see every detected location with its emotional 
 ### Pipeline Overview
 
 ```
-Document Upload (PDF / DOCX / TXT / FDX / MD)
-         │
-         ▼  client-side extraction
-Stage 1 — Character Standardizer       (IBM watsonx LLM)
-         │  Extracts: FacialBlueprint, wardrobe, CHAR_ID tokens
-         ▼
-Stage 2 — World Architect              (IBM watsonx LLM)
-         │  Extracts: location slugs, spatial textures, lighting keys
-         ▼
-Stage 3 — Storyboard Orchestrator      (IBM watsonx LLM, Hollywood Director persona)
-         │  Produces: scenes + frames with shot_type, camera_angle, action, mood,
-         │  dialogue, director_notes, camera_movement, animation_beats
-         ▼
-Stage 4 — Director Engine              (Python, no LLM)
-         │  Shot Balancer  → enforces composition diversity across all frames
-         │  Lens Planner   → assigns focal length + depth style per frame
-         │  Rhythm check   → no more than N consecutive identical shot types
-         ▼
-Creative Knowledge Graph (CKG)         (built from pipeline outputs)
-         │  character_identities, species, variants, world bible,
-         │  style guide, camera language, visual rules
-         ▼
-Prompt Builder                         (8-step assembly)
-         │  CKG identity → species → variant → style prefix →
-         │  lens suffix → action → lighting → negatives
-         ▼
-Image Generator                        (Pollinations Flux / Hugging Face)
-         │  t2i or img2img based on reference image presence
-         ▼
-Visual QA Engine                       (heuristic, prompt-level)
-         │  Validates: identity markers, anatomy, composition, lighting, props
-         ▼
-Studio                                 (React 19)
+User Input (screenplay / story text)
+        │
+        ▼
+Stage 1 — Character Standardizer (WatsonX / Gemini)
+   Extracts: id, name, facial_blueprint, wardrobe,
+             story_role, relationships[]
+        │
+        ▼
+Stage 2 — World Architect (WatsonX / Gemini)
+   Extracts: location_name, spatial_textures, lighting_keys
+        │
+        ▼
+Stage 3 — Storyboard Orchestrator (WatsonX / Gemini)
+   Produces: scenes[] → frames[] with shot type, camera,
+             lighting, mood, dialogue, director_notes
+        │
+        ▼
+Director Engine
+   Assigns: lens, focal_length, depth_style per frame
+   Applies: shot distribution rules by director_style
+        │
+        ▼
+Image Generation (Gemini / Pollinations / HuggingFace)
+   Generates: one image per frame, base64-encoded
+        │
+        ▼
+SQLite Persistence → StoryboardProject JSON → React Studio
 ```
 
 ### Character Identity System
 
-BaseBoard separates every character into four independent layers:
+Each character has three independent layers:
 
-| Layer | What it controls | Can it change? |
+| Layer | What it is | Example |
 |---|---|---|
-| **Identity** | Face, hair, eyes, body proportions, distinct markers, signature accessories, reference images | Never — immutable across all variants and styles |
-| **Species** | Anatomy type, anatomy QA rules, prompt prefix | Per-variant via `species_override`; human by default |
-| **Variants** | Outfit, hair override, accessories, species form, age | Per story point |
-| **Rendering Style** | Artistic register (B&W Sketch, Flat Color, Full Shaded) | Freely switchable |
+| **Identity** (Layer 1) | Who — face, hair, eyes, body, accessories | "High cheekbones, silver scar above left eye" |
+| **Species** (Layer 2) | What — anatomy type | Human, Elf, Wolf, Dragon, Robot |
+| **Physical Form** (CKM) | Structure — body shape | Humanoid, Quadruped, Dragon, Hybrid |
+| **Variants** (Layer 3) | How — appearance at a story point | Default, Battle Armor, Winter, Elf Form |
 
-When you upload a reference photo, BaseBoard extracts structured identity fields via LLM, writes them to the Creative Knowledge Graph, and validates every subsequent generation against those fields — regardless of art style or species variant.
+Story role and relationships are set automatically by the AI from script analysis:
+
+- **Story Role:** Protagonist · Antagonist · Supporting · Other
+- **Relationships:** ally · enemy · romantic · mentor · family · neutral · rival
 
 ### AI Models
 
-| Service | Role |
-|---|---|
-| **IBM watsonx** — `meta-llama/llama-3-3-70b-instruct` | Primary LLM for all three pipeline stages |
-| **LLM Fallback chain** | Mistral Small 3.1 → Mistral Medium → Mistral Large (auto on rate-limit) |
-| **Pollinations.ai (Flux)** | Text-to-image and img2img frame generation — no API key required |
-| **Hugging Face Inference API** | Optional alternative image provider (`IMAGE_PROVIDER=huggingface`) |
+| Task | Default | Alternative |
+|---|---|---|
+| Character extraction | WatsonX (Llama 3.3 70B) | Gemini (`TEXT_PROVIDER=gemini`) |
+| World bible | WatsonX (Llama 3.3 70B) | Gemini (`TEXT_PROVIDER=gemini`) |
+| Storyboard planning | WatsonX (Llama 3.3 70B) | Gemini (`TEXT_PROVIDER=gemini`) |
+| Image generation | Pollinations (Flux) | Gemini (`IMAGE_PROVIDER=gemini`) |
+| Vision / anatomy audit | Gemini Flash | — (only provider) |
+| Visual DNA extraction | Gemini Flash | — (only provider) |
+
+**WatsonX fallback chain** (on 429 rate-limit, tried in order):
+1. `meta-llama/llama-3-3-70b-instruct` (primary)
+2. `mistralai/mistral-small-3-1-24b-instruct-2503`
+3. `mistralai/mistral-medium-2505`
+4. `mistral-large-2512`
 
 ### REST API Reference
 
-| Method | Path | Purpose |
+| Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/storyboard/forge-pipeline` | Run full Genesis Engine pipeline |
-| `GET` | `/storyboard/` | List all saved projects |
-| `GET` | `/storyboard/{db_id}` | Load a specific project |
-| `DELETE` | `/storyboard/{db_id}` | Delete a project |
-| `POST` | `/storyboard/generate-image` | Generate a single image from a prompt |
-| `POST` | `/storyboard/character-package/generate` | Generate character package sections |
-| `POST` | `/storyboard/character-package/generate-one` | Regenerate a single package section |
-| `POST` | `/storyboard/character-package/generate-full-pack` | Generate premium 360° + poses + close-ups |
-| `POST` | `/storyboard/character-package/import-asset` | Import a reference image into a character identity slot |
-| `POST` | `/storyboard/character/qa-score` | Run the Visual QA Engine against a prompt + identity |
-| `POST` | `/storyboard/ckg/update-identity` | Write Identity / Species / Variants to the CKG |
-| `GET` | `/storyboard/ckg/{project_id}` | Read the full CKG for a project |
-| `GET` | `/storyboard/species-registry` | Return all built-in species profiles |
-| `POST` | `/storyboard/continuity/scan` | Scan project for continuity impact of an asset change |
-| `POST` | `/storyboard/frame/reforge-composition` | Regenerate only the image for a frame |
-| `POST` | `/storyboard/frame/regenerate-visual-action` | Regenerate only the Level-2 staging (no image change) |
-| `POST` | `/storyboard/world-bible/import` | Import a World Bible document |
+| `POST` | `/storyboard/forge-pipeline-stream` | Full pipeline with SSE progress stream |
+| `POST` | `/storyboard/forge-pipeline` | Full pipeline, single blocking response |
+| `GET`  | `/storyboard/projects` | List all saved projects |
+| `GET`  | `/storyboard/projects/{id}` | Load a single project |
+| `DELETE` | `/storyboard/projects/{id}` | Delete a project |
+| `POST` | `/storyboard/parse-single-character` | Parse a single character from raw notes |
+| `POST` | `/storyboard/generate-image` | Generate a single image |
+| `POST` | `/storyboard/character-qa` | Visual QA audit on a generated image |
+| `POST` | `/storyboard/reforge-composition` | Regenerate a single frame's image |
+| `POST` | `/storyboard/regenerate-visual-action` | AI re-writes a frame's staging direction |
+| `POST` | `/storyboard/continuity-scan` | Scan which frames are affected by an edit |
+| `POST` | `/storyboard/world-bible-import` | Import world bible from document text |
+| `GET`  | `/health` | Provider status check |
 
-Auto-generated interactive docs available at `http://localhost:8000/docs` when the backend is running.
+Full interactive docs: `http://localhost:8000/docs`
 
 ---
 
@@ -289,97 +322,61 @@ Auto-generated interactive docs available at `http://localhost:8000/docs` when t
 
 ```
 BaseBoardAI/
-├── backend/                          Python / FastAPI
+├── backend/
 │   ├── app/
-│   │   ├── main.py                   FastAPI entry point, CORS, lifespan
 │   │   ├── core/
-│   │   │   ├── config.py             Pydantic-settings env loader
-│   │   │   ├── llm.py                IBM watsonx orchestration + 3-stage pipeline + fallback chain
-│   │   │   ├── image.py              Image generation (Pollinations / HF), t2i + img2img
-│   │   │   ├── prompts.py            All LLM prompt templates
-│   │   │   ├── director_engine.py    Cinematic planning orchestrator (post-LLM, pre-image)
-│   │   │   ├── shot_balancer.py      10-type composition scoring + diversity enforcement
-│   │   │   ├── lens_planner.py       13 focal length profiles mapped to scene/shot type
-│   │   │   ├── continuity_engine.py  Asset change → dependency scan → impact list
-│   │   │   ├── identity_system.py    Character Identity System — build_identity_prompt + compute_qa_score
-│   │   │   └── prompt_builder.py     8-step cinematography-aware prompt assembly
+│   │   │   ├── config.py          # All env vars — single import point
+│   │   │   ├── prompts.py         # CHARACTER, WORLD, STORYBOARD prompt templates
+│   │   │   ├── llm.py             # WatsonX LLM orchestration + fallback chain
+│   │   │   ├── image.py           # Image generation — Pollinations / Gemini / HF
+│   │   │   ├── ai_factory.py      # Provider-agnostic factory (Text / Image / Vision)
+│   │   │   ├── prompt_builder.py  # Director Engine prompt assembly
+│   │   │   ├── director_engine.py # Shot-type + lens assignment per frame
+│   │   │   ├── identity_system.py # Character DNA + species + abilities system
+│   │   │   ├── continuity_engine.py # Frame impact detection on character edits
+│   │   │   ├── visual_qa.py       # Gemini Vision anatomy audit
+│   │   │   ├── sheet_layouts.py   # Character package sheet grid layouts
+│   │   │   └── sheet_slicer.py    # Crop individual cells from a sheet image
 │   │   ├── db/
-│   │   │   ├── models.py             SQLAlchemy ORM models
-│   │   │   └── session.py            SQLite / Postgres session factory
+│   │   │   ├── models.py          # SQLAlchemy ORM models
+│   │   │   └── session.py         # Database session + init_db()
 │   │   ├── routers/
-│   │   │   └── storyboard.py         All REST endpoints
-│   │   └── schemas/
-│   │       └── storyboard.py         Pydantic v2 request/response schemas
-│   ├── requirements.txt
-│   ├── .env.example
-│   └── baseboard.db                  SQLite database (auto-created on first run)
+│   │   │   └── storyboard.py      # All FastAPI endpoints
+│   │   ├── schemas/
+│   │   │   └── storyboard.py      # All Pydantic v2 schemas
+│   │   └── main.py                # FastAPI app entry point + CORS
+│   ├── .env.example               # Environment template — copy to .env
+│   └── requirements.txt           # Python dependencies
 │
-└── frontend/                         React 19 / TypeScript / Vite
+└── frontend/
     └── src/
-        ├── App.tsx                   View-state machine (7 views), idle timer, BMS Director's Light
-        ├── api/storyboard.ts         All fetch calls + CKG + QA + continuity helpers
-        ├── types/storyboard.ts       TypeScript interfaces (mirrors backend schemas exactly)
-        ├── hooks/
-        │   ├── useDirectorsLight.ts  BMS-1: ambient light tracking
-        │   ├── useCompassNeedle.ts   BMS-2: cursor-driven compass needle
-        │   └── useBrassReflection.ts BMS-4: specular reflection on brass UI elements
-        ├── pages/
-        │   ├── LandingPage.tsx
-        │   ├── CompassNavPage.tsx
-        │   ├── NewProjectPage.tsx
-        │   ├── GenesisUploadPage.tsx
-        │   ├── GenesisEnginePage.tsx
-        │   ├── CreativeDirectorReport.tsx
-        │   ├── StudioPage.tsx
-        │   ├── CharacterDictionaryPage.tsx
-        │   ├── CharacterPackagePage.tsx
-        │   ├── WorldBiblePage.tsx
-        │   └── ProjectLibraryPage.tsx
-        ├── components/
-        │   ├── FrameCard.tsx                 Frame card + Production Sheet
-        │   ├── StoryboardCanvas.tsx          Frame grid + BMS-3 cursor tracking
-        │   ├── ActionTimeline.tsx            Per-scene beat sheet
-        │   ├── AnimaticPlayer.tsx            Frame-by-frame player
-        │   ├── GalleryLightbox.tsx           Full-screen scene gallery
-        │   ├── SceneIndex.tsx                Left-column scene list
-        │   ├── StudioInspector.tsx           Right-column metadata panel
-        │   ├── IdentityUploader.tsx          5-slot reference image grid (CIS)
-        │   ├── SpeciesSelector.tsx           Species chip-select (CIS)
-        │   ├── VariantManager.tsx            Variant list + editor (CIS)
-        │   ├── VisualQAPanel.tsx             QA score gauge + category bars (CIS)
-        │   ├── ContinuityImpactModal.tsx     Pre-regeneration impact dialog
-        │   ├── GlobalUpdatePanel.tsx         Multi-asset dependency update panel
-        │   ├── CharacterImportScanner.tsx    Step-by-step import analyzer
-        │   └── ...                           (+ 10 supporting components)
-        └── utils/
-            ├── extractDocumentText.ts        PDF/DOCX/TXT/FDX/MD extraction
-            └── exportFrames.ts               ZIP and production manifest generation
+        ├── api/
+        │   └── storyboard.ts      # All API calls + SSE stream client
+        ├── components/            # Reusable UI components
+        ├── pages/                 # Full-page views (Studio, Genesis, Library…)
+        ├── types/
+        │   └── storyboard.ts      # TypeScript types — mirrors backend schemas
+        ├── data/
+        │   └── demoProject.ts     # Pre-baked demo project (no upload needed)
+        ├── hooks/                 # useDirectorsLight, useCompassNeedle, etc.
+        └── utils/                 # exportFrames, extractDocumentText
 ```
 
 ---
 
 ## Tech Stack
 
-| Category | Technology | Version |
-|---|---|---|
-| **Backend framework** | FastAPI | 0.111.0 |
-| **ASGI server** | Uvicorn | 0.30.1 |
-| **LLM orchestration** | LangChain + LangChain IBM | 0.2.5 / ≥0.1.0 |
-| **AI platform** | IBM watsonx AI | ≥1.1.2 |
-| **Data validation** | Pydantic v2 | ≥2.9.0 |
-| **ORM** | SQLAlchemy | ≥2.0.36 |
-| **Database migrations** | Alembic | 1.13.1 |
-| **HTTP client** | httpx | ≥0.27.0 |
-| **Database** | SQLite (dev) / PostgreSQL (prod) | — |
-| **Frontend framework** | React | 19 |
-| **Language** | TypeScript | ~6.0 |
-| **Build tool** | Vite + Rolldown | 8 |
-| **CSS framework** | Tailwind CSS | v4 |
-| **PDF parsing** | pdfjs-dist | ≥5.6 |
-| **DOCX parsing** | mammoth | ≥1.12 |
-| **Export / ZIP** | JSZip + file-saver | 3.10 / 2.0 |
-| **Image generation** | Pollinations.ai (Flux) | — |
-| **Image generation (alt)** | Hugging Face Inference API | — |
+| Layer | Technology |
+|---|---|
+| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS |
+| **Backend** | FastAPI, Python 3.11+, Pydantic v2, SQLAlchemy |
+| **Database** | SQLite (zero-config, file-based) |
+| **LLM — Text** | IBM WatsonX (Llama 3.3 70B) · Google Gemini |
+| **LLM — Images** | Google Gemini (`gemini-3.1-flash-lite-image`) · Pollinations (Flux) · HuggingFace |
+| **LLM — Vision** | Google Gemini (`gemini-3.5-flash`) |
+| **LangChain** | WatsonX LLM client integration |
+| **HTTP** | HTTPX (async-compatible, used for Pollinations) |
+| **Streaming** | Server-Sent Events (SSE) for pipeline progress |
 
 ---
 
@@ -387,119 +384,77 @@ BaseBoardAI/
 
 ### The Director Engine
 
-The Director Engine solves one of the hardest problems in AI image generation for film: **AI models default to the same shot type every time**.
+Every storyboard frame passes through the Director Engine after the LLM generates the raw JSON. The engine:
 
-Without explicit direction, both LLMs and diffusion models gravitate toward medium close-ups of speaking characters. Left unconstrained, a storyboard looks like this:
+1. **Classifies the scene** — action / dialogue / establishing / intimate
+2. **Applies shot distribution rules** — based on the chosen `director_style` (balanced / cinematic / dialogue / action / intimate)
+3. **Assigns a lens profile** — 24mm (epic wide), 35mm (dynamic action), 50mm (natural dialogue), 85mm (intimate portrait), 100mm (detail insert)
+4. **Writes a depth style** — deep focus / shallow / split
+5. **Stores rationale** — so the Studio Inspector can show *why* each shot was chosen
 
-```
-Frame 01 — Medium Close-Up, Emma at doorway
-Frame 02 — Medium Close-Up, Kai responds
-Frame 03 — Medium Close-Up, Emma reacts
-Frame 04 — Medium Close-Up, Kai advances
-```
-
-This is not a storyboard. It is a transcript illustrated with the same camera position twelve times in a row.
-
-The Director Engine sits between Stage 3 LLM output and the image loop. It never calls an AI — it applies hard cinematography rules:
-
-**Shot Balancer** — tracks 10 composition categories across the whole storyboard and injects missing types when any category exceeds its threshold. Close shots are capped at 40% of total frames. Every rebalanced frame is flagged with `shot_balance_flag` so the change is traceable.
-
-**Lens Planner** — assigns an explicit focal length to every frame based on scene type:
-
-```
-Establishing  →  24mm Anamorphic, deep focus
-Dialogue      →  50mm, shallow bokeh
-Intimate      →  85mm Portrait, shallow bokeh
-Action        →  35mm Tracking, deep focus
-Epic          →  18mm Ultra Wide, deep focus
-Horror        →  28mm, unsettling distortion
-```
-
-**Scene-Type Profiles** — auto-detects genre (Dialogue, Action, Romance, Horror, Mystery, Fantasy, Sci-Fi, Adventure) and applies genre-specific composition ratios before any image is generated.
-
-**Rhythm enforcement** — prevents more than N consecutive identical shot types anywhere in the storyboard.
+The Cinematic Brain only overwrites fields that are not locked. If the user locks `shot_type` via the Inspector, the Director Engine skips it on re-run.
 
 ### The Creative Knowledge Graph (CKG)
 
-The CKG is the single authoritative node graph for every project. Every AI generation reads from it before producing output.
+The CKG is the single source of truth stored alongside every saved project. It contains:
+
+- `approved_characters` — name, appearance summary, canonical prompt, wardrobe, age
+- `character_identities` — detailed identity per character (Layer 1)
+- `character_species` — anatomy type per character (Layer 2)
+- `character_variants` — appearance variants per character (Layer 3)
+- `character_abilities` — abilities that influence Director Engine shot selection
+- `locations` — environment profiles
+- `relationships` — character relationship graph
+- `style_guide`, `color_palette`, `camera_language`, `visual_rules`
+
+Every image generation call reads from the CKG to anchor character appearance. This is what prevents the AI from "forgetting" what a character looks like across scenes.
+
+### Provider Routing
+
+Three independent provider axes — each switchable in `.env` with no code changes:
 
 ```
-CreativeKnowledgeGraph
-├── character_identities    — WHO each character is (face, hair, eyes, reference images)
-├── character_species       — WHAT each character is (anatomy + QA rules)
-├── character_variants      — HOW each character looks at each story point
-├── expression_sheets       — per-character expression reference images
-├── pose_libraries          — per-character pose images
-├── outfit_libraries        — per-character outfit images
-├── world_bible_summary     — condensed lore string injected into every frame prompt
-├── locations               — location slug → EnvironmentProfile
-├── style_guide             — render style + aesthetic rules
-├── camera_language         — scene_type → preferred shot distribution
-├── director_profile        — 'Kubrickian symmetry', 'Handheld verité', etc.
-└── visual_rules            — hard constraints: ['never dutch angle in dialogue scenes']
+TEXT_PROVIDER   = watsonx | gemini
+IMAGE_PROVIDER  = pollinations | gemini | huggingface
+VISION_PROVIDER = gemini
 ```
+
+If `IMAGE_PROVIDER=gemini` and Gemini image generation fails (rate limit, quota), the pipeline automatically falls back to Pollinations so no frames are lost.
 
 ---
 
-## Challenges
+## Troubleshooting
 
-**LLM JSON reliability** — Models do not always return pure JSON despite instructions. The parser in `llm.py` implements a two-pass strategy: strip markdown code fences; if that fails, use regex to extract the first complete `[...]` or `{...}` block from raw output.
+### Backend won't start
+- Ensure `.env` exists: `cp .env.example .env`
+- Ensure virtual environment is activated: `source .venv/bin/activate`
+- Check Python version: `python3 --version` (needs 3.11+)
 
-**Model rate limiting** — IBM watsonx enforces consumption limits per model. `_invoke_with_fallback` walks a four-model chain (Llama 3.3 70B → Mistral Small 3.1 → Mistral Medium → Mistral Large) automatically on 429 or deprecation errors.
+### "Cannot reach the backend"
+- Ensure `uvicorn app.main:app --reload` is running in the `backend/` directory
+- Check the API is healthy: `curl http://localhost:8000/health`
 
-**Image style consistency** — Getting an image model to respect style directives (line art vs. cel-shaded vs. cinematic) requires style-prefix injection. `bw_sketch` mode appends explicit negative constraints (no shading, no crosshatch, no color) and caps prompts at 500 characters for the Pollinations GET URL limit.
+### Gemini errors — "This model is no longer available to new users"
+- Your API key was created after Google retired older model names
+- Current working models for free tier accounts: `gemini-3.5-flash` (text/vision), `gemini-3.1-flash-lite-image` (images)
+- Update your `.env`: `GEMINI_TEXT_MODEL=gemini-3.5-flash`, `GEMINI_IMAGE_MODEL=gemini-3.1-flash-lite-image`
 
-**LLM compositional bias** — The Storyboard LLM generates 70–80% medium/close shots by default. The Director Engine was introduced as a post-LLM planning layer to rebalance distributions before images are generated.
+### Gemini 429 quota errors
+- Free tier daily quota exhausted — resets every 24 hours
+- Switch `IMAGE_PROVIDER=pollinations` to use unlimited free image generation while quota recovers
+- Or enable billing on your Google account at [console.cloud.google.com](https://console.cloud.google.com)
 
-**Three-level action decoupling** — The original `action_breakdown` field conflated the author's intent, the director's plan, and animation cues. Splitting these into `narrative_action` / `visual_action` / `animation_beats` required schema migration, backwards-compatible ORM fields, and a separate `VISUAL_ACTION_PROMPT`.
+### WatsonX 429 rate limit
+- The fallback chain automatically tries 4 models before failing — this is expected behaviour
+- If all 4 models are exhausted, switch `TEXT_PROVIDER=gemini` as a temporary alternative
 
-**Base64 storage** — All images are stored as `data:image/png;base64,...` TEXT in SQLite. The SQLAlchemy column is marked `deferred` so large blobs are not loaded on list queries — only when a specific project is fetched.
-
-**CORS preflight** — FastAPI's default CORS handling does not include `OPTIONS` preflight for custom headers. Adding `CORSMiddleware` with `allow_methods=["*"]` and `allow_headers=["*"]` resolved 405 errors from the Vite dev server.
-
----
-
-## Future Improvements
-
-- **Pixel-level Visual QA** — replace heuristic prompt-level QA with a vision model that compares generated images directly against identity reference photos
-- **Director Presets** — named styles ("Kubrick: symmetrical wide", "Nolan: intercutting") that configure the Director Engine's shot profiles, lens preferences, and rhythm rules
-- **Camera Movement Planning** — extend `animation_beats` with camera choreography (dolly path, crane arc, shake intensity) exportable to Maya/Unreal
-- **Shot List Export** — one-click export of the Director Engine's full shot plan as a production PDF or CSV
-- **Animatic to Video** — render the frame sequence as an MP4 using per-frame AI timing estimates
-- **Comic Layout Renderer** — output frames into comic page grids (2×3, 3×3, splash panels) instead of storyboard strips
-- **Facial Animation Layer** — map the Character Identity to an animation rig for Unreal/Maya export
-- **Real-time streaming** — stream Genesis Engine stages via Server-Sent Events for live progress instead of animated simulation
-- **Character Completion Score** — visual progress bar tracking which package sections have been generated per character
-- **Pose & Emotion Library UI** — click-to-select chips for poses and emotions instead of manual prompt editing
-- **User authentication** — multi-user support with per-user project libraries (JWT / OAuth)
-- **Collaborative editing** — real-time multi-user editing via WebSocket
-- **PostgreSQL migration** — swap from SQLite to PostgreSQL for production (already supported via `DATABASE_URL` env var)
-- **Custom model fine-tuning** — fine-tune a watsonx model on structured screenplay data for higher accuracy
+### Images are blank or None
+- Check `IMAGE_PROVIDER` in `.env`
+- For Gemini: verify `GEMINI_API_KEY` is set and quota is not exhausted
+- For Pollinations: check internet connectivity (it's a public free API, occasionally slow)
 
 ---
 
 ## License
 
-```
-MIT License
-
-Copyright (c) 2025 BaseBoard AI
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-```
+MIT — see [LICENSE](LICENSE) for details.

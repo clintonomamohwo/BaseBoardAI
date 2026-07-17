@@ -5,9 +5,9 @@ These are the canonical validation contracts used by the FastAPI router layer.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Character DNA — Physical Form, Classification, and Abilities
@@ -35,12 +35,41 @@ ABILITY_OPTIONS = Literal[
 # Sub-models & Domain Entities (Internal State Structures)
 # ---------------------------------------------------------------------------
 
+# Coercion helpers — let the LLM return null without crashing validation.
+# Pydantic v2 does NOT substitute field defaults for explicit None inputs on
+# non-optional fields; BeforeValidator is the correct fix.
+def _str_or_default(default: str):
+    """Return a BeforeValidator that substitutes *default* when the value is None."""
+    def _coerce(v: Any) -> Any:
+        return default if v is None else v
+    return BeforeValidator(_coerce)
+
+def _int_or_default(default: int):
+    def _coerce(v: Any) -> Any:
+        return default if v is None else v
+    return BeforeValidator(_coerce)
+
+def _float_or_default(default: float):
+    def _coerce(v: Any) -> Any:
+        return default if v is None else v
+    return BeforeValidator(_coerce)
+
+def _list_or_default(default_factory):
+    def _coerce(v: Any) -> Any:
+        return default_factory() if v is None else v
+    return BeforeValidator(_coerce)
+
+
 class FacialBlueprint(BaseModel):
-    base_ethnicity_or_type: str = Field(
+    base_ethnicity_or_type: Annotated[str, _str_or_default("unspecified")] = Field(
+        default="unspecified",
         description="Visual foundation background profile"
     )
-    estimated_age: int
-    bone_structure: str = Field(
+    estimated_age: Annotated[int, _int_or_default(0)] = Field(
+        default=0, description="Estimated age; 0 when unknown or non-human"
+    )
+    bone_structure: Annotated[str, _str_or_default("unspecified")] = Field(
+        default="unspecified",
         description="e.g., High defined cheekbones, prominent square jawline"
     )
     distinct_markers: str | None = Field(
@@ -102,8 +131,9 @@ class PhysicalForm(BaseModel):
     Physical Form determines QA anatomy validation and Director Engine
     composition strategy (e.g., dragon → wide/aerial shots preferred).
     """
-    form: PHYSICAL_FORM_OPTIONS = Field(
-        "humanoid",
+    # pyrefly: ignore [bad-assignment]
+    form: PHYSICAL_FORM_OPTIONS = Field(  # pyright: ignore[reportArgumentType]
+        default="humanoid",
         description=(
             "Structural anatomy type. Drives QA validator dispatch and Director Engine "
             "composition strategy. 'humanoid' is the default for all human-base species."
@@ -214,11 +244,34 @@ class QAScoreResult(BaseModel):
     )
 
 
+class CharacterRelationship(BaseModel):
+    """A directed relationship from this character to another."""
+    target_id: str = Field(description="The ID of the other character, e.g. CHAR_MORGAN")
+    target_name: str = Field(description="Display name of the other character")
+    relationship_type: Literal[
+        "ally", "enemy", "romantic", "mentor", "family", "neutral", "rival"
+    ] = Field(description="Nature of the relationship inferred from script interactions")
+    notes: str | None = Field(None, description="One-sentence rationale from the AI")
+
+
+STORY_ROLE_OPTIONS = Literal["Protagonist", "Antagonist", "Supporting", "Other"]
+
+
 class CharacterProfileBase(BaseModel):
     id: str = Field(description="Unique internal identity token, e.g., CHAR_CLINTON")
     name: str
     facial_blueprint: FacialBlueprint
     wardrobe_defaults: str
+
+    # ── Story role & relationships (set by CHARACTER_PROMPT from script) ──────
+    story_role: STORY_ROLE_OPTIONS | None = Field(
+        None,
+        description="Narrative category: Protagonist | Antagonist | Supporting | Other"
+    )
+    relationships: list[CharacterRelationship] = Field(
+        default_factory=list,
+        description="Directed relationships to other characters inferred from script interactions"
+    )
 
     # ── Character DNA System (CKG) ────────────────────────────────────────────
     # All layers are optional — absent for legacy characters created before the
@@ -227,11 +280,11 @@ class CharacterProfileBase(BaseModel):
         None, description="Layer 1 — canonical identity (who the character is)"
     )
     species: SpeciesProfile = Field(
-        default_factory=SpeciesProfile,
+        default_factory=lambda: SpeciesProfile(),  # pyright: ignore[reportCallIssue]
         description="Layer 2 — anatomy profile (what the character is). Defaults to human."
     )
     physical_form: PhysicalForm = Field(
-        default_factory=PhysicalForm,
+        default_factory=lambda: PhysicalForm(),  # pyright: ignore[reportCallIssue]
         description=(
             "CKM Layer — structural anatomy type (humanoid, quadruped, dragon…). "
             "DISTINCT from species and classification. "
@@ -304,15 +357,18 @@ class StoryboardFrameBase(BaseModel):
     )
 
     # ── Legacy field: kept for backwards compat; visual_action is the primary ──
-    action_breakdown: str = Field(
+    action_breakdown: Annotated[str, _str_or_default("")] = Field(
+        default="",
         description="Detailed physical description including fixed character structural keys"
     )
 
     # ── Shot & camera ────────────────────────────────────────────────────────
-    shot_type: str = Field(
+    shot_type: Annotated[str, _str_or_default("Wide Shot")] = Field(
+        default="Wide Shot",
         description="Cinematography specification, e.g., Close-up, Establishing Wide"
     )
-    camera_angle: str = Field(
+    camera_angle: Annotated[str, _str_or_default("Eye-level")] = Field(
+        default="Eye-level",
         description="Camera altitude and tracking characteristics"
     )
     camera_movement: str | None = Field(
@@ -321,12 +377,14 @@ class StoryboardFrameBase(BaseModel):
     )
 
     # ── Timing ───────────────────────────────────────────────────────────────
-    duration_seconds: float = Field(
+    duration_seconds: Annotated[float, _float_or_default(3.0)] = Field(
+        default=3.0,
         description="Calculated screen runtime for this semantic beat"
     )
 
     # ── Lighting & mood ──────────────────────────────────────────────────────
-    lighting_notes: str = Field(
+    lighting_notes: Annotated[str, _str_or_default("")] = Field(
+        default="",
         description="Color temperature parameters, illumination direction, and shadow mood"
     )
     mood: str | None = Field(
@@ -411,22 +469,27 @@ class StoryboardFrameBase(BaseModel):
 
 class ScriptSceneBase(BaseModel):
     scene_number: int
-    location_heading: str = Field(
+    location_heading: Annotated[str, _str_or_default("UNKNOWN LOCATION")] = Field(
+        default="UNKNOWN LOCATION",
         description="Standard screenplay slugline, e.g., INT. GYM - NIGHT"
     )
-    environmental_type: str = Field(
+    environmental_type: Annotated[str, _str_or_default("Interior")] = Field(
+        default="Interior",
         description="Interior or Exterior classification"
     )
-    time_of_day: str = Field(
+    time_of_day: Annotated[str, _str_or_default("DAY")] = Field(
+        default="DAY",
         description="Lighting phase descriptor, e.g., NIGHT, GOLDEN HOUR"
     )
-    emotional_tone: str = Field(
+    emotional_tone: Annotated[str, _str_or_default("Neutral")] = Field(
+        default="Neutral",
         description="Categorized sentiment index, e.g., Tense, Melancholic"
     )
-    color_palette: list[str] = Field(
+    color_palette: Annotated[list[str], _list_or_default(lambda: ["#888888", "#aaaaaa", "#cccccc"])] = Field(
+        default_factory=lambda: ["#888888", "#aaaaaa", "#cccccc"],
         description="Hexadecimal styling colors derived from emotional valence indices"
     )
-    frames: list[StoryboardFrameBase]
+    frames: Annotated[list[StoryboardFrameBase], _list_or_default(list)] = Field(default_factory=list)
 
 # ---------------------------------------------------------------------------
 # Pipeline Request & Response Envelopes
@@ -439,7 +502,7 @@ class PipelineExecutionRequest(BaseModel):
     """
     project_title: str = Field(default="Untitled PreViz Project")
     global_aesthetic: str = Field(description="e.g., Cinematic High-Contrast, Neon Cyberpunk")
-    render_style: Literal['bw_sketch', 'flat_color', 'full_shaded'] = Field(
+    render_style: Literal['bw_sketch', 'bw_detailed', 'flat_color', 'full_shaded'] = Field(
         'bw_sketch', description="Visual rendering pipeline mode"
     )
     director_style: Literal['balanced', 'cinematic', 'dialogue', 'action', 'intimate'] = Field(
@@ -451,6 +514,7 @@ class PipelineExecutionRequest(BaseModel):
     raw_character_notes: str = Field(description="Raw text entered in Step 1 Character Builder")
     raw_world_notes: str = Field(description="Raw text entered in Step 2 World Builder")
     raw_script_text: str = Field(description="The complete raw screenplay pasted in Step 3")
+    skip_images: bool = Field(False, description="If True, skip storyboard image generation (LLM stages only). Use when you want to run character packages first, then generate images separately.")
 
 class StoryboardProjectCreate(BaseModel):
     """
@@ -459,7 +523,7 @@ class StoryboardProjectCreate(BaseModel):
     """
     project_title: str = Field(default="Untitled PreViz Project")
     global_aesthetic: str = Field(description="e.g., Cinematic High-Contrast, Neon Cyberpunk")
-    render_style: Literal['bw_sketch', 'flat_color', 'full_shaded'] = Field(
+    render_style: Literal['bw_sketch', 'bw_detailed', 'flat_color', 'full_shaded'] = Field(
         'bw_sketch', description="Visual rendering pipeline mode"
     )
     characters: list[CharacterProfileBase] = Field(default_factory=list)
@@ -524,7 +588,7 @@ class ContinuityScanRequest(BaseModel):
 class ReforgeCompositionRequest(BaseModel):
     """Payload for POST /storyboard/frame/reforge-composition"""
     frame: StoryboardFrameBase
-    scene: "ScriptSceneBase"
+    scene: ScriptSceneBase
     render_style: Literal['bw_sketch', 'bw_detailed', 'flat_color', 'full_shaded'] = 'bw_sketch'
     reference_style_image: str | None = None
 
@@ -767,7 +831,7 @@ class CKGUpdateIdentityRequest(BaseModel):
     project_id: int
     character_id: str
     identity: CharacterIdentity
-    species: SpeciesProfile = Field(default_factory=SpeciesProfile)
+    species: SpeciesProfile = Field(default_factory=lambda: SpeciesProfile())  # pyright: ignore[reportCallIssue]
     variants: list[CharacterVariant] = Field(default_factory=list)
 
 
@@ -784,7 +848,7 @@ class RegenerateVisualActionRequest(BaseModel):
     The caller decides whether to regenerate the image afterwards.
     """
     frame: StoryboardFrameBase
-    scene: "ScriptSceneBase"
+    scene: ScriptSceneBase
     characters: list[CharacterProfileBase] = Field(
         default_factory=list,
         description="Character profiles present in the scene — used to ground the staging"

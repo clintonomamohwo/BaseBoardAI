@@ -307,12 +307,6 @@ body {
   to   { opacity: 1; stroke-dashoffset: 0; }
 }
 
-/* Scroll arrow bounce */
-@keyframes scroll-bounce {
-  0%, 100% { transform: translateY(0); }
-  50%       { transform: translateY(6px); }
-}
-
 /* Radial glow vignette breathe */
 @keyframes vignette-breathe {
   0%, 100% { opacity: 0.28; }
