@@ -389,7 +389,7 @@ def run_storyboard_images(client: httpx.Client, project: dict) -> None:
         for frame in scene.get("frames", []):
             try:
                 resp = client.post(
-                    f"{BASE_URL}/storyboard/reforge-composition",
+                    f"{BASE_URL}/storyboard/frame/reforge-composition",
                     json={
                         "frame": frame,
                         "scene": scene,
