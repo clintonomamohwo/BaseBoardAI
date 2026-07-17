@@ -718,26 +718,40 @@ function resolveRenderStyle(base: RenderStyle | 'bw_detailed', detail: DetailLev
 // Images stay in React state for the lifetime of the tab session.
 // On a hard page refresh the user will need to regenerate, but switching
 // tabs within the app preserves everything via React state (see tabKey fix).
-const PKG_FIELDS_TO_PERSIST = ['autoInitDone', 'overview', 'renderStyle'] as const
+// localStorage key — metadata only (survives browser close)
+const PKG_META_FIELDS = ['autoInitDone', 'overview', 'renderStyle'] as const
+// sessionStorage key — images (survives tab navigation, cleared on browser close)
+const PKG_IMG_FIELDS  = ['portrait', 'turnaround', 'expressions', 'poses', 'outfits', 'props'] as const
 
-function pkgCacheKey(charId: string): string {
-  return `baseboard_pkg_v1_${charId}`
-}
+function pkgMetaKey(charId: string): string  { return `baseboard_pkg_v1_${charId}` }
+function pkgImgKey(charId: string):  string  { return `baseboard_img_v1_${charId}` }
 
 function loadPkgCache(charId: string): Partial<CharacterPackage> | null {
   try {
-    const raw = localStorage.getItem(pkgCacheKey(charId))
-    if (!raw) return null
-    return JSON.parse(raw)
+    const meta = localStorage.getItem(pkgMetaKey(charId))
+    const imgs = sessionStorage.getItem(pkgImgKey(charId))
+    if (!meta && !imgs) return null
+    return {
+      ...(meta ? JSON.parse(meta) : {}),
+      ...(imgs ? JSON.parse(imgs) : {}),
+    }
   } catch { return null }
 }
 
 function savePkgCache(charId: string, pkg: CharacterPackage): void {
+  // --- metadata → localStorage (small, keep across sessions) ---
   try {
-    const subset: Record<string, unknown> = {}
-    for (const k of PKG_FIELDS_TO_PERSIST) subset[k] = pkg[k as keyof CharacterPackage]
-    localStorage.setItem(pkgCacheKey(charId), JSON.stringify(subset))
-  } catch { /* storage full — silent */ }
+    const meta: Record<string, unknown> = {}
+    for (const k of PKG_META_FIELDS) meta[k] = pkg[k as keyof CharacterPackage]
+    localStorage.setItem(pkgMetaKey(charId), JSON.stringify(meta))
+  } catch { /* quota — ignore */ }
+
+  // --- images → sessionStorage (large, only needs to survive navigation) ---
+  try {
+    const imgs: Record<string, unknown> = {}
+    for (const k of PKG_IMG_FIELDS) imgs[k] = pkg[k as keyof CharacterPackage]
+    sessionStorage.setItem(pkgImgKey(charId), JSON.stringify(imgs))
+  } catch { /* quota — silently drop images */ }
 }
 
 export default function CharacterPackagePage({

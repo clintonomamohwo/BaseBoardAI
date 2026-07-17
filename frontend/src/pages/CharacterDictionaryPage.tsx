@@ -795,12 +795,17 @@ export default function CharacterDictionaryPage({
                 return appearsInScene ? count + 1 : count
               }, 0)
 
-              // Derive which sections are actually complete from the localStorage cache
+              // Derive which sections are actually complete.
+              // Metadata (autoInitDone, overview) lives in localStorage;
+              // images (portrait, turnaround, etc.) live in sessionStorage.
               const packagedSections: string[] = (() => {
                 try {
-                  const raw = localStorage.getItem(`baseboard_pkg_v1_${char.id}`)
-                  if (!raw) return []
-                  const data = JSON.parse(raw)
+                  const metaRaw = localStorage.getItem(`baseboard_pkg_v1_${char.id}`)
+                  const imgRaw  = sessionStorage.getItem(`baseboard_img_v1_${char.id}`)
+                  const meta = metaRaw ? JSON.parse(metaRaw) : {}
+                  const imgs = imgRaw  ? JSON.parse(imgRaw)  : {}
+                  const data = { ...meta, ...imgs }
+                  if (!metaRaw && !imgRaw) return []
                   const sections: string[] = []
                   if (data.portrait)                                             sections.push('portrait')
                   if (data.turnaround?.front)                                   sections.push('turnaround_front')
