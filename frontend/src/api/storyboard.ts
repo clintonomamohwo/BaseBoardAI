@@ -164,7 +164,7 @@ export async function generateFullCharacterPack(
 export async function generateCharacterPackage(
   charData: CharacterPackageInput,
   sections: string[],
-  renderStyle: string = 'bw_sketch',
+  renderStyle: string,
   referenceImage: string | null = null,
 ): Promise<Record<string, unknown>> {
   const res = await fetch(`${BASE_URL}/storyboard/character-package/generate`, {
@@ -299,12 +299,13 @@ export async function getCharacterImpact(
 export async function regenerateCharacterImage(
   charData: CharacterPackageInput,
   section: string,
-  renderStyle: string = 'bw_sketch',
+  renderStyle: string,
+  referenceImage: string | null = null,
 ): Promise<string | null> {
   const res = await fetch(`${BASE_URL}/storyboard/character-package/generate-one`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ char_data: charData, section, render_style: renderStyle }),
+    body: JSON.stringify({ char_data: charData, section, render_style: renderStyle, reference_image: referenceImage }),
   })
   const data = await handleResponse<{ image_url: string | null }>(res)
   return data.image_url

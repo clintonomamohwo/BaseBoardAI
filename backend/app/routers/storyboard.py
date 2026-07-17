@@ -193,7 +193,7 @@ def _pkg_prompt(base: str, view_desc: str, render_style: str) -> str:
 @router.post("/character-package/generate", summary="Generate all image sheets for a character")
 def generate_character_package(
     char_data: dict = Body(..., description="CharacterProfile JSON"),
-    render_style: str = Body("bw_sketch"),
+    render_style: str = Body(..., description="Render style from the project — bw_sketch | bw_detailed | flat_color | full_shaded"),
     sections: list[str] = Body(
         default=["portrait", "turnaround", "expressions", "poses", "outfits"],
         description="Which sections to generate",
@@ -274,7 +274,7 @@ def generate_character_package(
 def regenerate_character_image(
     char_data: dict = Body(...),
     section: str = Body(..., description="e.g. 'portrait', 'turnaround/front', 'expressions/happy'"),
-    render_style: str = Body("bw_sketch"),
+    render_style: str = Body(..., description="Render style from the project — bw_sketch | bw_detailed | flat_color | full_shaded"),
     reference_image: str | None = Body(None, description="Locked reference data URL — steers generation"),
 ) -> dict:
     """

@@ -816,7 +816,7 @@ export default function CharacterPackagePage({
       if (!isProtected(pkg.portrait)) {
         setLoading('portrait', true)
         try {
-          const result = await generateCharacterPackage(character, ['portrait'], promptDraft, pkg.starredImage)
+          const result = await generateCharacterPackage(character, ['portrait'], pkg.renderStyle, pkg.starredImage)
           setPkg(p => ({ ...p, prompt: promptDraft, portrait: result['portrait'] as string | null }))
         } catch { /* leave existing */ }
         finally { setLoading('portrait', false) }
