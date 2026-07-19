@@ -210,13 +210,11 @@ export default function App() {
       <header className="flex items-center flex-shrink-0 px-5" style={{ height: 44, borderBottom: '1px solid var(--border)' }}>
         <button onClick={() => setView('landing')} className="flex items-center gap-2 mr-6 group btn-tactile">
           <div className="w-7 h-7 rounded-sm flex items-center justify-center transition-all"
-            style={{ background: 'var(--bg-raised)', border: '1px solid var(--gold)', opacity: 0.7, transition: 'opacity 0.25s ease, box-shadow 0.25s ease' }}
+            style={{ background: 'var(--bg-raised)', border: '1px solid var(--gold)', opacity: 1, transition: 'opacity 0.25s ease, box-shadow 0.25s ease' }}
             onMouseEnter={e => {
-              e.currentTarget.style.opacity = '1'
               e.currentTarget.style.boxShadow = '0 0 8px rgba(201,168,76,0.5)'
             }}
             onMouseLeave={e => {
-              e.currentTarget.style.opacity = '0.7'
               e.currentTarget.style.boxShadow = 'none'
             }}
           >
@@ -228,7 +226,7 @@ export default function App() {
           {TABS.map((tab) => (
             <button key={tab.id} onClick={() => switchTab(tab.id)}
               className={`relative h-full px-5 text-[9px] tracking-[0.25em] btn-tactile transition-all ${studioTab === tab.id ? 'tab-active' : ''}`}
-              style={{ color: studioTab === tab.id ? 'var(--gold)' : 'var(--text-muted)' }}>
+              style={{ color: studioTab === tab.id ? 'var(--gold)' : 'var(--text-base)', opacity: studioTab === tab.id ? 1 : 0.7 }}>
               {tab.label}
             </button>
           ))}
@@ -238,13 +236,13 @@ export default function App() {
           {/* Library shortcut */}
           <button onClick={() => setView('library')} className="btn-tactile"
             style={{
-              fontSize: 9, letterSpacing: '0.2em', color: 'var(--text-muted)',
+              fontSize: 9, letterSpacing: '0.2em', color: 'var(--text-base)',
               background: 'transparent', border: '1px solid var(--border)',
               borderRadius: 999, padding: '4px 12px',
-              textTransform: 'uppercase', cursor: 'pointer', opacity: 0.6,
+              textTransform: 'uppercase', cursor: 'pointer', opacity: 0.8,
             }}
             onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.borderColor = 'var(--gold)'; e.currentTarget.style.color = 'var(--gold)' }}
-            onMouseLeave={e => { e.currentTarget.style.opacity = '0.6'; e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' }}>
+            onMouseLeave={e => { e.currentTarget.style.opacity = '0.8'; e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-base)' }}>
             📁 Library
           </button>
           {/* New Project shortcut */}
@@ -253,20 +251,20 @@ export default function App() {
               fontSize: 9, letterSpacing: '0.2em', color: 'var(--gold)',
               background: 'var(--gold-dim)', border: '1px solid var(--gold)',
               borderRadius: 999, padding: '4px 12px',
-              textTransform: 'uppercase', cursor: 'pointer', opacity: 0.7,
+              textTransform: 'uppercase', cursor: 'pointer', opacity: 1,
             }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
-            onMouseLeave={e => (e.currentTarget.style.opacity = '0.7')}>
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--gold)'; e.currentTarget.style.color = 'var(--bg-base)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--gold-dim)'; e.currentTarget.style.color = 'var(--gold)' }}>
             ⊕ New Project
           </button>
           <ThemeToggle isDark={isDark} onToggle={() => setIsDark(d => !d)} />
           <div className="flex items-center gap-1.5">
             <div className="w-1.5 h-1.5 rounded-full pulse-gold" style={{ background: 'var(--gold)' }} />
-            <span className="text-[9px] tracking-widest uppercase" style={{ color: 'var(--gold)', opacity: 0.5 }}>Granite Active</span>
+            <span className="text-[9px] tracking-widest uppercase" style={{ color: 'var(--gold)', opacity: 0.85 }}>Granite Active</span>
           </div>
           <div className="w-7 h-7 rounded-full flex items-center justify-center"
             style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 9, color: 'var(--gold)', opacity: 0.6, fontFamily: 'Georgia,serif' }}>◉</span>
+            <span style={{ fontSize: 9, color: 'var(--gold)', opacity: 0.9, fontFamily: 'Georgia,serif' }}>◉</span>
           </div>
         </div>
       </header>

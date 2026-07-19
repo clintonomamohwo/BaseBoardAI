@@ -73,7 +73,7 @@ export default function LandingPage({ onNewProject, onEnter, onDemo, idle = fals
           }}
         >
           <img src={logoSrc} alt="Baseboard AI" style={{ width: 22, height: 22, objectFit: 'contain', filter: 'drop-shadow(0 0 2px rgba(201,168,76,0.5))' }} />
-          <span style={{ fontSize: 10, letterSpacing: '0.3em', color: 'var(--gold)', opacity: 0.7, textTransform: 'uppercase', transition: 'opacity 0.25s ease, text-shadow 0.25s ease' }}>
+          <span style={{ fontSize: 10, letterSpacing: '0.3em', color: 'var(--gold)', opacity: 1, textTransform: 'uppercase', transition: 'opacity 0.25s ease, text-shadow 0.25s ease' }}>
             BASEBOARD AI
           </span>
         </div>
@@ -144,14 +144,14 @@ export default function LandingPage({ onNewProject, onEnter, onDemo, idle = fals
       >
         BASEBOARD AI
       </h1>
-      <p style={{ fontSize: 12, letterSpacing: '0.3em', color: 'var(--text-muted)', opacity: 0.6, textTransform: 'uppercase', marginBottom: 10, position: 'relative', zIndex: 10 }}>
+      <p style={{ fontSize: 12, letterSpacing: '0.3em', color: 'var(--text-base)', opacity: 0.75, textTransform: 'uppercase', marginBottom: 10, position: 'relative', zIndex: 10 }}>
         Where Stories Become Worlds
       </p>
 
       {/* Genesis Engine tagline */}
-      <p style={{ fontSize: 12, color: 'var(--text-muted)', opacity: 0.55, marginBottom: 36, maxWidth: 360, textAlign: 'center', lineHeight: 1.7, position: 'relative', zIndex: 10 }}>
+      <p style={{ fontSize: 12, color: 'var(--text-base)', opacity: 0.7, marginBottom: 36, maxWidth: 360, textAlign: 'center', lineHeight: 1.7, position: 'relative', zIndex: 10 }}>
         Upload your screenplay, novel, or design document.{' '}
-        <span style={{ color: 'var(--gold)', opacity: 0.8 }}>Genesis Engine</span> will build your
+        <span style={{ color: 'var(--gold)', opacity: 1 }}>Genesis Engine</span> will build your
         characters, world, storyboard, and production bible automatically.
       </p>
 
@@ -187,21 +187,19 @@ export default function LandingPage({ onNewProject, onEnter, onDemo, idle = fals
         style={{
           position: 'relative', zIndex: 10,
           padding: '9px 32px', borderRadius: 999,
-          border: '1px solid rgba(201,168,76,0.35)',
+          border: '1px solid var(--gold)',
           background: 'transparent',
           color: 'var(--gold)',
           fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase',
-          cursor: 'pointer', opacity: 0.7,
+          cursor: 'pointer', opacity: 0.85,
           transition: 'opacity 200ms ease, border-color 200ms ease, background 200ms ease',
         }}
         onMouseEnter={e => {
           e.currentTarget.style.opacity = '1'
-          e.currentTarget.style.borderColor = 'var(--gold)'
           e.currentTarget.style.background = 'rgba(201,168,76,0.08)'
         }}
         onMouseLeave={e => {
-          e.currentTarget.style.opacity = '0.7'
-          e.currentTarget.style.borderColor = 'rgba(201,168,76,0.35)'
+          e.currentTarget.style.opacity = '0.85'
           e.currentTarget.style.background = 'transparent'
         }}
       >
@@ -221,10 +219,11 @@ export default function LandingPage({ onNewProject, onEnter, onDemo, idle = fals
           fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase',
           background: 'transparent', cursor: 'pointer',
           display: 'flex', alignItems: 'center', gap: 8,
-          color: arrowHover ? 'var(--text-base)' : 'var(--text-muted)',
+          color: arrowHover ? 'var(--text-base)' : 'var(--text-base)',
           borderColor: arrowHover ? 'var(--gold)' : 'var(--border)',
           backgroundColor: arrowHover ? 'rgba(212,168,83,0.10)' : 'transparent',
-          transition: 'background-color 220ms ease, border-color 220ms ease, color 220ms ease',
+          opacity: arrowHover ? 1 : 0.85,
+          transition: 'background-color 220ms ease, border-color 220ms ease, color 220ms ease, opacity 220ms ease',
         }}
       >
         <span>Enter Studio</span>
