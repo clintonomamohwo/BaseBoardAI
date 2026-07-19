@@ -723,6 +723,7 @@ export default function CharacterDictionaryPage({
         allCharacters={characters}
         scenes={scenes}
         renderStyle={renderStyle}
+        project={project}
         onBack={() => setActivePackage(null)}
         onAutoInitComplete={handlePackageComplete}
         onSavePortrait={handleSavePortrait}

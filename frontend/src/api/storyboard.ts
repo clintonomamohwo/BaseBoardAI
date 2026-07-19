@@ -484,6 +484,28 @@ export async function updateCKGIdentity(
   return handleResponse<{ character_id: string; appearance_summary: string }>(res)
 }
 
+/** Save abilities, visual rules and/or a reference portrait to the project CKG. */
+export async function updateCharacterDNA(
+  projectId: number,
+  characterId: string,
+  abilities: string[],
+  visualRules: string[],
+  referencePortrait?: string | null,
+): Promise<{ abilities_saved: number; visual_rules_saved: number; portrait_saved: boolean }> {
+  const res = await fetch(`${BASE_URL}/storyboard/character/update-dna`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_id: projectId,
+      character_id: characterId,
+      abilities,
+      visual_rules: visualRules,
+      reference_portrait: referencePortrait ?? null,
+    }),
+  })
+  return handleResponse<{ abilities_saved: number; visual_rules_saved: number; portrait_saved: boolean }>(res)
+}
+
 /** Get the full CKG for a project. */
 export async function getCKG(projectId: number): Promise<CreativeKnowledgeGraph> {
   const res = await fetch(`${BASE_URL}/storyboard/ckg/${projectId}`)

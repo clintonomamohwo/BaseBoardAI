@@ -749,6 +749,16 @@ class CreativeKnowledgeGraph(BaseModel):
         default_factory=dict,
         description="char_id → list of ability slugs, e.g. ['flight', 'fire_breath']"
     )
+    # char_id → list[str] of visual rules — enforced by QA Engine and Director Engine
+    character_visual_rules: dict[str, Any] = Field(
+        default_factory=dict,
+        description="char_id → list of visual rule strings, e.g. ['always show wings']"
+    )
+    # char_id → base64 data URL of the chosen reference portrait
+    character_portraits: dict[str, Any] = Field(
+        default_factory=dict,
+        description="char_id → reference portrait data URL chosen by the creator"
+    )
     # Backwards-compat: char_id → flat appearance summary used by prompt_builder
     approved_characters: dict[str, Any] = Field(
         default_factory=dict,
@@ -1089,3 +1099,19 @@ class StandaloneStoryboardResponse(BaseModel):
     notes: str | None = None
     tags: list[str] = Field(default_factory=list)
     created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Character DNA update — abilities, visual_rules, reference_portrait
+# ---------------------------------------------------------------------------
+
+class CharacterDNAUpdateRequest(BaseModel):
+    """Persist abilities, visual_rules and/or a reference portrait into the project CKG."""
+    project_id: int = Field(description="ID of the project whose CKG should be updated")
+    character_id: str = Field(description="Character ID, e.g. CHAR_EMMA")
+    abilities: list[str] = Field(default_factory=list)
+    visual_rules: list[str] = Field(default_factory=list)
+    reference_portrait: str | None = Field(
+        None,
+        description="Base-64 data URL of the chosen portrait image, or null to leave unchanged",
+    )

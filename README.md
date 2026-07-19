@@ -114,7 +114,9 @@ It stores:
 - `character_identities` — Layer 1: face, hair, eyes, body proportions, accessories
 - `character_species` — Layer 2: anatomy type (Human, Elf, Wolf, Robot, etc.)
 - `character_variants` — Layer 3: appearance at different story points
-- `character_abilities` — influences Director Engine shot selection
+- `character_abilities` — ability slugs per character, injected into every frame prompt
+- `character_visual_rules` — per-character QA/Director Engine rules (e.g. "always show wings")
+- `character_portraits` — creator-chosen reference portrait URL per character
 - `locations`, `relationships`, `style_guide`, `color_palette`, `camera_language`
 
 ### The Visual DNA System
@@ -173,9 +175,10 @@ IBM Bob was the AI engineering partner throughout the entire development of Base
 - **Implement the Visual QA engine** — Bob built [`visual_qa.py`](backend/app/core/visual_qa.py) including anatomy mutation detection, Visual DNA token extraction, and the repair action system
 - **Build the AIFactory provider abstraction** — Bob wrote [`ai_factory.py`](backend/app/core/ai_factory.py), the provider-agnostic factory that routes text, image, and vision calls to the correct backend without the rest of the codebase importing SDK classes directly
 - **Implement the FastAPI backend** — Bob wrote and maintained all endpoints in [`storyboard.py`](backend/app/routers/storyboard.py), including the SSE streaming pipeline, project CRUD, character package generation, scene continuity QA, and render upgrade endpoints
-- **Build the React frontend** — Bob implemented the full Studio UI, including the Genesis Engine progress screen, Storyboard Canvas, Character Dictionary, Character Package page (portrait, turnaround, expressions, poses, outfits), UpgradeStyleMenu, SceneContinuityPanel, and Project Library
-- **Debug complex state management bugs** — Bob diagnosed and fixed several multi-root-cause bugs in the character package system: `localStorage` quota overflow, stale closure in save effects, missing `key` prop causing React state reuse, and the two-tier localStorage/sessionStorage cache that prevents regeneration on navigation
-- **Write all Pydantic schemas** — Bob authored and evolved every schema in [`schemas/storyboard.py`](backend/app/schemas/storyboard.py) including `CharacterProfileBase`, `ScriptSceneBase`, `UpgradeStyleRequest`, `SceneContinuityReport`, and `ProjectSummary`
+- **Build the React frontend** — Bob implemented the full Studio UI, including the Genesis Engine progress screen, Storyboard Canvas, Character Dictionary, Character Package page (portrait, turnaround, expressions, poses, outfits), UpgradeStyleMenu, SceneContinuityPanel, Project Library, Overview Update button, Portrait Reference Picker, and Abilities Save flow
+- **Debug complex state management bugs** — Bob diagnosed and fixed several multi-root-cause bugs: `localStorage` quota overflow, stale closure in save effects, missing `key` prop causing React state reuse, `loadedTabs` reset on remount triggering spurious regeneration, and the two-tier localStorage/sessionStorage cache that prevents all navigation-triggered regeneration
+- **Write all Pydantic schemas** — Bob authored and evolved every schema in [`schemas/storyboard.py`](backend/app/schemas/storyboard.py) including `CharacterProfileBase`, `ScriptSceneBase`, `UpgradeStyleRequest`, `SceneContinuityReport`, `ProjectSummary`, and `CharacterDNAUpdateRequest`
+- **Build the Character DNA persistence layer** — Bob designed and implemented `PATCH /storyboard/character/update-dna`, the `character_visual_rules` and `character_portraits` CKG fields, and the `updateCharacterDNA()` API function that wires the Abilities tab and Portrait Reference Picker to the database
 
 Bob was used in **Agent mode** throughout — reading files, searching the codebase, applying targeted diffs, running TypeScript type checks, and committing directly to the repository after each completed feature.
 
@@ -191,6 +194,9 @@ Bob was used in **Agent mode** throughout — reading files, searching the codeb
 | **Creative Knowledge Graph** | Single source of truth for all generation — characters, species, variants, abilities |
 | **Character DNA System** | 3-layer identity (who · what · how) — identity, species, physical form, variants |
 | **Character Package** | Auto-generated portrait, 5-view turnaround, expressions, poses, outfit sheets |
+| **Overview Editor** | Editable biography, personality, goals, fears with AI-generate + manual Update button |
+| **Portrait Reference Picker** | Select any generated image as the canonical reference portrait — saved to project CKG |
+| **Abilities & Visual Rules** | Toggle ability chips + add rules; saved to CKG with "Save to Project" button |
 | **Visual QA Engine** | Gemini Vision audits every generated image for anatomy mutations and continuity |
 | **Visual DNA Token** | Gemini Vision describes appearance as a reusable cross-model prompt prefix |
 | **Scene Continuity QA** | Flags character and prop inconsistencies across frames in a scene |
@@ -207,6 +213,7 @@ Bob was used in **Agent mode** throughout — reading files, searching the codeb
 | **5 Director Styles** | Balanced · Cinematic · Dialogue · Action · Intimate |
 | **Project Library** | Save, browse, load, and delete projects (SQLite persistence) |
 | **World Bible** | Locations, factions, lore entries, timeline — importable from documents |
+| **Session Image Cache** | Generated images cached in sessionStorage — no regeneration on tab navigation |
 | **Demo Project** | Instant demo — "The Lost Compass" Sci-Fi adventure, no upload required |
 
 ---

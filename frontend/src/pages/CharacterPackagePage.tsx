@@ -22,6 +22,7 @@ import type {
   CharacterOverview,
   CharacterRelationship,
   StoryboardScene,
+  StoryboardProject,
   CharacterIdentity,
   SpeciesProfile,
   PhysicalForm,
@@ -34,6 +35,7 @@ import {
   generateCharacterOverview,
   generateFullCharacterPack,
   runCharacterQA,
+  updateCharacterDNA,
 } from '../api/storyboard'
 import GalleryLightbox, { type GalleryItem } from '../components/GalleryLightbox'
 import IdentityUploader from '../components/IdentityUploader'
@@ -690,11 +692,10 @@ function RelationshipGraph({
 }
 
 // ---------------------------------------------------------------------------
-// Main Page
-// ---------------------------------------------------------------------------
-// Sub-component: RuleAdder (inline text input to add a visual rule)
+// Sub-components
 // ---------------------------------------------------------------------------
 
+/** Inline text input to append a visual rule */
 function RuleAdder({ onAdd }: { onAdd: (rule: string) => void }) {
   const [draft, setDraft] = useState('')
   return (
@@ -718,6 +719,136 @@ function RuleAdder({ onAdd }: { onAdd: (rule: string) => void }) {
   )
 }
 
+/** Save button for Abilities + Visual Rules → project CKG */
+function AbilitiesSaveButton({
+  projectId, characterId, abilities, visualRules,
+}: {
+  projectId: number
+  characterId: string
+  abilities: string[]
+  visualRules: string[]
+}) {
+  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  async function handleSave() {
+    setState('saving')
+    try {
+      await updateCharacterDNA(projectId, characterId, abilities, visualRules)
+      setState('saved')
+      setTimeout(() => setState('idle'), 2500)
+    } catch {
+      setState('error')
+      setTimeout(() => setState('idle'), 3000)
+    }
+  }
+
+  const label = state === 'saving' ? 'Saving…' : state === 'saved' ? '✓ Saved to Project' : state === 'error' ? '✕ Save Failed' : '↑ Save to Project'
+  const borderColor = state === 'saved' ? 'rgba(74,222,128,0.5)' : state === 'error' ? 'rgba(239,68,68,0.5)' : 'rgba(201,168,76,0.5)'
+  const color = state === 'saved' ? '#4ade80' : state === 'error' ? '#ef4444' : 'var(--gold)'
+  const bg = state === 'saved' ? 'rgba(74,222,128,0.1)' : state === 'error' ? 'rgba(239,68,68,0.1)' : 'rgba(201,168,76,0.1)'
+
+  return (
+    <div style={{ marginTop: 24, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+      <button
+        onClick={handleSave}
+        disabled={state === 'saving'}
+        style={{
+          padding: '7px 22px', borderRadius: 4, fontSize: 9, letterSpacing: '0.18em',
+          textTransform: 'uppercase', cursor: state === 'saving' ? 'wait' : 'pointer',
+          border: `1px solid ${borderColor}`, background: bg, color,
+          transition: 'all 200ms',
+        }}>
+        {label}
+      </button>
+      <p style={{ fontSize: 8, color: 'var(--text-muted)', opacity: 0.4, marginTop: 6, lineHeight: 1.5 }}>
+        Persists abilities and visual rules to the project's Creative Knowledge Graph.
+        The Director Engine and QA Engine read from it on every generation.
+      </p>
+    </div>
+  )
+}
+
+/** Pick any generated image and save it as the character's reference portrait in the CKG */
+function PortraitReferencePicker({
+  projectId, characterId, abilities, visualRules, portrait, allImages,
+}: {
+  projectId: number
+  characterId: string
+  abilities: string[]
+  visualRules: string[]
+  portrait: string | null
+  allImages: { url: string; label: string }[]
+}) {
+  const [selected, setSelected] = useState<string | null>(portrait)
+  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  async function handleSave() {
+    if (!selected) return
+    setState('saving')
+    try {
+      await updateCharacterDNA(projectId, characterId, abilities, visualRules, selected)
+      setState('saved')
+      setTimeout(() => setState('idle'), 2500)
+    } catch {
+      setState('error')
+      setTimeout(() => setState('idle'), 3000)
+    }
+  }
+
+  if (allImages.length === 0) return null
+
+  const saveLabel = state === 'saving' ? 'Saving…' : state === 'saved' ? '✓ Reference Saved' : state === 'error' ? '✕ Save Failed' : '↑ Set as Reference Portrait'
+  const saveBorder = state === 'saved' ? 'rgba(74,222,128,0.5)' : state === 'error' ? 'rgba(239,68,68,0.5)' : 'rgba(201,168,76,0.5)'
+  const saveColor = state === 'saved' ? '#4ade80' : state === 'error' ? '#ef4444' : 'var(--gold)'
+  const saveBg = state === 'saved' ? 'rgba(74,222,128,0.1)' : state === 'error' ? 'rgba(239,68,68,0.1)' : 'rgba(201,168,76,0.1)'
+
+  return (
+    <div style={{ marginTop: 28, borderTop: '1px solid var(--border)', paddingTop: 20 }}>
+      <p style={{ fontSize: 8, letterSpacing: '0.25em', textTransform: 'uppercase', color: 'var(--gold)', opacity: 0.6, marginBottom: 12 }}>
+        Set Reference Portrait
+      </p>
+      <p style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.45, marginBottom: 14, lineHeight: 1.6 }}>
+        Select any generated image below to use as the canonical reference portrait in the Creative Knowledge Graph.
+        This anchors the character's appearance for all future generation calls.
+      </p>
+      {/* Thumbnail grid */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+        {allImages.map(({ url, label }) => (
+          <div key={url} style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setSelected(url)}>
+            <img
+              src={url}
+              alt={label}
+              style={{
+                width: 72, height: 90, objectFit: 'cover', borderRadius: 5,
+                border: selected === url ? '2px solid var(--gold)' : '1px solid var(--border)',
+                transition: 'border 120ms',
+              }}
+            />
+            {selected === url && (
+              <span style={{
+                position: 'absolute', bottom: 2, right: 4,
+                fontSize: 9, color: 'var(--gold)', fontWeight: 700, textShadow: '0 0 4px #000',
+              }}>✓</span>
+            )}
+            <p style={{ fontSize: 7, color: 'var(--text-muted)', opacity: 0.5, textAlign: 'center', marginTop: 2, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{label}</p>
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={handleSave}
+        disabled={!selected || state === 'saving'}
+        style={{
+          padding: '7px 22px', borderRadius: 4, fontSize: 9, letterSpacing: '0.18em',
+          textTransform: 'uppercase', cursor: (!selected || state === 'saving') ? 'not-allowed' : 'pointer',
+          border: `1px solid ${saveBorder}`, background: saveBg, color: saveColor,
+          opacity: selected ? 1 : 0.4, transition: 'all 200ms',
+        }}>
+        {saveLabel}
+      </button>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Main Page
 // ---------------------------------------------------------------------------
@@ -727,6 +858,8 @@ interface Props {
   allCharacters?: CharacterProfile[]
   scenes: StoryboardScene[]
   renderStyle?: RenderStyle | 'bw_detailed'
+  /** The active project — needed for DB saves (abilities, portrait). Optional for backwards compat. */
+  project?: StoryboardProject | null
   onBack?: () => void
   /** Called when auto-init for this character completes */
   onAutoInitComplete?: (charId: string) => void
@@ -795,7 +928,7 @@ function savePkgCache(charId: string, pkg: CharacterPackage): void {
 
 export default function CharacterPackagePage({
   character, allCharacters = [], scenes, renderStyle = 'bw_sketch',
-  onBack, onAutoInitComplete, onSaveOverview, onSavePortrait,
+  project = null, onBack, onAutoInitComplete, onSaveOverview, onSavePortrait,
 }: Props) {
   // Detect if the base style is B&W so the toggle is shown
   const isBW = renderStyle === 'bw_sketch' || renderStyle === 'bw_detailed'
@@ -1562,7 +1695,7 @@ export default function CharacterPackagePage({
           </div>
         )}
 
-        {/* ── (old Portrait tab content mapped to Expressions now — kept below) ── */}
+        {/* ── Portrait ─────────────────────────────────── */}
         {activeTab === 'Portrait' && (
           <div>
             <SectionHeader title="Hero Portrait" section="portrait" />
@@ -1587,6 +1720,23 @@ export default function CharacterPackagePage({
                 )}
               </div>
             </div>
+
+            {/* ── Set as Reference Portrait ── */}
+            {project?.db_id && (
+              <PortraitReferencePicker
+                projectId={project.db_id}
+                characterId={character.id}
+                abilities={pkg.abilities}
+                visualRules={pkg.visualRules}
+                portrait={pkg.portrait}
+                allImages={[
+                  ...(pkg.portrait ? [{ url: pkg.portrait, label: 'Portrait' }] : []),
+                  ...Object.entries(pkg.turnaround).filter(([,v])=>v).map(([k,v])=>({ url:v!, label:{ front:'Front',three_q_front:'¾ Front',side:'Side',three_q_back:'¾ Back',back:'Back' }[k]??k })),
+                  ...Object.entries(pkg.expressions).filter(([,v])=>v).map(([k,v])=>({ url:v!, label:k.charAt(0).toUpperCase()+k.slice(1) })),
+                  ...Object.entries(pkg.poses).filter(([,v])=>v).map(([k,v])=>({ url:v!, label:k.charAt(0).toUpperCase()+k.slice(1) })),
+                ]}
+              />
+            )}
           </div>
         )}
 
@@ -1873,6 +2023,21 @@ export default function CharacterPackagePage({
                   )
                 })}
               </div>
+            )}
+
+            {/* Save abilities + visual rules to DB */}
+            {project?.db_id && (
+              <AbilitiesSaveButton
+                projectId={project.db_id}
+                characterId={character.id}
+                abilities={pkg.abilities}
+                visualRules={pkg.visualRules}
+              />
+            )}
+            {!project?.db_id && (
+              <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.35, marginTop:16, fontStyle:'italic' }}>
+                Open a saved project to enable DB persistence.
+              </p>
             )}
           </div>
         )}

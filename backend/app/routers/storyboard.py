@@ -24,6 +24,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.schemas.storyboard import (
     AgeVariantRequest,
+    CharacterDNAUpdateRequest,
     CharacterIdentity,
     CharacterProfileBase,
     CharacterQARequest,
@@ -1675,6 +1676,47 @@ def ckg_update_identity(payload: CKGUpdateIdentityRequest, db: DbSession) -> dic
         "species": payload.species.species_id,
         "variants_count": len(payload.variants),
         "appearance_summary": appearance_summary,
+    }
+
+
+@router.patch(
+    "/character/update-dna",
+    summary="Save abilities, visual rules and/or a reference portrait into a project's CKG",
+)
+def update_character_dna(payload: CharacterDNAUpdateRequest, db: DbSession) -> dict:
+    """
+    Persists the Character DNA fields (abilities, visual_rules, reference_portrait)
+    for a single character into the project's Creative Knowledge Graph.
+
+    Called by the Abilities tab "Save to Project" button and the Portrait tab
+    "Set as Reference Portrait" flow.  Only the fields provided in the request
+    are written — existing CKG identity / species / variant nodes are not touched.
+    """
+    project = _load_project_or_404(payload.project_id, db)
+
+    try:
+        ckg = CreativeKnowledgeGraph.model_validate(project.canon) if project.canon else CreativeKnowledgeGraph()
+    except Exception:
+        ckg = CreativeKnowledgeGraph()
+
+    # Write abilities, visual_rules, and optional portrait into the CKG
+    ckg.character_abilities[payload.character_id] = payload.abilities
+    ckg.character_visual_rules[payload.character_id] = payload.visual_rules
+    if payload.reference_portrait is not None:
+        ckg.character_portraits[payload.character_id] = payload.reference_portrait
+    # Keep approved_characters node in sync for prompt_builder
+    if payload.character_id in ckg.approved_characters:
+        ckg.approved_characters[payload.character_id]["abilities"] = payload.abilities
+        ckg.approved_characters[payload.character_id]["visual_rules"] = payload.visual_rules
+
+    project.canon = ckg.model_dump()
+
+    db.commit()
+    return {
+        "character_id": payload.character_id,
+        "abilities_saved": len(payload.abilities),
+        "visual_rules_saved": len(payload.visual_rules),
+        "portrait_saved": payload.reference_portrait is not None,
     }
 
 
