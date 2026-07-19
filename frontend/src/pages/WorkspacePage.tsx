@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { StoryboardProject, StoryboardScene } from '../types/storyboard'
+import type { StoryboardFrame, StoryboardProject, StoryboardScene } from '../types/storyboard'
 import PipelineForm from '../components/PipelineForm'
 import SceneList from '../components/SceneList'
 import FrameStream from '../components/FrameStream'
@@ -33,6 +33,24 @@ export default function WorkspacePage({ initialProject }: Props) {
     setActiveScene(p.scenes[0] ?? null)
     setSelectedKeys(new Map())
     setViewMode('gallery')
+  }
+
+  function handleVisualActionUpdate(sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) {
+    const applyPatch = (f: StoryboardFrame) =>
+      f.frame_number === frameNumber ? { ...f, ...patch } : f
+    setProject(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        scenes: prev.scenes.map(s =>
+          s.scene_number !== sceneNumber ? s : { ...s, frames: s.frames.map(applyPatch) }
+        ),
+      }
+    })
+    setActiveScene(prev => {
+      if (!prev || prev.scene_number !== sceneNumber) return prev
+      return { ...prev, frames: prev.frames.map(applyPatch) }
+    })
   }
 
   function handleToggleSelect(key: string) {
@@ -120,6 +138,7 @@ export default function WorkspacePage({ initialProject }: Props) {
                 onToggleSelect={handleToggleSelect}
                 viewMode="gallery"
                 onSetViewMode={(m) => setViewMode(m as ViewMode)}
+                onVisualActionUpdate={handleVisualActionUpdate}
               />
             )}
             {displayScene && viewMode === 'player' && (

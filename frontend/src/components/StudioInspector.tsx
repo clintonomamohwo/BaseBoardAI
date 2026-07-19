@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { classifyError } from '../utils/classifyError'
 import type { ProjectCanon, StoryboardScene, StoryboardFrame } from '../types/storyboard'
-import StyleReferenceUploader from './StyleReferenceUploader'
 import ShotPlanner from './ShotPlanner'
 import { generateBackgroundVariation } from '../api/storyboard'
 
@@ -65,6 +64,8 @@ export default function StudioInspector({
   const [pickedImage, setPickedImage]         = useState<string | null>(null)
   // null = show same-location frames; string = show frames for that other location
   const [selectedOtherLocation, setSelectedOtherLocation] = useState<string | null>(null)
+  // Which frame in the current scene is the variation target (null = first frame)
+  const [targetFrameNumber, setTargetFrameNumber] = useState<number | null>(null)
 
   const palette  = scene?.color_palette ?? ['#2D1B69', '#00D4FF', '#D4A853']
   const selectClass = 'w-full bg-[var(--bg-surface)] border border-[var(--border)] rounded px-2 py-1.5 text-[10px] text-[var(--text-base)]/70 focus:outline-none focus:border-[var(--gold)]/50 transition-all'
@@ -95,10 +96,12 @@ export default function StudioInspector({
   const totalCinematicFields = CINEMATIC_FIELDS.length
   const allRationale = Object.entries(rationale).filter(([, v]) => v)
 
-  // Only the first frame of the scene is used as the variation target —
-  // background variation is a scene-level operation (the background is shared
-  // across all frames within a scene).
-  const variationFrame = frame ?? scene?.frames[0] ?? null
+  // The frame to apply the variation to — defaults to the first frame of the scene.
+  // Reset to null (first frame) whenever the active scene changes.
+  const sceneFrames = scene?.frames ?? []
+  const variationFrame = sceneFrames.find(f => f.frame_number === targetFrameNumber)
+    ?? sceneFrames[0]
+    ?? null
 
   // ── Picker data ──────────────────────────────────────────────────────────
   // Build full options list, then split into same-location / other-location.
@@ -141,27 +144,55 @@ export default function StudioInspector({
     setSelectedOtherLocation(null)
   }
 
-  async function handleBackgroundVariation(overrideRef?: string) {
+  async function handleBackgroundVariation(overrideRef?: string, targetFrame = variationFrame) {
     const ref = overrideRef ?? activeReference
-    if (!scene || !variationFrame || !ref) return
+    if (!scene || !targetFrame || !ref) return
     setBgVariating(true)
     setBgVariationError(null)
     closePicker()
     try {
       const result = await generateBackgroundVariation(
-        variationFrame,
+        targetFrame,
         scene,
         ref,
         renderStyle ?? 'bw_sketch',
         canon ? (canon as unknown as Record<string, unknown>) : null,
       )
       if (result.generated_image_url) {
-        onBackgroundVariation?.(scene.scene_number, variationFrame.frame_number, result.generated_image_url)
+        onBackgroundVariation?.(scene.scene_number, targetFrame.frame_number, result.generated_image_url)
         // Clear the one-shot picked image after successful use
         setPickedImage(null)
       } else {
         setBgVariationError('Image provider returned no result — try again.')
       }
+    } catch (err) {
+      const e = classifyError(err)
+      setBgVariationError(`${e.title} — ${e.detail}`)
+    } finally {
+      setBgVariating(false)
+    }
+  }
+
+  async function handleBackgroundVariationAllFrames(overrideRef?: string) {
+    const ref = overrideRef ?? activeReference
+    if (!scene || !ref || sceneFrames.length === 0) return
+    setBgVariating(true)
+    setBgVariationError(null)
+    closePicker()
+    try {
+      for (const f of sceneFrames) {
+        const result = await generateBackgroundVariation(
+          f,
+          scene,
+          ref,
+          renderStyle ?? 'bw_sketch',
+          canon ? (canon as unknown as Record<string, unknown>) : null,
+        )
+        if (result.generated_image_url) {
+          onBackgroundVariation?.(scene.scene_number, f.frame_number, result.generated_image_url)
+        }
+      }
+      setPickedImage(null)
     } catch (err) {
       const e = classifyError(err)
       setBgVariationError(`${e.title} — ${e.detail}`)
@@ -289,66 +320,174 @@ export default function StudioInspector({
           </section>
         )}
 
-        {/* ── Scene Background ─────────────────────────────────────────────── */}
+        {/* ── Scene Background Variation ───────────────────────────────────── */}
         {scene && (
           <section>
-            <p className="text-[9px] tracking-[0.3em] uppercase text-[var(--gold)]/40 mb-2">Background</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{
-                flex: 1, fontSize: 11, color: 'var(--text-base)', opacity: 0.75,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}>
-                {scene.location_heading}
-              </span>
+            <p className="text-[9px] tracking-[0.3em] uppercase text-[var(--gold)]/40 mb-3">Background Variation</p>
 
-              {/* ↻ button — three states:
-                  1. Has reference → generate immediately
-                  2. No reference, has scene images → open picker
-                  3. No reference, no images → dimmed, no action           */}
-              {bgVariating ? (
+            {/* Reference thumbnail — shown when a reference is active */}
+            {activeReference && (
+              <div style={{ marginBottom: 8, position: 'relative' }}>
+                <img
+                  src={activeReference}
+                  alt="Reference"
+                  style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border)', display: 'block' }}
+                />
                 <span style={{
-                  fontSize: 13, lineHeight: 1, flexShrink: 0,
-                  color: 'var(--gold)', opacity: 0.9,
-                  border: '1px solid var(--gold)', borderRadius: 4,
-                  padding: '3px 7px', cursor: 'wait',
-                }}>…</span>
-              ) : activeReference ? (
+                  position: 'absolute', top: 5, left: 6,
+                  fontSize: 7, letterSpacing: '0.15em', textTransform: 'uppercase',
+                  background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
+                  color: 'var(--gold)', opacity: 0.9, padding: '2px 6px', borderRadius: 3,
+                }}>Reference</span>
                 <button
                   type="button"
+                  onClick={() => { onReferenceChange(null); setPickedImage(null) }}
+                  title="Remove reference"
+                  style={{
+                    position: 'absolute', top: 5, right: 6,
+                    background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: 3,
+                    color: 'var(--text-muted)', opacity: 0.7, fontSize: 10, cursor: 'pointer',
+                    padding: '2px 5px', lineHeight: 1,
+                  }}
+                >✕</button>
+              </div>
+            )}
+
+            {/* No reference yet — upload or pick from frames */}
+            {!activeReference && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                {/* Upload */}
+                <label style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  border: '1px dashed var(--border)', borderRadius: 4, padding: '8px 10px',
+                  cursor: 'pointer', transition: 'border-color 120ms',
+                }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(201,168,76,0.5)')}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+                >
+                  <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6 }}>⇪ Upload reference image</span>
+                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    const reader = new FileReader()
+                    reader.onload = () => onReferenceChange(reader.result as string)
+                    reader.readAsDataURL(file)
+                    e.target.value = ''
+                  }} />
+                </label>
+
+                {/* Pick from existing frames */}
+                {hasPickerOptions && (
+                  <button
+                    type="button"
+                    onClick={() => setPickerOpen(o => !o)}
+                    style={{
+                      background: pickerOpen ? 'rgba(201,168,76,0.08)' : 'none',
+                      border: `1px solid ${pickerOpen ? 'var(--gold)' : 'var(--border)'}`,
+                      borderRadius: 4, padding: '7px 10px', cursor: 'pointer',
+                      color: pickerOpen ? 'var(--gold)' : 'var(--text-muted)',
+                      fontSize: 9, letterSpacing: '0.1em', textAlign: 'center',
+                      transition: 'border-color 120ms, background 120ms, color 120ms',
+                      width: '100%',
+                    }}
+                    onMouseEnter={e => { if (!pickerOpen) { e.currentTarget.style.borderColor = 'var(--gold)'; e.currentTarget.style.color = 'var(--gold)' } }}
+                    onMouseLeave={e => { if (!pickerOpen) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' } }}
+                  >
+                    {pickerOpen ? '▲ Close Picker' : '⊞ Pick from existing frames'}
+                  </button>
+                )}
+
+                {!hasPickerOptions && (
+                  <p style={{ fontSize: 8, color: 'var(--text-muted)', opacity: 0.35, textAlign: 'center', lineHeight: 1.5 }}>
+                    Generate some storyboard frames first, then pick one as the reference.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Target frame selector — thumbnail strip */}
+            {sceneFrames.filter(f => f.generated_image_url).length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <p style={{ fontSize: 7, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--gold)', opacity: 0.4, marginBottom: 5 }}>
+                  Apply to frame
+                </p>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {sceneFrames.filter(f => f.generated_image_url).map(f => {
+                    const isTarget = (targetFrameNumber ?? sceneFrames[0]?.frame_number) === f.frame_number
+                    return (
+                      <button
+                        key={f.frame_number}
+                        type="button"
+                        onClick={() => setTargetFrameNumber(f.frame_number)}
+                        title={`Frame ${f.frame_number} — ${f.shot_type}`}
+                        style={{
+                          padding: 0, border: `2px solid ${isTarget ? 'var(--gold)' : 'var(--border)'}`,
+                          borderRadius: 3, cursor: 'pointer', background: 'none',
+                          overflow: 'hidden', width: 48, flexShrink: 0,
+                          transition: 'border-color 100ms',
+                          boxShadow: isTarget ? '0 0 0 1px var(--gold)' : 'none',
+                        }}
+                        onMouseEnter={e => { if (!isTarget) e.currentTarget.style.borderColor = 'rgba(201,168,76,0.5)' }}
+                        onMouseLeave={e => { if (!isTarget) e.currentTarget.style.borderColor = 'var(--border)' }}
+                      >
+                        <img
+                          src={f.generated_image_url!}
+                          alt={`F${f.frame_number}`}
+                          style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover', display: 'block' }}
+                        />
+                        <span style={{
+                          display: 'block', fontSize: 6, textAlign: 'center',
+                          padding: '2px 0', color: isTarget ? 'var(--gold)' : 'var(--text-muted)',
+                          opacity: isTarget ? 1 : 0.5, lineHeight: 1,
+                        }}>F{f.frame_number}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Generate buttons — only shown when a reference is set */}
+            {activeReference && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
+                <button
+                  type="button"
+                  disabled={bgVariating}
                   onClick={() => handleBackgroundVariation()}
-                  title="Generate a background variation anchored to the reference image"
                   style={{
-                    background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-                    padding: '3px 7px', cursor: 'pointer',
-                    color: 'var(--text-muted)', opacity: 0.55, fontSize: 13, lineHeight: 1, flexShrink: 0,
-                    transition: 'opacity 120ms, border-color 120ms',
+                    width: '100%', padding: '7px 0', borderRadius: 4,
+                    border: '1px solid rgba(201,168,76,0.4)', background: 'transparent',
+                    color: 'var(--gold)', fontSize: 8, letterSpacing: '0.2em',
+                    textTransform: 'uppercase', cursor: bgVariating ? 'wait' : 'pointer',
+                    opacity: bgVariating ? 0.5 : 0.8,
+                    transition: 'opacity 150ms, border-color 150ms',
                   }}
-                  onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.borderColor = 'var(--gold)' }}
-                  onMouseLeave={e => { e.currentTarget.style.opacity = '0.55'; e.currentTarget.style.borderColor = 'var(--border)' }}
-                >↻</button>
-              ) : hasPickerOptions ? (
-                <button
-                  type="button"
-                  onClick={() => setPickerOpen(o => !o)}
-                  title="Select a scene image to use as the background reference"
-                  style={{
-                    background: pickerOpen ? 'rgba(201,168,76,0.08)' : 'none',
-                    border: `1px solid ${pickerOpen ? 'var(--gold)' : 'var(--border)'}`,
-                    borderRadius: 4, padding: '3px 7px', cursor: 'pointer',
-                    color: pickerOpen ? 'var(--gold)' : 'var(--text-muted)',
-                    opacity: pickerOpen ? 1 : 0.55, fontSize: 13, lineHeight: 1, flexShrink: 0,
-                    transition: 'opacity 120ms, border-color 120ms, background 120ms',
-                  }}
-                  onMouseEnter={e => { if (!pickerOpen) { e.currentTarget.style.opacity = '1'; e.currentTarget.style.borderColor = 'var(--gold)' } }}
-                  onMouseLeave={e => { if (!pickerOpen) { e.currentTarget.style.opacity = '0.55'; e.currentTarget.style.borderColor = 'var(--border)' } }}
-                >↻</button>
-              ) : (
-                <span
-                  title="No images available yet — generate the storyboard first"
-                  style={{ fontSize: 13, opacity: 0.15, flexShrink: 0, cursor: 'default' }}
-                >↻</span>
-              )}
-            </div>
+                  onMouseEnter={e => { if (!bgVariating) e.currentTarget.style.opacity = '1' }}
+                  onMouseLeave={e => { if (!bgVariating) e.currentTarget.style.opacity = '0.8' }}
+                >
+                  {bgVariating ? '↻ Generating…' : '↻ Apply to Selected Frame'}
+                </button>
+                {sceneFrames.length > 1 && (
+                  <button
+                    type="button"
+                    disabled={bgVariating}
+                    onClick={() => handleBackgroundVariationAllFrames()}
+                    style={{
+                      width: '100%', padding: '7px 0', borderRadius: 4,
+                      border: '1px solid var(--border)', background: 'transparent',
+                      color: 'var(--text-muted)', fontSize: 8, letterSpacing: '0.2em',
+                      textTransform: 'uppercase', cursor: bgVariating ? 'wait' : 'pointer',
+                      opacity: bgVariating ? 0.3 : 0.5,
+                      transition: 'opacity 150ms, border-color 150ms',
+                    }}
+                    onMouseEnter={e => { if (!bgVariating) { e.currentTarget.style.opacity = '0.9'; e.currentTarget.style.borderColor = 'rgba(201,168,76,0.3)' } }}
+                    onMouseLeave={e => { if (!bgVariating) { e.currentTarget.style.opacity = '0.5'; e.currentTarget.style.borderColor = 'var(--border)' } }}
+                  >
+                    {bgVariating ? '↻ Generating…' : `↻ Apply to All ${sceneFrames.length} Frames`}
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Inline image picker — shown when no reference is uploaded */}
             {pickerOpen && !activeReference && (() => {
@@ -584,11 +723,6 @@ export default function StudioInspector({
               )
             })}
           </div>
-        </section>
-
-        {/* ── Style Reference ───────────────────────────────────────────────── */}
-        <section className="border-t border-[var(--border)] pt-4">
-          <StyleReferenceUploader onReferenceChange={onReferenceChange} />
         </section>
 
         {/* ── Project Settings — Canon ──────────────────────────────────────── */}

@@ -54,10 +54,13 @@ from app.schemas.storyboard import (
 # ---------------------------------------------------------------------------
 
 # Errors that indicate a temporary or model-specific problem — retry allowed.
+# NOTE: token_quota_reached arrives with HTTP 403, so it must be checked here
+# *before* the fatal-token list, which also contains "403".
 _RETRYABLE_TOKENS: tuple[str, ...] = (
     "429",
     "consumption_limit_reached",
     "token_quota_reached",           # account-level quota — try next model
+    "quota_reached",                 # alternate phrasing from WatsonX
     "model_no_support_for_function",
     "is not supported",
     "not supported for this environment",
@@ -87,13 +90,20 @@ def _should_fallback(exc: Exception) -> bool:
     """
     Return True only when the error is transient or model-specific.
 
-    Auth / config errors always return False so they surface immediately
-    instead of being swallowed by the fallback loop.
+    Retryable tokens are checked first so that quota errors (token_quota_reached)
+    that arrive with a 403 status code are correctly classified as retryable
+    rather than fatal, even though "403" also appears in _FATAL_TOKENS.
+
+    Auth / config errors (401, bad key, wrong project) return False so they
+    surface immediately instead of being swallowed by the fallback loop.
     """
     msg = str(exc).lower()
+    # Retryable check takes priority — quota errors can carry a 403 body.
+    if any(token in msg for token in _RETRYABLE_TOKENS):
+        return True
     if any(token in msg for token in _FATAL_TOKENS):
         return False
-    return any(token in msg for token in _RETRYABLE_TOKENS)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -139,14 +149,15 @@ def _invoke_with_fallback(prompt_text: str, max_new_tokens: int = 4096) -> str:
     Invoke the configured TEXT_PROVIDER with automatic fallback.
 
     TEXT_PROVIDER=watsonx (default):
-        Tries WATSONX_PRIMARY_TEXT_MODEL, then WATSONX_FALLBACK_TEXT_MODEL,
-        then WATSONX_LAST_RESORT_MODEL on retryable errors (rate limits,
-        unsupported model, transient server errors).
-        Auth / config errors (401, 403, invalid API key) fail immediately.
+        Tries WATSONX_PRIMARY_TEXT_MODEL → WATSONX_FALLBACK_TEXT_MODEL →
+        WATSONX_LAST_RESORT_MODEL on retryable errors (rate limits, quota
+        exhaustion, unsupported model, transient server errors).
+        Auth / config errors (401, wrong project) fail immediately.
+        Raises the last WatsonX exception if all candidates are exhausted.
 
     TEXT_PROVIDER=gemini:
         Routes directly to _GeminiTextProvider from ai_factory.py.
-        No WatsonX calls are made.
+        Falls back to WatsonX if Gemini itself fails.
 
     Raises the last exception if all candidates are exhausted.
     """

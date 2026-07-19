@@ -42,6 +42,7 @@ export default function FrameCard({
   // Regenerate visual action state
   const [regenLoading, setRegenLoading] = useState(false)
   const [regenError, setRegenError] = useState<string | null>(null)
+  const [regenSuccess, setRegenSuccess] = useState(false)
   // Style upgrade state
   const [upgradeLoading, setUpgradeLoading] = useState(false)
 
@@ -380,6 +381,7 @@ export default function FrameCard({
                 onClick={async () => {
                   setRegenLoading(true)
                   setRegenError(null)
+                  setRegenSuccess(false)
                   try {
                     const result = await regenerateVisualAction(frame, scene)
                     onVisualActionUpdate?.(scene.scene_number, frame.frame_number, {
@@ -387,6 +389,8 @@ export default function FrameCard({
                       animation_beats: result.animation_beats,
                       director_notes: result.director_notes ?? frame.director_notes,
                     })
+                    setRegenSuccess(true)
+                    setTimeout(() => setRegenSuccess(false), 2500)
                   } catch (err) {
                     setRegenError(err instanceof Error ? err.message : 'Regeneration failed')
                   } finally {
@@ -404,7 +408,7 @@ export default function FrameCard({
                 onMouseEnter={e => { if (!regenLoading) e.currentTarget.style.opacity = '1' }}
                 onMouseLeave={e => { if (!regenLoading) e.currentTarget.style.opacity = '0.7' }}
               >
-                {regenLoading ? 'Directing…' : '↺ Regenerate Visual Action'}
+                {regenLoading ? 'Directing…' : regenSuccess ? '✓ Direction Updated' : '↺ Regenerate Visual Action'}
               </button>
             </div>
           )}

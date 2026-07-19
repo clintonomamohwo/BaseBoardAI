@@ -252,6 +252,8 @@ Bob was used in **Agent mode** throughout — it read files before editing, sear
 
 > **Zero-credential option:** Set `TEXT_PROVIDER=gemini`, `IMAGE_PROVIDER=pollinations`, `VISION_PROVIDER=gemini` — one free Gemini key is enough to run the full app.
 
+---
+
 ### 1. Clone
 
 ```bash
@@ -259,7 +261,31 @@ git clone https://github.com/clintonomamohwo/BaseBoardAI.git
 cd BaseBoardAI
 ```
 
-### 2. Backend
+---
+
+### 2. Backend — the easy way (`baseboard`)
+
+A `baseboard` script at the repo root lets you start the API **from any directory** — no `cd`, no manual venv activation:
+
+```bash
+# From the repo root (or anywhere you have the path):
+./baseboard
+
+# Production mode (no hot-reload):
+./baseboard --prod
+```
+
+On first run it will:
+1. Create `backend/.venv` and install dependencies automatically
+2. Copy `.env.example` → `backend/.env` and prompt you to fill in your API keys
+3. Start the server once the `.env` is populated
+
+```
+API  → http://localhost:8000
+Docs → http://localhost:8000/docs
+```
+
+**Or run manually the traditional way:**
 
 ```bash
 cd backend
@@ -268,18 +294,29 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env             # fill in your API keys
 uvicorn app.main:app --reload
-# API  → http://localhost:8000
-# Docs → http://localhost:8000/docs
 ```
+
+---
 
 ### 3. Frontend
 
 ```bash
-cd ../frontend
+cd frontend
 npm install
 npm run dev
 # App → http://localhost:5173
 ```
+
+---
+
+### 4. Verify everything is up
+
+```bash
+curl http://localhost:8000/health
+# {"status":"ok","primary_model":"meta-llama/llama-3-3-70b-instruct", ...}
+```
+
+---
 
 ### `.env` reference
 
@@ -291,12 +328,153 @@ VISION_PROVIDER=gemini
 WATSONX_API_KEY=your_key
 WATSONX_PROJECT_ID=your_project_id
 WATSONX_URL=https://us-south.ml.cloud.ibm.com
-WATSONX_MODEL_ID=meta-llama/llama-3-3-70b-instruct
+WATSONX_PRIMARY_TEXT_MODEL=meta-llama/llama-3-3-70b-instruct
+WATSONX_FALLBACK_TEXT_MODEL=mistralai/mistral-small-3-1-24b-instruct-2503
+WATSONX_LAST_RESORT_MODEL=meta-llama/llama-3-1-8b
 
 GEMINI_API_KEY=your_key
 GEMINI_TEXT_MODEL=gemini-3.5-flash
 GEMINI_FAST_MODEL=gemini-3.5-flash
 GEMINI_IMAGE_MODEL=gemini-3.1-flash-lite-image
+```
+
+---
+
+## Demo Scripts
+
+Three pre-built demo pipelines live in `scripts/`. Each one runs the full BaseBoard pipeline — LLM extraction, character packages, and storyboard frame images — against a ready-made story, and saves all output to `scripts/output/`.
+
+**Prerequisites:** backend running (`./baseboard` in a separate terminal), API keys set in `backend/.env`.
+
+### How to run (all scripts)
+
+The path to `BaseBoardAI` contains a space — always quote it:
+
+```bash
+cd "/Users/ruonaclinton/Documents/Personal Doc/BaseBoardAI/backend"
+source .venv/bin/activate
+python3 ../scripts/<script_name>.py
+```
+
+Or using the venv Python directly from any directory:
+
+```bash
+"/Users/ruonaclinton/Documents/Personal Doc/BaseBoardAI/backend/.venv/bin/python3" \
+  "/Users/ruonaclinton/Documents/Personal Doc/BaseBoardAI/scripts/<script_name>.py"
+```
+
+---
+
+### `run_tom_and_jerry.py` — quickest demo
+
+Classic cat-and-mouse. 2 characters, 6 scenes, ~18 frames.
+
+| | |
+|---|---|
+| **Render style** | `flat_color` |
+| **Director style** | `balanced` |
+| **Characters** | Tom Cat, Jerry Mouse |
+| **Output** | ~110 character images + storyboard frames |
+
+```bash
+cd "/Users/ruonaclinton/Documents/Personal Doc/BaseBoardAI/backend"
+source .venv/bin/activate
+python3 ../scripts/run_tom_and_jerry.py
+```
+
+Re-run only Stage 3 (storyboard images) using a saved project:
+
+```bash
+python3 ../scripts/run_tom_and_jerry.py --stage3-only
+```
+
+Output tree:
+```
+scripts/output/tom_and_jerry/
+  storyboard/project.json
+  characters/<id>/portrait.png
+  characters/<id>/turnaround/{front,side,back,...}.png
+  characters/<id>/expressions/{neutral,happy,angry,...}.png
+  characters/<id>/poses/{standing,running,hero_pose,...}.png
+  characters/<id>/outfits/{default,casual,formal,...}.png
+  characters/<id>/turnaround_360/deg_000…deg_315.png
+  characters/<id>/premium_poses/{t_pose,crouching,...}.png
+  characters/<id>/material_closeups/{face,hair,fabric,...}.png
+```
+
+---
+
+### `run_lost_compass.py` — full sci-fi demo
+
+Futuristic adventure. 7 characters (anthropomorphic humanoids), 7 scenes, ~21 frames.
+
+| | |
+|---|---|
+| **Render style** | `full_shaded` |
+| **Director style** | `balanced` |
+| **Characters** | Theo Mensah, Harrison Brooks, Amina Hassan, Li Wei, Aarav Patel, Bella Alvarez, Seraphis |
+| **Output** | ~385 character images + storyboard frames |
+
+```bash
+cd "/Users/ruonaclinton/Documents/Personal Doc/BaseBoardAI/backend"
+source .venv/bin/activate
+python3 ../scripts/run_lost_compass.py
+```
+
+Output tree:
+```
+scripts/output/lost_compass/
+  storyboard/project.json
+  characters/<id>/  (same structure as above, ~55 images per character)
+```
+
+---
+
+### `run_distance_between_us.py` — romance/drama demo
+
+Contemporary long-distance romance. 3 characters, 8 scenes, ~15 frames.
+
+| | |
+|---|---|
+| **Render style** | `bw_sketch` |
+| **Director style** | `intimate` |
+| **Characters** | Emma Clarke, Kai Tanaka, Lucas Ferreira |
+| **Output** | ~165 character images + storyboard frames |
+
+```bash
+cd "/Users/ruonaclinton/Documents/Personal Doc/BaseBoardAI/backend"
+source .venv/bin/activate
+python3 ../scripts/run_distance_between_us.py
+```
+
+Output tree:
+```
+scripts/output/distance_between_us/
+  storyboard/project.json
+  storyboard/frames/s01_f001.png … (per-frame PNGs)
+  characters/<id>/  (same structure, ~55 images per character)
+```
+
+---
+
+### What each script does
+
+Every script runs the same 3-stage pipeline:
+
+| Stage | What happens |
+|---|---|
+| **Stage 1** — LLM extraction | Sends story + characters + world to WatsonX/Gemini → extracts characters, environments, and storyboard scenes. Saves `project.json`. |
+| **Stage 2** — Character packages | For each character: portrait, 5-view turnaround, 9 expressions, 7 poses, 7 outfits, props, 360° turnaround, premium poses, material closeups. |
+| **Stage 3** — Storyboard images | Generates one image per storyboard frame via the active `IMAGE_PROVIDER`. Saves PNGs and updates `project.json`. |
+
+A live progress bar is printed during image generation:
+```
+  [████████░░░░░░░░] 8/16
+```
+
+If the backend is not running, the script exits immediately with:
+```
+✗ Cannot reach backend at http://localhost:8000 — is uvicorn running?
 ```
 
 ---
@@ -320,6 +498,7 @@ GEMINI_IMAGE_MODEL=gemini-3.1-flash-lite-image
 
 ```
 BaseBoardAI/
+├── baseboard                    # one-command backend launcher (run from anywhere)
 ├── backend/app/
 │   ├── core/
 │   │   ├── config.py            # Centralised env config

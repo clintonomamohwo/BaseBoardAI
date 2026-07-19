@@ -1,4 +1,4 @@
-import type { StoryboardScene } from '../types/storyboard'
+import type { StoryboardFrame, StoryboardScene } from '../types/storyboard'
 import FrameCard from './FrameCard'
 
 interface Props {
@@ -8,9 +8,10 @@ interface Props {
   onToggleSelect: (key: string) => void
   viewMode: 'gallery' | 'player'
   onSetViewMode: (mode: 'gallery' | 'player') => void
+  onVisualActionUpdate?: (sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) => void
 }
 
-export default function FrameStream({ scene, renderStyleLabel, selectedKeys, onToggleSelect, viewMode, onSetViewMode }: Props) {
+export default function FrameStream({ scene, renderStyleLabel, selectedKeys, onToggleSelect, viewMode, onSetViewMode, onVisualActionUpdate }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -50,6 +51,7 @@ export default function FrameStream({ scene, renderStyleLabel, selectedKeys, onT
               scene={scene}
               isSelected={selectedKeys.get(fk) ?? false}
               onToggleSelect={onToggleSelect}
+              onVisualActionUpdate={onVisualActionUpdate}
             />
           )
         })}

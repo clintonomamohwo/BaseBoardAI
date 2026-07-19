@@ -1060,17 +1060,18 @@ export default function CharacterPackagePage({
     if (next === detailLevel) return
     setDetailLevel(next)
     const newStyle = resolveRenderStyle(renderStyle, next)
-    // Update pkg render style so every future regen uses the new value
+    // Clear existing images so sections show loading state cleanly.
+    // Do NOT set autoInitDone: false here — that would persist to localStorage
+    // and cause auto-init to fire again on every subsequent mount.
+    // autoInitRef.current = false is sufficient to allow autoInit() to run once.
     setPkg(p => ({
       ...p,
       renderStyle: newStyle,
-      // Clear existing images so sections show loading state cleanly
       portrait:    null,
       turnaround:  Object.fromEntries(TURNAROUND_KEYS.map(k => [k, null])),
       expressions: Object.fromEntries(EXPRESSION_KEYS.map(k => [k, null])),
       poses:       Object.fromEntries(POSE_KEYS.map(k => [k, null])),
       outfits:     Object.fromEntries(OUTFIT_KEYS.map(k => [k, null])),
-      autoInitDone: false,
     }))
     // Reset loaded-tabs tracking so lazy load works fresh
     loadedTabs.current = new Set(['Overview', 'Scenes', 'Relationships'])

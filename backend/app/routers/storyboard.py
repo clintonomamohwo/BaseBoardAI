@@ -677,7 +677,20 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
                 name=c.name,
                 wardrobe_defaults=c.wardrobe_defaults,
                 facial_blueprint=FacialBlueprint.model_validate(c.facial_blueprint),
-                identity=getattr(c, "identity", None),
+                # JSON columns come back as plain dicts from SQLite — coerce them
+                # back to their Pydantic models so callers can call .model_dump().
+                identity=(
+                    CharacterIdentity.model_validate(c.identity)
+                    if isinstance(c.identity, dict) else c.identity
+                ),
+                species=(
+                    SpeciesProfile.model_validate(c.species)
+                    if isinstance(c.species, dict) else None
+                ),
+                variants=[
+                    CharacterVariant.model_validate(v) if isinstance(v, dict) else v
+                    for v in (c.variants or [])
+                ] if getattr(c, "variants", None) else [],
                 classification=getattr(c, "classification", None),
                 active_variant_id=getattr(c, "active_variant_id", None),
                 story_role=getattr(c, "story_role", None),
@@ -1300,29 +1313,21 @@ def regenerate_visual_action(
 # ---------------------------------------------------------------------------
 
 _BACKGROUND_VARIATION_PROMPT = """\
-Using the supplied reference image as the environmental anchor,
-generate a new variation of the background for this storyboard frame.
+{style_prefix}{shot_type}, {camera_angle}. {visual_action}. {lighting_notes}.
 
-PRESERVE exactly (do not change):
-- All characters, their positions, poses, and facial expressions
-- Props and story-relevant objects
+PRESERVE exactly — do not change any of these:
+- Every character: their identity, costume, pose, and facial expression
+- All props and story-relevant objects
 - Camera framing, shot type, and composition
-- Aspect ratio and visual style ({render_style})
-- Scene action: {visual_action}
+- The story action: {visual_action}
 
-The new background must match the same location type, architectural style,
-perspective, lighting direction, atmosphere, and mood as the reference.
-Only surface details may differ (different buildings, trees, clouds, benches,
-skyline angle — whatever is consistent with the same location).
+CHANGE only the background environment:
+- Generate a different version of the {location_heading} environment
+- Match the same location type, architectural style, perspective, lighting direction, atmosphere, and mood
+- Time of day: {time_of_day}. Mood: {mood}
+- Keep all surface details as close to the reference as possible — same buildings, trees, clouds, and props — only vary the background rendering if strictly necessary to avoid an exact copy
 
-Do NOT relocate the scene. Do NOT alter character placement.
-
-Scene context:
-  Location : {location_heading}
-  Time     : {time_of_day}
-  Lighting : {lighting_notes}
-  Mood     : {mood}
-  Shot     : {shot_type}
+Do not relocate the scene. Do not alter character placement. Do not change the story action.
 """
 
 
@@ -1360,26 +1365,20 @@ def generate_background_variation(
     frame = payload.frame
     scene = payload.scene
 
-    variation_prompt = _BACKGROUND_VARIATION_PROMPT.format(
-        render_style=payload.render_style,
-        visual_action=frame.visual_action or frame.action_breakdown or "Scene action",
+    from app.core.prompt_builder import STYLE_PREFIXES, DEFAULT_STYLE_PREFIX
+    style_prefix = STYLE_PREFIXES.get(payload.render_style, DEFAULT_STYLE_PREFIX)
+
+    # Preserve all character/composition data; vary only the background environment.
+    full_prompt = _BACKGROUND_VARIATION_PROMPT.format(
+        style_prefix=style_prefix,
+        shot_type=frame.shot_type,
+        camera_angle=frame.camera_angle,
+        visual_action=frame.visual_action or frame.action_breakdown,
+        lighting_notes=frame.lighting_notes or scene.emotional_tone,
         location_heading=scene.location_heading,
         time_of_day=scene.time_of_day,
-        lighting_notes=frame.lighting_notes or scene.emotional_tone,
         mood=frame.mood or scene.emotional_tone,
-        shot_type=frame.shot_type,
-    )
-
-    # Merge the variation instruction into the standard frame prompt so all
-    # the Director Engine's cinematic data (lens, depth, canon) is preserved.
-    from app.core.prompt_builder import build_frame_prompt
-    from app.core.director_engine import get_scene_type
-    base_prompt = build_frame_prompt(
-        frame, scene, payload.render_style,
-        get_scene_type(scene), payload.canon_context,
-    )
-    # Prepend the preservation directive so the image model reads it first.
-    full_prompt = (variation_prompt.strip() + "\n\n" + base_prompt)[:900]
+    ).strip()[:900]
 
     ref_b64 = _strip_data_url_header(payload.reference_image)
 

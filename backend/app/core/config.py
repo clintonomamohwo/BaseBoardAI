@@ -23,12 +23,18 @@ Three independent provider axes — each can be set independently in .env:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Always resolve .env relative to the backend/ directory so the server can be
+# started from any working directory (e.g. via the repo-root `baseboard` script).
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]  # backend/app/core → backend/
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_BACKEND_ROOT / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
