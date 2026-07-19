@@ -155,15 +155,15 @@ body.bms-light-active.dark::after {
    Theme CSS variables
 ───────────────────────────────────────── */
 :root {
-  --bg-base:    #f5f0e8;
-  --bg-surface: #ede6d8;
-  --bg-raised:  #e4dccb;
-  --border:     #c8bfa8;
-  --text-base:  #2a1f0e;
-  --text-muted: #6b5c42;
-  --gold:       #8a6a1e;
-  --gold-dim:   rgba(138,106,30,0.35);
-  --cyan:       #0a7a8a;
+  --bg-base:    #f2ece0;
+  --bg-surface: #e8e0d0;
+  --bg-raised:  #ddd4c0;
+  --border:     #b8a888;
+  --text-base:  #1a1208;
+  --text-muted: #3d2e18;
+  --gold:       #7a5c10;
+  --gold-dim:   rgba(122,92,16,0.4);
+  --cyan:       #0a6a7a;
 }
 
 .dark {
