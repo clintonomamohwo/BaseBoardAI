@@ -61,6 +61,8 @@ app.include_router(standalone_router)
 def health() -> dict:
     return {
         "status": "ok",
-        "model": settings.WATSONX_MODEL_ID,
+        "primary_model": settings.WATSONX_PRIMARY_TEXT_MODEL,
+        "fallback_model": settings.WATSONX_FALLBACK_TEXT_MODEL,
+        "last_resort_model": settings.WATSONX_LAST_RESORT_MODEL,
         "image_provider": settings.IMAGE_PROVIDER,
     }

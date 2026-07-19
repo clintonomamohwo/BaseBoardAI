@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { classifyError } from '../utils/classifyError'
 import type { RenderStyle, StoryboardProject } from '../types/storyboard'
 import { forgePipelineStream } from '../api/storyboard'
 import StyleReferenceUploader from './StyleReferenceUploader'
@@ -111,8 +112,9 @@ export default function PipelineForm({ onComplete, onNotify }: Props) {
       onNotify?.('Pipeline complete ✓')
       onComplete(finalProject)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Pipeline failed')
-      onNotify?.('Pipeline failed', 'info')
+      const e = classifyError(err)
+      setError(`${e.title}\n\n${e.detail}`)
+      onNotify?.(e.title, 'error', e.detail)
     } finally {
       setLoading(false)
     }

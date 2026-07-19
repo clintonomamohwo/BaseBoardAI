@@ -27,7 +27,7 @@ type AppView =
 
 type StudioTab = 'storyboard' | 'characters' | 'world-bible'
 
-interface Notif { id: number; message: string; type?: 'success' | 'info' }
+interface Notif { id: number; message: string; detail?: string; type?: 'success' | 'info' | 'error' }
 
 interface GenesisState { file: File | null; title: string; renderStyle: RenderStyle; directorStyle: DirectorStyle }
 
@@ -67,11 +67,13 @@ export default function App() {
     return () => { clearTimeout(t); window.removeEventListener('mousemove', reset); window.removeEventListener('keydown', reset) }
   }, [])
 
-  const pushNotif = useCallback((message: string, type: 'success' | 'info' = 'success') => {
+  const pushNotif = useCallback((message: string, type: 'success' | 'info' | 'error' = 'success', detail?: string) => {
     const id = notifId + 1
     setNotifId(id)
-    setNotifs(n => [...n, { id, message, type }])
-    setTimeout(() => setNotifs(n => n.filter(x => x.id !== id)), 3500)
+    setNotifs(n => [...n, { id, message, detail, type }])
+    // Errors stay visible for 8 s; success/info auto-dismiss after 3.5 s
+    const timeout = type === 'error' ? 8000 : 3500
+    setTimeout(() => setNotifs(n => n.filter(x => x.id !== id)), timeout)
   }, [notifId])
 
   /** Genesis Engine finished — show the report before Studio */
@@ -311,7 +313,15 @@ export default function App() {
 
       {/* Notifications */}
       <div className="fixed top-12 right-4 flex flex-col gap-2 z-50 pointer-events-none">
-        {notifs.map(n => <GraniteNotification key={n.id} message={n.message} type={n.type} />)}
+        {notifs.map(n => (
+          <GraniteNotification
+            key={n.id}
+            message={n.message}
+            detail={n.detail}
+            type={n.type}
+            onDismiss={() => setNotifs(prev => prev.filter(x => x.id !== n.id))}
+          />
+        ))}
       </div>
     </div>
   )

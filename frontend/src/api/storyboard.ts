@@ -674,3 +674,44 @@ export async function deleteStandaloneStoryboard(id: number): Promise<void> {
   const res = await fetch(`${BASE_URL}/standalone/storyboards/${id}`, { method: 'DELETE' })
   return handleResponse<void>(res)
 }
+
+// ---------------------------------------------------------------------------
+// Scene Background Variation
+// ---------------------------------------------------------------------------
+
+export interface BackgroundVariationResult {
+  frame_number: number
+  scene_number: number
+  generated_image_url: string | null
+  variation_index: number
+}
+
+/**
+ * Generate a single background variation for a frame.
+ *
+ * The `referenceImage` (the scene's stored reference) is used as the
+ * environmental anchor.  Characters, poses, composition, and all continuity
+ * fields are preserved — only the background environment changes.
+ *
+ * Returns null for `generated_image_url` if the image provider failed.
+ */
+export async function generateBackgroundVariation(
+  frame: StoryboardFrame,
+  scene: StoryboardScene,
+  referenceImage: string,
+  renderStyle: string,
+  canonContext?: Record<string, unknown> | null,
+): Promise<BackgroundVariationResult> {
+  const res = await fetch(`${BASE_URL}/storyboard/scene/background-variation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      frame,
+      scene,
+      render_style: renderStyle,
+      reference_image: referenceImage,
+      canon_context: canonContext ?? null,
+    }),
+  })
+  return handleResponse<BackgroundVariationResult>(res)
+}

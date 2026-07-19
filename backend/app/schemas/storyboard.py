@@ -1115,3 +1115,40 @@ class CharacterDNAUpdateRequest(BaseModel):
         None,
         description="Base-64 data URL of the chosen portrait image, or null to leave unchanged",
     )
+
+
+class BackgroundVariationRequest(BaseModel):
+    """
+    Request a single background variation for one storyboard frame.
+
+    The reference_image (the scene's stored reference) is used as an
+    environmental anchor.  All character, composition, and continuity
+    fields are forwarded verbatim so the image model knows exactly what
+    to preserve.
+    """
+    frame: StoryboardFrameBase
+    scene: ScriptSceneBase
+    render_style: Literal['bw_sketch', 'bw_detailed', 'flat_color', 'full_shaded'] = 'bw_sketch'
+    # The scene's stored reference image (base64 data URL).  Required — the
+    # variation is anchored to this image.  The backend will reject the
+    # request when it is missing.
+    reference_image: str = Field(description="Base64 data URL of the scene reference image")
+    canon_context: dict[str, Any] | None = Field(
+        None,
+        description="Project CKG — passed through to the image prompt builder",
+    )
+
+
+class BackgroundVariationResponse(BaseModel):
+    """Result of a single background variation generation."""
+    frame_number: int
+    scene_number: int
+    generated_image_url: str | None = Field(
+        None,
+        description="New base64 data URL, or null if generation failed",
+    )
+    # Informational — lets the UI log which model was used
+    variation_index: int = Field(
+        1,
+        description="Always 1 for now.  Reserved for future multi-variation support.",
+    )

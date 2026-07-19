@@ -8,8 +8,10 @@ Exposes three stage functions matching the 3-stage pipeline:
 
 Each function:
   1. Formats the relevant prompt template with caller-supplied context
-  2. Calls the active model; on 429 rate-limit automatically retries down
-     the FALLBACK_MODELS chain until one succeeds or all are exhausted
+  2. Calls WATSONX_PRIMARY_TEXT_MODEL; on retryable errors (rate limits,
+     unsupported model, transient server errors) automatically tries
+     WATSONX_FALLBACK_TEXT_MODEL then WATSONX_LAST_RESORT_MODEL.
+     Auth / config errors (401, 403, invalid key) surface immediately.
   3. Strips any markdown fences from the raw response
   4. Parses the JSON
   5. Validates each item against the relevant Pydantic schema
@@ -41,49 +43,67 @@ from app.schemas.storyboard import (
 )
 
 # ---------------------------------------------------------------------------
-# Model fallback chain
-# Tried in order when a 429 rate-limit is detected on the active model.
-# The primary model comes from settings so .env still controls the default.
+# Model fallback behaviour
+#
+# The candidate list is built at call time from settings so changes to .env
+# are always reflected without restarting (e.g. during development).
+#
+# Only transient / model-specific errors trigger a fallback.  Auth and
+# configuration errors (bad API key, invalid project ID) fail immediately
+# so misconfiguration is never hidden by a silent retry.
 # ---------------------------------------------------------------------------
 
-FALLBACK_MODELS: list[str] = [
-    "mistralai/mistral-small-3-1-24b-instruct-2503",
-    "meta-llama/llama-3-3-70b-instruct",
-    "mistralai/mistral-medium-2505",
-    "mistral-large-2512",
-]
-
-# Tokens that indicate the model is unavailable / rate-limited and we should
-# try the next one.  Cast to lowercase for case-insensitive matching.
-_FALLBACK_TOKENS = (
+# Errors that indicate a temporary or model-specific problem — retry allowed.
+_RETRYABLE_TOKENS: tuple[str, ...] = (
     "429",
     "consumption_limit_reached",
-    "token_quota_reached",        # account-level quota exhausted — try next model
+    "token_quota_reached",           # account-level quota — try next model
     "model_no_support_for_function",
     "is not supported",
     "not supported for this environment",
     "unsupported model",
     "model not found",
     "resource not found",
-    "400",
-    "403",
+    "503",                           # upstream service temporarily unavailable
+    "502",                           # bad gateway (transient infra error)
+    "timeout",
+    "timed out",
+    "connection",
+)
+
+# Errors that indicate a setup/config problem — fail immediately.
+_FATAL_TOKENS: tuple[str, ...] = (
+    "401",
+    "unauthorized",
+    "invalid api key",
+    "authentication",
+    "403",                           # forbidden — wrong project / IAM role
+    "invalid project",
+    "project not found",
 )
 
 
 def _should_fallback(exc: Exception) -> bool:
-    """Return True if the exception should trigger a model fallback."""
+    """
+    Return True only when the error is transient or model-specific.
+
+    Auth / config errors always return False so they surface immediately
+    instead of being swallowed by the fallback loop.
+    """
     msg = str(exc).lower()
-    return any(token in msg for token in _FALLBACK_TOKENS)
+    if any(token in msg for token in _FATAL_TOKENS):
+        return False
+    return any(token in msg for token in _RETRYABLE_TOKENS)
 
 
 # ---------------------------------------------------------------------------
 # LLM client factory
 # ---------------------------------------------------------------------------
 
-def _build_llm(model_id: str | None = None, max_new_tokens: int = 4096) -> ChatWatsonx:
-    """Initialise and return a ChatWatsonx instance. Uses settings default when model_id is None."""
+def _build_llm(model_id: str, max_new_tokens: int = 4096) -> ChatWatsonx:
+    """Initialise and return a ChatWatsonx instance for the given model_id."""
     return ChatWatsonx(
-        model_id=model_id or settings.WATSONX_MODEL_ID,
+        model_id=model_id,
         url=settings.WATSONX_URL,
         apikey=settings.WATSONX_API_KEY,
         project_id=settings.WATSONX_PROJECT_ID,
@@ -92,13 +112,37 @@ def _build_llm(model_id: str | None = None, max_new_tokens: int = 4096) -> ChatW
     )
 
 
+def _watsonx_candidates() -> list[str]:
+    """
+    Build the ordered model candidate list from settings at call time.
+
+    Slots that are left empty in .env are skipped, so callers can run
+    with only a primary model by leaving the others blank.
+    """
+    slots = [
+        settings.WATSONX_PRIMARY_TEXT_MODEL,
+        settings.WATSONX_FALLBACK_TEXT_MODEL,
+        settings.WATSONX_LAST_RESORT_MODEL,
+    ]
+    # Deduplicate while preserving order; drop empty strings.
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for m in slots:
+        if m and m not in seen:
+            candidates.append(m)
+            seen.add(m)
+    return candidates
+
+
 def _invoke_with_fallback(prompt_text: str, max_new_tokens: int = 4096) -> str:
     """
     Invoke the configured TEXT_PROVIDER with automatic fallback.
 
     TEXT_PROVIDER=watsonx (default):
-        Tries settings.WATSONX_MODEL_ID first, then each model in FALLBACK_MODELS
-        on 429 / rate-limit errors.
+        Tries WATSONX_PRIMARY_TEXT_MODEL, then WATSONX_FALLBACK_TEXT_MODEL,
+        then WATSONX_LAST_RESORT_MODEL on retryable errors (rate limits,
+        unsupported model, transient server errors).
+        Auth / config errors (401, 403, invalid API key) fail immediately.
 
     TEXT_PROVIDER=gemini:
         Routes directly to _GeminiTextProvider from ai_factory.py.
@@ -106,30 +150,40 @@ def _invoke_with_fallback(prompt_text: str, max_new_tokens: int = 4096) -> str:
 
     Raises the last exception if all candidates are exhausted.
     """
+    import logging
+    log = logging.getLogger(__name__)
+
     if settings.TEXT_PROVIDER.lower() == "gemini":
         try:
             from app.core.ai_factory import AIFactory
             return AIFactory.get_text_provider().generate(prompt_text, max_tokens=max_new_tokens)
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning(
-                "Gemini text provider failed (%s) — falling back to WatsonX.", exc
-            )
+            log.warning("Gemini text provider failed (%s) — falling back to WatsonX.", exc)
             # Fall through to WatsonX below
 
-    primary = settings.WATSONX_MODEL_ID
-    candidates = [primary] + [m for m in FALLBACK_MODELS if m != primary]
+    candidates = _watsonx_candidates()
+    if not candidates:
+        raise RuntimeError(
+            "No WatsonX models configured. "
+            "Set WATSONX_PRIMARY_TEXT_MODEL in your .env file."
+        )
 
     last_exc: Exception = RuntimeError("No models available.")
     for model_id in candidates:
         try:
-            response = _build_llm(model_id, max_new_tokens=max_new_tokens).invoke([HumanMessage(content=prompt_text)])
+            log.debug("Trying WatsonX model: %s", model_id)
+            response = _build_llm(model_id, max_new_tokens=max_new_tokens).invoke(
+                [HumanMessage(content=prompt_text)]
+            )
+            if model_id != candidates[0]:
+                log.warning("Fell back to WatsonX model: %s", model_id)
             return response.content
         except Exception as exc:
             if _should_fallback(exc):
+                log.warning("Model %s failed (%s) — trying next.", model_id, exc)
                 last_exc = exc
                 continue  # try next model
-            raise  # unrecoverable error — surface immediately
+            raise  # unrecoverable (auth/config) — surface immediately
 
     raise last_exc
 

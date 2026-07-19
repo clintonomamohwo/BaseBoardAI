@@ -48,7 +48,9 @@ def _ok(label: str, result: object) -> None:
 
 def _run() -> None:
     print(SEP)
-    print(f"Model  : {settings.WATSONX_MODEL_ID}")
+    print(f"Primary: {settings.WATSONX_PRIMARY_TEXT_MODEL}")
+    print(f"Fallbk : {settings.WATSONX_FALLBACK_TEXT_MODEL or '(none)'}")
+    print(f"Last   : {settings.WATSONX_LAST_RESORT_MODEL or '(none)'}")
     print(f"URL    : {settings.WATSONX_URL}")
     print(f"Project: {settings.WATSONX_PROJECT_ID}")
     print(SEP)

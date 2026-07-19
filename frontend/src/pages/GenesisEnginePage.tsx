@@ -6,6 +6,7 @@
  * fires onComplete with the project so App can show the Creative Director Report.
  */
 import { useEffect, useState, useRef } from 'react'
+import { classifyError } from '../utils/classifyError'
 import logoSrc from '../assets/logo.png'
 import type { RenderStyle, StoryboardProject } from '../types/storyboard'
 import { forgePipelineStream } from '../api/storyboard'
@@ -117,7 +118,9 @@ export default function GenesisEnginePage({
     try {
       if (file) docText = await extractDocumentText(file)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to read document')
+      const e = classifyError(err)
+      setError(`${e.title}\n\n${e.detail}`)
+      onNotify?.(e.title, 'error', e.detail)
       return
     }
 
@@ -212,12 +215,9 @@ export default function GenesisEnginePage({
       setTaskProgress(prev =>
         Object.fromEntries(Object.entries(prev).map(([id, v]) => [id, v >= 1 ? 1 : 0]))
       )
-      let msg = err instanceof Error ? err.message : 'Pipeline failed'
-      if (msg === 'Failed to fetch' || msg.includes('NetworkError') || msg.includes('fetch')) {
-        msg = 'Cannot reach the backend.\n\nMake sure the server is running:\ncd BaseBoardAI/backend && source .venv/bin/activate && uvicorn app.main:app --reload'
-      }
-      setError(msg)
-      onNotify?.('Backend unreachable — is the server running?', 'info')
+      const e = classifyError(err)
+      setError(`${e.title}\n\n${e.detail}`)
+      onNotify?.(e.title, 'error', e.detail)
     }
   }
 

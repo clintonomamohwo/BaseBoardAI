@@ -24,6 +24,8 @@ from app.db.models import (
 from app.db.session import get_db
 from app.schemas.storyboard import (
     AgeVariantRequest,
+    BackgroundVariationRequest,
+    BackgroundVariationResponse,
     CharacterDNAUpdateRequest,
     CharacterIdentity,
     CharacterProfileBase,
@@ -1290,6 +1292,107 @@ def regenerate_visual_action(
         visual_action=visual_action,
         animation_beats=animation_beats,
         director_notes=director_notes,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scene Background Variation
+# ---------------------------------------------------------------------------
+
+_BACKGROUND_VARIATION_PROMPT = """\
+Using the supplied reference image as the environmental anchor,
+generate a new variation of the background for this storyboard frame.
+
+PRESERVE exactly (do not change):
+- All characters, their positions, poses, and facial expressions
+- Props and story-relevant objects
+- Camera framing, shot type, and composition
+- Aspect ratio and visual style ({render_style})
+- Scene action: {visual_action}
+
+The new background must match the same location type, architectural style,
+perspective, lighting direction, atmosphere, and mood as the reference.
+Only surface details may differ (different buildings, trees, clouds, benches,
+skyline angle — whatever is consistent with the same location).
+
+Do NOT relocate the scene. Do NOT alter character placement.
+
+Scene context:
+  Location : {location_heading}
+  Time     : {time_of_day}
+  Lighting : {lighting_notes}
+  Mood     : {mood}
+  Shot     : {shot_type}
+"""
+
+
+@router.post(
+    "/scene/background-variation",
+    response_model=BackgroundVariationResponse,
+    summary="Generate a background variation while preserving all character/composition elements",
+)
+def generate_background_variation(
+    payload: BackgroundVariationRequest,
+) -> BackgroundVariationResponse:
+    """
+    Generates a single alternative background for the given frame.
+
+    Behaviour:
+    - Strips the ``data:…;base64,`` header from ``reference_image`` and passes
+      it as an img2img anchor so the image model has an environmental reference.
+    - Injects an explicit preservation prompt that locks characters, poses,
+      composition, and continuity fields (location, time-of-day, lighting).
+    - Returns a new ``generated_image_url``; never overwrites the original —
+      the caller decides whether to apply the variation.
+
+    The ``reference_image`` field is required.  If it is an empty string the
+    endpoint returns 422 immediately instead of generating a random background.
+    """
+    if not payload.reference_image or not payload.reference_image.strip():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "reference_image is required for background variation. "
+                "The scene must have a stored reference image to anchor the environment."
+            ),
+        )
+
+    frame = payload.frame
+    scene = payload.scene
+
+    variation_prompt = _BACKGROUND_VARIATION_PROMPT.format(
+        render_style=payload.render_style,
+        visual_action=frame.visual_action or frame.action_breakdown or "Scene action",
+        location_heading=scene.location_heading,
+        time_of_day=scene.time_of_day,
+        lighting_notes=frame.lighting_notes or scene.emotional_tone,
+        mood=frame.mood or scene.emotional_tone,
+        shot_type=frame.shot_type,
+    )
+
+    # Merge the variation instruction into the standard frame prompt so all
+    # the Director Engine's cinematic data (lens, depth, canon) is preserved.
+    from app.core.prompt_builder import build_frame_prompt
+    from app.core.director_engine import get_scene_type
+    base_prompt = build_frame_prompt(
+        frame, scene, payload.render_style,
+        get_scene_type(scene), payload.canon_context,
+    )
+    # Prepend the preservation directive so the image model reads it first.
+    full_prompt = (variation_prompt.strip() + "\n\n" + base_prompt)[:900]
+
+    ref_b64 = _strip_data_url_header(payload.reference_image)
+
+    new_image_url = generate_image(
+        full_prompt,
+        reference_b64=ref_b64,
+    )
+
+    return BackgroundVariationResponse(
+        frame_number=frame.frame_number,
+        scene_number=scene.scene_number,
+        generated_image_url=new_image_url,
+        variation_index=1,
     )
 
 

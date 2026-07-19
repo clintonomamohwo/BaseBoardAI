@@ -50,7 +50,13 @@ class Settings(BaseSettings):
     WATSONX_API_KEY: str = ""
     WATSONX_PROJECT_ID: str = ""
     WATSONX_URL: str = "https://us-south.ml.cloud.ibm.com"
-    WATSONX_MODEL_ID: str = "meta-llama/llama-3-3-70b-instruct"
+
+    # Model fallback chain — tried in order on rate-limit / model errors.
+    # Set only PRIMARY to keep a single model; leave FALLBACK/LAST_RESORT
+    # empty to skip those slots entirely.
+    WATSONX_PRIMARY_TEXT_MODEL: str = "meta-llama/llama-3-3-70b-instruct"
+    WATSONX_FALLBACK_TEXT_MODEL: str = "mistralai/mistral-small-3-1-24b-instruct-2503"
+    WATSONX_LAST_RESORT_MODEL: str = "meta-llama/llama-3-1-8b"
 
     # -----------------------------------------------------------------------
     # Google Gemini (TEXT_PROVIDER=gemini, IMAGE_PROVIDER=gemini,

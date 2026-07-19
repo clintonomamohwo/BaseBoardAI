@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { classifyError } from '../utils/classifyError'
 import type { RenderStyle, StoryboardFrame, StoryboardProject, StoryboardScene } from '../types/storyboard'
 import { forgePipeline, upgradeSceneStyle } from '../api/storyboard'
 import PipelineForm from '../components/PipelineForm'
@@ -95,7 +96,9 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
         : 'Re-run complete ✓'
       )
     } catch (err) {
-      setRerunError(err instanceof Error ? err.message : 'Re-run failed')
+      const e = classifyError(err)
+      setRerunError(`${e.title} — ${e.detail}`)
+      onNotify?.(e.title, 'error', e.detail)
     } finally {
       setRerunLoading(false)
     }
@@ -168,7 +171,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
     })
   }
 
-  /** Patch a single frame's image after a style upgrade. */
+  /** Patch a single frame's image after a style upgrade or background variation. */
   function handleUpgradeFrame(sceneNumber: number, frameNumber: number, newUrl: string) {
     const patch = (f: StoryboardFrame) =>
       f.frame_number === frameNumber ? { ...f, generated_image_url: newUrl } : f
@@ -200,7 +203,10 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
           }
         }
         total += result.total
-      } catch { /* continue to next scene */ }
+      } catch (err) {
+        const e = classifyError(err)
+        onNotify?.(e.title, 'error', e.detail)
+      }
     }
     setProjectUpgrading(false)
     onNotify?.(`Upgrade complete — ${succeeded}/${total} frames upgraded`, 'success')
@@ -461,6 +467,13 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
               scene={displayScene}
               onReferenceChange={setReferenceImage}
               canon={project?.canon ?? null}
+              referenceImage={referenceImage}
+              renderStyle={project?.render_style}
+              allScenes={project?.scenes}
+              onBackgroundVariation={(sceneNumber, frameNumber, newUrl) => {
+                handleUpgradeFrame(sceneNumber, frameNumber, newUrl)
+                onNotify?.('Background variation applied ✓', 'success')
+              }}
             />
           </aside>
         </div>

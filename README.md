@@ -64,7 +64,7 @@ The platform is built for:
 
 Pre-visualization is the invisible gatekeeping layer of professional filmmaking. It is what separates a story idea from a greenlit production, and it has historically been inaccessible to anyone without a well-funded studio behind them.
 
-BaseBoard AI removes that barrier entirely. By combining IBM WatsonX's large-language reasoning with Google Gemini's vision and image generation through a structured multi-stage pipeline, any creator — regardless of budget — can produce a professional-grade storyboard and character bible from nothing but their story document.
+BaseBoard AI removes that barrier entirely. By combining IBM WatsonX's large-language reasoning with Pollinations and Google Gemini's vision and image generation through a structured multi-stage pipeline, any creator — regardless of budget — can produce a professional-grade storyboard and character bible from nothing but their story document.
 
 ### How it reimagines three core creative industry workflows
 
