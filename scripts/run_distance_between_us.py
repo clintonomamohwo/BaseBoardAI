@@ -49,7 +49,6 @@ Output tree:
                                    hand_closeup, eye_closeup, accessory}.png
 """
 
-import argparse
 import base64
 import json
 import pathlib
@@ -76,14 +75,14 @@ PREMIUM_TARGETS   = ["turnaround_360", "premium_poses", "material_closeups"]
 # ---------------------------------------------------------------------------
 
 RAW_CHARACTER_NOTES = """
-Emma Clarke — age 26, Toronto, Canada. Graphic design student and part-time studio
+Emma Clarke — age 26, Toronto, Canada(white heritage). Graphic design student and part-time studio
 assistant. Creative, observant, quietly stubborn, fiercely loyal.
 Appearance: warm medium-brown skin, natural hair pinned up with a pencil or charcoal
 stick, paint-stained fingers, wire-frame glasses, layered knits and vintage denim.
 Compass pendant always visible at the throat. Owns the shared sketchbook.
 Arc: learns to trust the future she has built rather than the certainty she craves.
 
-Kai Tanaka — age 27, Tokyo, Japan. Robotics engineer, university research lab.
+Kai Tanaka — age 27, Tokyo, Japan (asian heritage). Robotics engineer, university research lab.
 Methodical, tender, quietly funny. Thinks in systems but feels deeply.
 Appearance: Japanese, lean build, dark hair grown slightly too long, grease or solder
 marks on hands, plain technical tees under open flannels. Sunrise polaroid in
@@ -395,7 +394,7 @@ def run_storyboard_images(client: httpx.Client, project: dict) -> None:
             frame_num = frame.get("frame_number", 0)
             try:
                 resp = client.post(
-                    f"{BASE_URL}/storyboard/frame/reforge-composition",
+                    f"{BASE_URL}/storyboard/reforge-composition",
                     json={"frame": frame, "scene": scene, "render_style": RENDER},
                     timeout=120,
                 )
@@ -425,35 +424,17 @@ def run_storyboard_images(client: httpx.Client, project: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run The Distance Between Us pipeline")
-    parser.add_argument(
-        "--stage3",
-        action="store_true",
-        help="Skip Stages 1 & 2 — load existing project.json and re-run storyboard images only",
-    )
-    args = parser.parse_args()
-
     client = httpx.Client(timeout=900)
     _health_check(client)
 
-    if args.stage3:
-        project_json = OUT_ROOT / "storyboard" / "project.json"
-        if not project_json.exists():
-            print(f"✗ No saved project found at {project_json}")
-            print("  Run the full pipeline first (without --stage3).")
-            sys.exit(1)
-        project = json.loads(project_json.read_text())
-        print(f"  Loaded project from {project_json}")
-        run_storyboard_images(client, project)
-    else:
-        # Stage 1: LLM extraction (no images yet — characters come first)
-        project = run_pipeline(client, skip_images=True)
+    # Stage 1: LLM extraction (no images yet — characters come first)
+    project = run_pipeline(client, skip_images=True)
 
-        # Stage 2: Character packages (sheet → slice, 1 API call per sheet type)
-        run_character_packages(client, project)
+    # Stage 2: Character packages (sheet → slice, 1 API call per sheet type)
+    run_character_packages(client, project)
 
-        # Stage 3: Storyboard frame images (reforge per frame)
-        run_storyboard_images(client, project)
+    # Stage 3: Storyboard frame images (reforge per frame)
+    run_storyboard_images(client, project)
 
     client.close()
 
