@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import ForeignKey, JSON, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, deferred, mapped_column, relationship
 
 
@@ -114,7 +114,7 @@ class ScriptSceneORM(Base):
     color_palette: Mapped[list[str]] = mapped_column(JSON, nullable=False)  # List[str] of hex codes
 
     project_id: Mapped[int] = mapped_column(
-        ForeignKey("storyboard_projects.db_id"), nullable=False
+        ForeignKey("storyboard_projects.db_id"), nullable=False, index=True
     )
     project: Mapped[StoryboardProjectORM] = relationship(
         "StoryboardProjectORM", back_populates="scenes"
@@ -186,7 +186,7 @@ class StoryboardFrameORM(Base):
     director_rationale: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     scene_id: Mapped[int] = mapped_column(
-        ForeignKey("script_scenes.id"), nullable=False
+        ForeignKey("script_scenes.id"), nullable=False, index=True
     )
     scene: Mapped[ScriptSceneORM] = relationship(
         "ScriptSceneORM", back_populates="frames"
