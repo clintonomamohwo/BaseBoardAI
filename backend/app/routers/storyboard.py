@@ -189,22 +189,56 @@ _MATERIAL_CLOSEUPS = [
 def _char_base_desc(char_data: dict) -> str:
     """Build a consistent base description for character image prompts.
 
-    If the caller has already assembled a canonical prompt (e.g. from a
-    user-edited AI Prompt tab), it is passed in as ``_canonical_prompt`` and
-    takes precedence over the auto-assembled description.
+    Priority:
+      1. _canonical_prompt — user-edited or CKG-derived species-first prompt (highest fidelity)
+      2. Auto-assembled species-first description using Identity System structured fields
+      3. Flat FacialBlueprint fallback for legacy characters with no DNA data
+
+    Species and physical_form are always front-loaded so image models cannot
+    default to a human interpretation for non-human characters.
     """
     if canonical := char_data.get("_canonical_prompt"):
         return str(canonical)
-    fb = char_data.get("facial_blueprint", {})
-    parts = [
-        char_data.get("name", "character"),
-        fb.get("base_ethnicity_or_type", ""),
+
+    name = char_data.get("name", "character")
+    fb   = char_data.get("facial_blueprint", {})
+
+    # ── Species-first prefix ──────────────────────────────────────────────────
+    species_data   = char_data.get("species") or {}
+    physical_data  = char_data.get("physical_form") or {}
+    species_id     = (species_data.get("species_id") or "human") if isinstance(species_data, dict) else "human"
+    species_label  = (species_data.get("label") or "Human") if isinstance(species_data, dict) else "Human"
+    species_custom = (species_data.get("custom_notes") or None) if isinstance(species_data, dict) else None
+    physical_form  = (physical_data.get("form") or "humanoid") if isinstance(physical_data, dict) else "humanoid"
+
+    species_prefix_parts: list[str] = []
+    if species_id != "human":
+        # Prepend "anthropomorphic" for non-human humanoid forms
+        if physical_form in ("humanoid", "custom"):
+            species_prefix_parts.append("anthropomorphic")
+        species_prefix_parts.append(species_label.lower())
+        if physical_form not in ("humanoid", "custom"):
+            species_prefix_parts.append(physical_form)
+        species_prefix_parts.append("humanoid")
+
+    species_prefix = " ".join(p for p in species_prefix_parts if p).strip()
+    if species_custom:
+        species_prefix = f"{species_prefix}, {species_custom}" if species_prefix else species_custom
+
+    # ── Core identity fields ──────────────────────────────────────────────────
+    ethnicity = fb.get("base_ethnicity_or_type", "")
+    core_parts = [
+        f"{ethnicity} inspired" if (ethnicity and species_id != "human") else ethnicity,
         f"age {fb.get('estimated_age', '')}" if fb.get("estimated_age") else "",
         fb.get("bone_structure", ""),
         fb.get("distinct_markers", "") or "",
         char_data.get("wardrobe_defaults", ""),
     ]
-    return ", ".join(p for p in parts if p)
+    core_summary = ", ".join(p for p in core_parts if p)
+
+    if species_prefix:
+        return f"{name}, {species_prefix}, {core_summary}" if core_summary else f"{name}, {species_prefix}"
+    return f"{name}, {core_summary}" if core_summary else name
 
 
 def _pkg_prompt(base: str, view_desc: str, render_style: str) -> str:
@@ -466,15 +500,52 @@ def _build_canon(
 
     for char in characters:
         fb = char.facial_blueprint
-        parts = [
-            f"{char.name}",
-            f"{fb.base_ethnicity_or_type}" if fb.base_ethnicity_or_type else None,
+
+        # ── Species-first canonical prompt ────────────────────────────────
+        # Build the appearance summary using build_identity_prompt when the
+        # full Identity System is available so species/physical_form are
+        # front-loaded (e.g. "anthropomorphic giant tortoise humanoid, …").
+        # Falls back to the flat FacialBlueprint assembly for legacy characters.
+        species_id = (char.species.species_id if char.species else None) or "human"
+        species_label = char.species.label if char.species else "Human"
+        species_custom = char.species.custom_notes if char.species else None
+        physical_form = char.physical_form.form if char.physical_form else "humanoid"
+
+        # Build species prefix: always front-load what the character IS
+        # so image models cannot default to a human interpretation.
+        species_prefix_parts: list[str] = []
+        if physical_form and physical_form not in ("humanoid", "custom"):
+            species_prefix_parts.append(physical_form)
+        if species_id != "human":
+            species_prefix_parts.append(species_label.lower())
+        if physical_form == "humanoid" and species_id != "human":
+            species_prefix_parts.append("humanoid")
+        elif physical_form not in ("humanoid", "custom") and species_id != "human":
+            species_prefix_parts.append("humanoid")  # anthropomorphic
+        # Prepend "anthropomorphic" when a non-human species is humanoid-form
+        if species_id != "human" and physical_form in ("humanoid", "custom"):
+            species_prefix_parts.insert(0, "anthropomorphic")
+
+        species_prefix = " ".join(p for p in species_prefix_parts if p).strip()
+
+        # Append custom species notes (e.g. "giant tortoise shell, scaled skin, beak")
+        if species_custom:
+            species_prefix = f"{species_prefix}, {species_custom}" if species_prefix else species_custom
+
+        # Core identity fields (after species, so species is never buried)
+        core_parts = [
+            f"{fb.base_ethnicity_or_type} inspired" if (fb.base_ethnicity_or_type and species_id != "human") else fb.base_ethnicity_or_type,
             f"age {fb.estimated_age}" if fb.estimated_age else None,
-            f"{fb.bone_structure}" if fb.bone_structure else None,
-            f"{fb.distinct_markers}" if fb.distinct_markers else None,
+            fb.bone_structure if fb.bone_structure else None,
+            fb.distinct_markers if fb.distinct_markers else None,
             f"wearing {char.wardrobe_defaults}" if char.wardrobe_defaults else None,
         ]
-        appearance_summary = ", ".join(p for p in parts if p)
+        core_summary = ", ".join(p for p in core_parts if p)
+
+        if species_prefix:
+            appearance_summary = f"{char.name}, {species_prefix}, {core_summary}" if core_summary else f"{char.name}, {species_prefix}"
+        else:
+            appearance_summary = f"{char.name}, {core_summary}" if core_summary else char.name
 
         # ── Flat summary (backwards-compat) ───────────────────────────────
         approved_characters[char.id] = {
@@ -496,13 +567,13 @@ def _build_canon(
         # an identity node from day one.
         if char.identity is not None:
             identity_dict = char.identity.model_dump()
-            # Merge the canonical prompt into the identity node
+            # Always overwrite _canonical_prompt with the species-first version
             identity_dict["_canonical_prompt"] = appearance_summary
         else:
             # Synthesise identity from FacialBlueprint fields
             identity_dict = {
                 "name": char.name,
-                "face_description": f"{fb.bone_structure}" if fb.bone_structure else None,
+                "face_description": fb.bone_structure if fb.bone_structure else None,
                 "hair_description": None,
                 "eye_description": None,
                 "body_proportions": None,
@@ -1935,9 +2006,12 @@ def list_project_summaries(db: DbSession) -> list[ProjectSummary]:
     Fast library list — returns only card-level metadata for every project.
     No frame data, no character JSON blobs, no images are loaded.
     Suitable for the Project Library page where only counts + palette are needed.
+
+    Uses a single aggregated query for frame counts (no N+1).
     """
     from sqlalchemy import func
-    # Load just the project rows + scene rows (color_palette only); no frames
+
+    # One query: project + lightweight scene + character id columns
     projects = (
         db.query(StoryboardProjectORM)
         .options(
@@ -1946,32 +2020,37 @@ def list_project_summaries(db: DbSession) -> list[ProjectSummary]:
             ),
             joinedload(StoryboardProjectORM.scenes).load_only(  # type: ignore[attr-defined]
                 ScriptSceneORM.id,
+                ScriptSceneORM.project_id,
                 ScriptSceneORM.color_palette,
             ),
         )
         .all()
     )
 
-    summaries: list[ProjectSummary] = []
-    for p in projects:
-        # Frame count via a cheap aggregate — avoids loading frame rows
-        frame_count: int = (
-            db.query(func.count(StoryboardFrameORM.id))
-            .join(ScriptSceneORM, StoryboardFrameORM.scene_id == ScriptSceneORM.id)
-            .filter(ScriptSceneORM.project_id == p.db_id)
-            .scalar() or 0
+    # One query: frame counts for ALL projects at once, keyed by project_id
+    frame_counts: dict[int, int] = {
+        project_id: count
+        for project_id, count in (
+            db.query(ScriptSceneORM.project_id, func.count(StoryboardFrameORM.id))
+            .join(StoryboardFrameORM, StoryboardFrameORM.scene_id == ScriptSceneORM.id)
+            .group_by(ScriptSceneORM.project_id)
+            .all()
         )
-        summaries.append(ProjectSummary(
+    }
+
+    return [
+        ProjectSummary(
             db_id=p.db_id,
             project_title=p.project_title,
             global_aesthetic=p.global_aesthetic,
             render_style=p.render_style,
             scene_count=len(p.scenes),
-            frame_count=frame_count,
+            frame_count=frame_counts.get(p.db_id, 0),
             character_count=len(p.characters),
             color_palettes=[s.color_palette for s in p.scenes if s.color_palette],
-        ))
-    return summaries
+        )
+        for p in projects
+    ]
 
 
 @router.get("/", response_model=list[StoryboardProjectResponse])
