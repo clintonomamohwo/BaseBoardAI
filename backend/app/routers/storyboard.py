@@ -9,7 +9,10 @@ DB dependency:     app.db.session.get_db
 from __future__ import annotations
 
 import json
+import logging
 from typing import Annotated, Generator
+logger = logging.getLogger(__name__)
+
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
@@ -38,6 +41,7 @@ from app.schemas.storyboard import (
     CreativeKnowledgeGraph,
     EnvironmentProfileBase,
     FacialBlueprint,
+    PhysicalForm,
     ImportAssetRequest,
     ImportAssetResponse,
     PipelineExecutionRequest,
@@ -183,7 +187,14 @@ _MATERIAL_CLOSEUPS = [
 
 
 def _char_base_desc(char_data: dict) -> str:
-    """Build a consistent base description for character image prompts."""
+    """Build a consistent base description for character image prompts.
+
+    If the caller has already assembled a canonical prompt (e.g. from a
+    user-edited AI Prompt tab), it is passed in as ``_canonical_prompt`` and
+    takes precedence over the auto-assembled description.
+    """
+    if canonical := char_data.get("_canonical_prompt"):
+        return str(canonical)
     fb = char_data.get("facial_blueprint", {})
     parts = [
         char_data.get("name", "character"),
@@ -597,8 +608,13 @@ def _build_project_orm(
                 name=char.name,
                 wardrobe_defaults=char.wardrobe_defaults,
                 facial_blueprint=char.facial_blueprint.model_dump(),
+                identity=char.identity.model_dump() if char.identity else None,
+                species=char.species.model_dump() if char.species else None,
+                variants=[v.model_dump() for v in char.variants] if char.variants else None,
+                physical_form=char.physical_form.model_dump() if char.physical_form else None,
+                classification=char.classification,
                 story_role=char.story_role,
-                relationships=[r.model_dump() for r in char.relationships] if char.relationships else [],
+                relationships=list(char.relationships) if char.relationships else [],
             )
         )
     for scene_data in payload.scenes:
@@ -685,12 +701,17 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
                 ),
                 species=(
                     SpeciesProfile.model_validate(c.species)
-                    if isinstance(c.species, dict) else None
+                    if isinstance(c.species, dict) else SpeciesProfile(species_id="human", label="Human", custom_notes=None)
                 ),
                 variants=[
                     CharacterVariant.model_validate(v) if isinstance(v, dict) else v
                     for v in (c.variants or [])
                 ] if getattr(c, "variants", None) else [],
+                physical_form=(
+                    PhysicalForm.model_validate(c.physical_form)
+                    if isinstance(c.physical_form, dict)
+                    else PhysicalForm(form="humanoid", custom_description=None, limb_count=None, has_wings=False, has_tail=False)
+                ),
                 classification=getattr(c, "classification", None),
                 active_variant_id=getattr(c, "active_variant_id", None),
                 story_role=getattr(c, "story_role", None),
@@ -951,6 +972,8 @@ def forge_storyboard_pipeline(
 def parse_single_character(payload: SingleCharacterRequest) -> CharacterProfileBase:
     """Runs CHARACTER_PROMPT on a single raw character note and returns the parsed profile."""
     characters = invoke_character_stage(payload.raw_notes)
+    if not characters:
+        raise HTTPException(status_code=422, detail="No character could be parsed from the provided notes.")
     return characters[0]
 
 
@@ -962,6 +985,8 @@ def parse_single_character(payload: SingleCharacterRequest) -> CharacterProfileB
 def parse_single_environment(payload: SingleEnvironmentRequest) -> EnvironmentProfileBase:
     """Runs WORLD_PROMPT on a single raw location note and returns the parsed environment profile."""
     environments = invoke_world_stage(payload.raw_notes)
+    if not environments:
+        raise HTTPException(status_code=422, detail="No environment could be parsed from the provided notes.")
     return environments[0]
 
 
@@ -996,6 +1021,7 @@ def forge_standalone_storyboard(payload: StandaloneStoryboardRequest) -> Storybo
         characters=payload.characters,
         scenes=scenes,
         db_id=None,
+        canon=None,
         truncated=storyboard_truncated,
     )
 
@@ -1730,18 +1756,39 @@ def ckg_update_identity(payload: CKGUpdateIdentityRequest, db: DbSession) -> dic
     """
     project = _load_project_or_404(payload.project_id, db)
 
-    # Load or init the CKG
-    try:
-        ckg = CreativeKnowledgeGraph.model_validate(project.canon) if project.canon else CreativeKnowledgeGraph()
-    except Exception:
+    # Load or init the CKG — if canon exists but fails to parse, refuse the write
+    # rather than silently overwriting the user's existing canonical data.
+    if project.canon:
+        try:
+            ckg = CreativeKnowledgeGraph.model_validate(project.canon)
+        except Exception as exc:
+            logger.error(
+                "CKG deserialisation failed for project %s; refusing identity write to prevent data loss. Error: %s",
+                payload.project_id, exc,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Project canon could not be loaded. Identity update aborted to prevent data loss.",
+            )
+    else:
         ckg = CreativeKnowledgeGraph()
 
     # Write identity, species, variants nodes
-    ckg.character_identities[payload.character_id] = payload.identity.model_dump()
+    identity_dict = payload.identity.model_dump()
+
+    # If the user supplied an explicit canonical prompt (from the AI Prompt tab),
+    # embed it directly so the Prompt Builder uses it verbatim for every
+    # subsequent image generation.  Otherwise fall back to the auto-assembled
+    # appearance summary derived from the structured identity fields.
+    if payload.canonical_prompt:
+        identity_dict["_canonical_prompt"] = payload.canonical_prompt.strip()
+
+    ckg.character_identities[payload.character_id] = identity_dict
     ckg.character_species[payload.character_id] = payload.species.model_dump()
     ckg.character_variants[payload.character_id] = [v.model_dump() for v in payload.variants]
 
-    # Keep the backwards-compat approved_characters summary in sync
+    # Build the auto-assembled appearance summary (always kept in sync for
+    # backwards-compat and as a fallback when no explicit prompt is set).
     identity = payload.identity
     species_data = get_species(payload.species.species_id)
     species_prefix = species_data.get("prompt_prefix", "").rstrip(", ")
@@ -1755,17 +1802,22 @@ def ckg_update_identity(payload: CKGUpdateIdentityRequest, db: DbSession) -> dic
         identity.body_proportions,
         f"age {identity.age}" if identity.age else None,
         identity.distinct_markers,
-        *( identity.signature_accessories or []),
+        *(identity.signature_accessories or []),
     ] if p]
     appearance_summary = ", ".join(parts)
+
+    # The canonical_prompt stored in approved_characters is what the Prompt
+    # Builder reads first.  Use the explicit user prompt when provided.
+    effective_prompt = payload.canonical_prompt.strip() if payload.canonical_prompt else appearance_summary
+
     if payload.character_id in ckg.approved_characters:
         ckg.approved_characters[payload.character_id]["appearance_summary"] = appearance_summary
-        ckg.approved_characters[payload.character_id]["canonical_prompt"] = appearance_summary
+        ckg.approved_characters[payload.character_id]["canonical_prompt"] = effective_prompt
     else:
         ckg.approved_characters[payload.character_id] = {
             "name": identity.name,
             "appearance_summary": appearance_summary,
-            "canonical_prompt": appearance_summary,
+            "canonical_prompt": effective_prompt,
         }
 
     # Persist
@@ -1778,6 +1830,7 @@ def ckg_update_identity(payload: CKGUpdateIdentityRequest, db: DbSession) -> dic
         "species": payload.species.species_id,
         "variants_count": len(payload.variants),
         "appearance_summary": appearance_summary,
+        "canonical_prompt": effective_prompt,
     }
 
 
@@ -1796,9 +1849,21 @@ def update_character_dna(payload: CharacterDNAUpdateRequest, db: DbSession) -> d
     """
     project = _load_project_or_404(payload.project_id, db)
 
-    try:
-        ckg = CreativeKnowledgeGraph.model_validate(project.canon) if project.canon else CreativeKnowledgeGraph()
-    except Exception:
+    # Load or init the CKG — if canon exists but fails to parse, refuse the write
+    # rather than silently overwriting the user's existing canonical data.
+    if project.canon:
+        try:
+            ckg = CreativeKnowledgeGraph.model_validate(project.canon)
+        except Exception as exc:
+            logger.error(
+                "CKG deserialisation failed for project %s; refusing DNA write to prevent data loss. Error: %s",
+                payload.project_id, exc,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Project canon could not be loaded. DNA update aborted to prevent data loss.",
+            )
+    else:
         ckg = CreativeKnowledgeGraph()
 
     # Write abilities, visual_rules, and optional portrait into the CKG

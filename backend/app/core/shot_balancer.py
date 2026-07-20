@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from app.schemas.storyboard import ScriptSceneBase
+    from app.schemas.storyboard import ScriptSceneBase, StoryboardFrameBase
 
 logger = logging.getLogger(__name__)
 

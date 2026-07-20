@@ -29,6 +29,8 @@ import json
 import re
 from typing import Any
 
+from pydantic import SecretStr
+
 from fastapi import HTTPException
 from langchain_ibm import ChatWatsonx
 from langchain_core.messages import HumanMessage
@@ -114,8 +116,8 @@ def _build_llm(model_id: str, max_new_tokens: int = 4096) -> ChatWatsonx:
     """Initialise and return a ChatWatsonx instance for the given model_id."""
     return ChatWatsonx(
         model_id=model_id,
-        url=settings.WATSONX_URL,
-        apikey=settings.WATSONX_API_KEY,
+        url=SecretStr(settings.WATSONX_URL),
+        apikey=SecretStr(settings.WATSONX_API_KEY),
         project_id=settings.WATSONX_PROJECT_ID,
         max_tokens=max_new_tokens,
         temperature=0.2,
@@ -188,7 +190,8 @@ def _invoke_with_fallback(prompt_text: str, max_new_tokens: int = 4096) -> str:
             )
             if model_id != candidates[0]:
                 log.warning("Fell back to WatsonX model: %s", model_id)
-            return response.content
+            content = response.content
+            return content if isinstance(content, str) else str(content)
         except Exception as exc:
             if _should_fallback(exc):
                 log.warning("Model %s failed (%s) — trying next.", model_id, exc)

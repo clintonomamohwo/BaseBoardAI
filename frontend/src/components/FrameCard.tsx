@@ -40,9 +40,10 @@ export default function FrameCard({
   // Production sheet expand/collapse
   const [sheetExpanded, setSheetExpanded] = useState(false)
   // Regenerate visual action state
-  const [regenLoading, setRegenLoading] = useState(false)
-  const [regenError, setRegenError] = useState<string | null>(null)
-  const [regenSuccess, setRegenSuccess] = useState(false)
+  const [regenLoading, setRegenLoading]     = useState(false)
+  const [regenImgLoading, setRegenImgLoading] = useState(false)
+  const [regenError, setRegenError]         = useState<string | null>(null)
+  const [regenSuccess, setRegenSuccess]     = useState(false)
   // Style upgrade state
   const [upgradeLoading, setUpgradeLoading] = useState(false)
 
@@ -372,43 +373,63 @@ export default function FrameCard({
                 </div>
               )}
 
-              {/* Regenerate Visual Action button */}
+              {/* Rewrite direction + regenerate image */}
               {regenError && (
                 <p style={{ fontSize: 8, color: '#e06060', marginBottom: 4 }}>{regenError}</p>
               )}
               <button
-                disabled={regenLoading}
+                disabled={regenLoading || regenImgLoading}
                 onClick={async () => {
                   setRegenLoading(true)
                   setRegenError(null)
                   setRegenSuccess(false)
                   try {
+                    // Step 1 — rewrite the staging direction text
                     const result = await regenerateVisualAction(frame, scene)
-                    onVisualActionUpdate?.(scene.scene_number, frame.frame_number, {
+                    const textPatch = {
                       visual_action: result.visual_action,
                       animation_beats: result.animation_beats,
                       director_notes: result.director_notes ?? frame.director_notes,
+                    }
+                    onVisualActionUpdate?.(scene.scene_number, frame.frame_number, textPatch)
+                    setRegenLoading(false)
+
+                    // Step 2 — regenerate the image from the new direction
+                    setRegenImgLoading(true)
+                    const updatedFrame = { ...frame, ...textPatch }
+                    const res = await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/storyboard/frame/reforge-composition`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ frame: updatedFrame, scene, render_style: projectRenderStyle ?? frame.render_style ?? 'bw_sketch' }),
                     })
+                    if (res.ok) {
+                      const data = await res.json()
+                      if (data.generated_image_url && onUpgradeFrame) {
+                        onUpgradeFrame(scene.scene_number, frame.frame_number, data.generated_image_url)
+                      }
+                    }
                     setRegenSuccess(true)
                     setTimeout(() => setRegenSuccess(false), 2500)
                   } catch (err) {
                     setRegenError(err instanceof Error ? err.message : 'Regeneration failed')
                   } finally {
                     setRegenLoading(false)
+                    setRegenImgLoading(false)
                   }
                 }}
                 className="btn-tactile bms-brass"
                 style={{
-                  width: '100%', padding: '6px 0', borderRadius: 3, cursor: regenLoading ? 'wait' : 'pointer',
+                  width: '100%', padding: '6px 0', borderRadius: 3,
+                  cursor: (regenLoading || regenImgLoading) ? 'wait' : 'pointer',
                   border: '1px solid rgba(201,168,76,0.4)', background: 'transparent',
                   color: 'var(--gold)', fontSize: 8, letterSpacing: '0.2em',
-                  textTransform: 'uppercase', opacity: regenLoading ? 0.5 : 0.7,
+                  textTransform: 'uppercase', opacity: (regenLoading || regenImgLoading) ? 0.5 : 0.7,
                   transition: 'opacity 150ms ease, border-color 150ms ease',
                 }}
-                onMouseEnter={e => { if (!regenLoading) e.currentTarget.style.opacity = '1' }}
-                onMouseLeave={e => { if (!regenLoading) e.currentTarget.style.opacity = '0.7' }}
+                onMouseEnter={e => { if (!regenLoading && !regenImgLoading) e.currentTarget.style.opacity = '1' }}
+                onMouseLeave={e => { if (!regenLoading && !regenImgLoading) e.currentTarget.style.opacity = '0.7' }}
               >
-                {regenLoading ? 'Directing…' : regenSuccess ? '✓ Direction Updated' : '↺ Regenerate Visual Action'}
+                {regenLoading ? 'Rewriting Direction…' : regenImgLoading ? 'Rendering Scene…' : regenSuccess ? '✓ Scene Updated' : '↺ Regenerate Visual Action'}
               </button>
             </div>
           )}

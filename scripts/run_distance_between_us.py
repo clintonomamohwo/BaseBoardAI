@@ -49,6 +49,7 @@ Output tree:
                                    hand_closeup, eye_closeup, accessory}.png
 """
 
+import argparse
 import base64
 import json
 import pathlib
@@ -394,7 +395,7 @@ def run_storyboard_images(client: httpx.Client, project: dict) -> None:
             frame_num = frame.get("frame_number", 0)
             try:
                 resp = client.post(
-                    f"{BASE_URL}/storyboard/reforge-composition",
+                    f"{BASE_URL}/storyboard/frame/reforge-composition",
                     json={"frame": frame, "scene": scene, "render_style": RENDER},
                     timeout=120,
                 )
@@ -424,17 +425,35 @@ def run_storyboard_images(client: httpx.Client, project: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Run The Distance Between Us pipeline")
+    parser.add_argument(
+        "--stage3",
+        action="store_true",
+        help="Skip Stages 1 & 2 — load existing project.json and re-run storyboard images only",
+    )
+    args = parser.parse_args()
+
     client = httpx.Client(timeout=900)
     _health_check(client)
 
-    # Stage 1: LLM extraction (no images yet — characters come first)
-    project = run_pipeline(client, skip_images=True)
+    if args.stage3:
+        project_json = OUT_ROOT / "storyboard" / "project.json"
+        if not project_json.exists():
+            print(f"✗ No saved project found at {project_json}")
+            print("  Run the full pipeline first (without --stage3).")
+            sys.exit(1)
+        project = json.loads(project_json.read_text())
+        print(f"  Loaded project from {project_json}")
+        run_storyboard_images(client, project)
+    else:
+        # Stage 1: LLM extraction (no images yet — characters come first)
+        project = run_pipeline(client, skip_images=True)
 
-    # Stage 2: Character packages (sheet → slice, 1 API call per sheet type)
-    run_character_packages(client, project)
+        # Stage 2: Character packages (sheet → slice, 1 API call per sheet type)
+        run_character_packages(client, project)
 
-    # Stage 3: Storyboard frame images (reforge per frame)
-    run_storyboard_images(client, project)
+        # Stage 3: Storyboard frame images (reforge per frame)
+        run_storyboard_images(client, project)
 
     client.close()
 

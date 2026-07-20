@@ -46,7 +46,12 @@ def _str_or_default(default: str):
 
 def _int_or_default(default: int):
     def _coerce(v: Any) -> Any:
-        return default if v is None else v
+        if v is None:
+            return default
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return default
     return BeforeValidator(_coerce)
 
 def _float_or_default(default: float):
@@ -908,12 +913,22 @@ class CKGUpdateIdentityRequest(BaseModel):
     Payload for POST /storyboard/ckg/update-identity.
 
     Writes a CharacterIdentity into the CKG for a project.
+    When canonical_prompt is provided it is stored verbatim as the
+    _canonical_prompt / canonical_prompt used by the Prompt Builder for
+    every subsequent image generation, overriding the auto-assembled summary.
     """
     project_id: int
     character_id: str
     identity: CharacterIdentity
     species: SpeciesProfile = Field(default_factory=lambda: SpeciesProfile())  # pyright: ignore[reportCallIssue]
     variants: list[CharacterVariant] = Field(default_factory=list)
+    canonical_prompt: str | None = Field(
+        None,
+        description="Explicit prompt text set by the user on the AI Prompt tab. "
+                    "When present, overrides the auto-assembled appearance summary "
+                    "in both character_identities._canonical_prompt and "
+                    "approved_characters.canonical_prompt."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1049,56 +1064,53 @@ class RegenerateVisualActionResponse(BaseModel):
 
 class StandaloneCharacterSave(BaseModel):
     """Payload for POST /standalone/characters"""
-    name: str
-    character_data: dict[str, Any] = Field(description="Full CharacterProfileBase JSON")
-    notes: str | None = None
-    tags: list[str] = Field(default_factory=list)
+    character: "CharacterProfileBase"
+    label: str | None = None
 
 
 class StandaloneCharacterResponse(BaseModel):
     """Response from standalone character endpoints"""
     id: int
+    char_id: str
     name: str
-    character_data: dict[str, Any]
-    notes: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    created_at: str
+    story_role: str | None = None
+    label: str | None = None
+    character: "CharacterProfileBase"
 
 
 class StandaloneWorldSave(BaseModel):
     """Payload for POST /standalone/worlds"""
-    name: str
-    world_data: dict[str, Any] = Field(description="Full EnvironmentProfileBase JSON or world bible dict")
-    notes: str | None = None
-    tags: list[str] = Field(default_factory=list)
+    world: "EnvironmentProfileBase"
+    label: str | None = None
 
 
 class StandaloneWorldResponse(BaseModel):
     """Response from standalone world endpoints"""
     id: int
-    name: str
-    world_data: dict[str, Any]
-    notes: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    created_at: str
+    location_name: str
+    label: str | None = None
+    world: "EnvironmentProfileBase"
 
 
 class StandaloneStoryboardSave(BaseModel):
     """Payload for POST /standalone/storyboards"""
     title: str
-    storyboard_data: dict[str, Any] = Field(description="Full StoryboardProjectResponse JSON")
-    notes: str | None = None
-    tags: list[str] = Field(default_factory=list)
+    global_aesthetic: str
+    render_style: str
+    scenes: list["ScriptSceneBase"]
+    label: str | None = None
 
 
 class StandaloneStoryboardResponse(BaseModel):
     """Response from standalone storyboard endpoints"""
     id: int
     title: str
-    storyboard_data: dict[str, Any]
-    notes: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    created_at: str
+    global_aesthetic: str
+    render_style: str
+    label: str | None = None
+    scenes: list["ScriptSceneBase"]
+    scene_count: int
+    frame_count: int
 
 
 # ---------------------------------------------------------------------------

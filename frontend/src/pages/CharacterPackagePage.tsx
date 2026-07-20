@@ -36,6 +36,7 @@ import {
   generateFullCharacterPack,
   runCharacterQA,
   updateCharacterDNA,
+  updateCKGIdentity,
 } from '../api/storyboard'
 import GalleryLightbox, { type GalleryItem } from '../components/GalleryLightbox'
 import IdentityUploader from '../components/IdentityUploader'
@@ -94,8 +95,8 @@ const RELATIONSHIP_COLORS: Record<string, string> = {
 }
 
 const PACKAGE_TABS = [
-  'Overview', 'Identity', 'Variants', 'Expressions', 'Poses',
-  'Outfits', 'Abilities', 'Relationships', 'Scenes', 'Quality', 'AI Prompt', 'Versions',
+  'Overview', 'Identity', 'Variants', 'Portrait', 'Turnaround', 'Expressions', 'Poses',
+  'Outfits', 'Palette', 'Props', 'Abilities', 'Relationships', 'Scenes', 'Quality', 'AI Prompt', 'Versions',
 ] as const
 type PackageTab = typeof PACKAGE_TABS[number]
 
@@ -954,6 +955,7 @@ export default function CharacterPackagePage({
     return base
   })
   const [promptDraft, setPromptDraft] = useState(pkg.prompt)
+  const [promptSaveState, setPromptSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [overviewGenerating, setOverviewGenerating] = useState(false)
   const loadedTabs  = useRef<Set<string>>(new Set(['Overview', 'Scenes', 'Relationships']))
   const autoInitRef = useRef(false)
@@ -1027,7 +1029,10 @@ export default function CharacterPackagePage({
     }))
 
     try {
-      const result = await generateCharacterPackage(character, AUTO_INIT_SECTIONS, effectiveStyle, pkg.starredImage)
+      const result = await generateCharacterPackage(
+        { ...character, _canonical_prompt: pkg.prompt },
+        AUTO_INIT_SECTIONS, effectiveStyle, pkg.starredImage,
+      )
       setPkg(p => ({
         ...p,
         portrait:    (result['portrait'] as string | null) ?? p.portrait,
@@ -1149,7 +1154,10 @@ export default function CharacterPackagePage({
     loadedTabs.current.add(tab)
     setLoading(section, true)
     try {
-      const result = await generateCharacterPackage(character, [section], pkgRef.current.renderStyle)
+      const result = await generateCharacterPackage(
+        { ...character, _canonical_prompt: pkgRef.current.prompt },
+        [section], pkgRef.current.renderStyle,
+      )
       setPkg(p => ({
         ...p,
         ...(section === 'portrait' ? { portrait: result['portrait'] as string | null } : {}),
@@ -1175,7 +1183,10 @@ export default function CharacterPackagePage({
       if (!isProtected(pkg.portrait)) {
         setLoading('portrait', true)
         try {
-          const result = await generateCharacterPackage(character, ['portrait'], pkg.renderStyle, pkg.starredImage)
+          const result = await generateCharacterPackage(
+            { ...character, _canonical_prompt: pkg.prompt },
+            ['portrait'], pkg.renderStyle, pkg.starredImage,
+          )
           setPkg(p => ({ ...p, prompt: promptDraft, portrait: result['portrait'] as string | null }))
         } catch { /* leave existing */ }
         finally { setLoading('portrait', false) }
@@ -1239,7 +1250,10 @@ export default function CharacterPackagePage({
 
     setLoading(sectionKey, true)
     try {
-      const url = await regenerateCharacterImage(character, sectionKey, promptDraft, pkg.starredImage)
+      const url = await regenerateCharacterImage(
+        { ...character, _canonical_prompt: pkg.prompt },
+        sectionKey, pkg.renderStyle, pkg.starredImage,
+      )
       const [topSection, subKey] = sectionKey.includes('/') ? sectionKey.split('/') : [sectionKey, null]
       setPkg(p => {
         if (!subKey) return { ...p, [topSection]: url }
@@ -1264,7 +1278,7 @@ export default function CharacterPackagePage({
         pkg.prompt,
         pkg.identity,
         pkg.species?.species_id ?? 'human',
-        pkg.variants.find(v => v.id === pkg.activeVariantId),
+        pkg.variants.find(v => v.variant_id === pkg.activeVariantId),
         (pkg.classification as 'character' | 'creature' | 'animal' | 'robot' | 'vehicle' | null) ?? 'character',
       )
       setPkg(p => ({ ...p, qaResult: result }))
@@ -2158,9 +2172,38 @@ export default function CharacterPackagePage({
               onBlur={e=>(e.target.style.borderColor='var(--border)')}
             />
             <div style={{ display:'flex', gap:8, marginTop:10 }}>
-              <button onClick={() => setPkg(p => ({ ...p, prompt: promptDraft }))}
-                style={{ padding:'8px 18px', borderRadius:4, fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', cursor:'pointer', border:'1px solid var(--gold)', background:'var(--gold)', color:'var(--bg-base)', fontWeight:700 }}>
-                ✓ Save Prompt
+              <button
+                disabled={promptSaveState === 'saving'}
+                onClick={async () => {
+                  setPkg(p => ({ ...p, prompt: promptDraft }))
+                  if (!project?.db_id || !pkg.identity || !pkg.species) return
+                  setPromptSaveState('saving')
+                  try {
+                    await updateCKGIdentity(
+                      project.db_id,
+                      character.id,
+                      pkg.identity,
+                      pkg.species,
+                      pkg.variants,
+                      promptDraft,
+                    )
+                    setPromptSaveState('saved')
+                    setTimeout(() => setPromptSaveState('idle'), 2500)
+                  } catch {
+                    setPromptSaveState('error')
+                    setTimeout(() => setPromptSaveState('idle'), 3000)
+                  }
+                }}
+                style={{
+                  padding:'8px 18px', borderRadius:4, fontSize:9, letterSpacing:'0.2em',
+                  textTransform:'uppercase',
+                  cursor: promptSaveState === 'saving' ? 'wait' : 'pointer',
+                  border:`1px solid ${promptSaveState === 'saved' ? 'rgba(74,222,128,0.6)' : promptSaveState === 'error' ? 'rgba(239,68,68,0.6)' : 'var(--gold)'}`,
+                  background: promptSaveState === 'saved' ? 'rgba(74,222,128,0.15)' : promptSaveState === 'error' ? 'rgba(239,68,68,0.15)' : 'var(--gold)',
+                  color: promptSaveState === 'saved' ? '#4ade80' : promptSaveState === 'error' ? '#ef4444' : 'var(--bg-base)',
+                  fontWeight:700,
+                }}>
+                {promptSaveState === 'saving' ? 'Saving…' : promptSaveState === 'saved' ? '✓ Saved' : promptSaveState === 'error' ? '✕ Failed' : '✓ Save Prompt'}
               </button>
               <button onClick={() => setPromptDraft(pkg.prompt)}
                 style={{ padding:'8px 14px', borderRadius:4, fontSize:9, letterSpacing:'0.2em', textTransform:'uppercase', cursor:'pointer', border:'1px solid var(--border)', background:'transparent', color:'var(--text-muted)' }}>

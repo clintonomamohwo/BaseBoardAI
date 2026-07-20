@@ -5,6 +5,31 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>frontend</title>
+    <!-- Theme bootstrap: apply saved preference (default: dark) before first paint to prevent FOUC -->
+    <script>
+      (function () {
+        var stored = localStorage.getItem('theme');
+        var isDark = stored ? stored === 'dark' : true;
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+        }
+        // If no preference has been saved yet, write the default so the app
+        // picks it up correctly on first render without treating it as "unset".
+        if (!stored) {
+          localStorage.setItem('theme', 'dark');
+        }
+        // Suppress CSS transitions during the initial paint so there is no
+        // animated flash even if the .dark class was just added above.
+        document.documentElement.classList.add('no-transition');
+        window.addEventListener('DOMContentLoaded', function () {
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+              document.documentElement.classList.remove('no-transition');
+            });
+          });
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

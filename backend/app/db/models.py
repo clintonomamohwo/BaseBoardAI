@@ -78,6 +78,13 @@ class CharacterProfileORM(Base):
     # and avoids a separate table for a tightly coupled value object.
     facial_blueprint: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
+    # Character DNA System (CKG) — nullable for backwards compat with pre-DNA projects
+    identity: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    species: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    variants: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    physical_form: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    classification: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Story role & relationships — set by CHARACTER_PROMPT, nullable for backwards compat
     story_role: Mapped[str | None] = mapped_column(Text, nullable=True)
     relationships: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
