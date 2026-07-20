@@ -185,7 +185,7 @@ def _health_check(client: httpx.Client) -> None:
 
 def run_pipeline(client: httpx.Client) -> dict:
     print("=" * 60)
-    print("STAGE 1 — FORGE PIPELINE (flat_color, balanced)")
+    print(f"STAGE 1 — FORGE PIPELINE ({RENDER}, balanced)")
     print("=" * 60)
 
     payload = {

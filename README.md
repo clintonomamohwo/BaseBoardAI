@@ -239,6 +239,10 @@ Bob was used in **Agent mode** throughout — it read files before editing, sear
 | **Project Library** | Save, browse, load, delete projects (SQLite) |
 | **World Bible** | Locations, factions, lore, timeline — importable from documents |
 | **Demo Project** | "The Lost Compass" Sci-Fi demo — no upload required |
+| **Dark Mode Default** | First launch defaults to dark mode; preference persisted in `localStorage` with no FOUC |
+| **Collapsible Inspector** | Right-side Inspector panel slides in/out with an animated toggle; canvas expands to fill freed space |
+| **↺ Regenerate Visual Action** | Rewrites the staging direction *and* immediately regenerates the frame image in one click |
+| **Shot Balancer** | Composition diversity scoring — weighted shot-type distribution across all scenes |
 
 ---
 
@@ -432,7 +436,7 @@ scripts/output/lost_compass/
 
 ### `run_distance_between_us.py` — romance/drama demo
 
-Contemporary long-distance romance. 3 characters, 8 scenes, ~15 frames.
+Contemporary long-distance romance. 3 characters, 17 scenes, ~46 frames.
 
 | | |
 |---|---|
@@ -445,6 +449,12 @@ Contemporary long-distance romance. 3 characters, 8 scenes, ~15 frames.
 cd "/Users/ruonaclinton/Documents/Personal Doc/BaseBoardAI/backend"
 source .venv/bin/activate
 python3 ../scripts/run_distance_between_us.py
+```
+
+Re-run only Stage 3 (storyboard images) using a saved `project.json`:
+
+```bash
+python3 ../scripts/run_distance_between_us.py --stage3
 ```
 
 Output tree:
@@ -508,6 +518,7 @@ BaseBoardAI/
 │   │   ├── ai_factory.py        # Provider-agnostic Text / Image / Vision factory
 │   │   ├── prompt_builder.py    # Director Engine — style prefixes, upgrade pipeline
 │   │   ├── director_engine.py   # Shot-type + lens assignment per frame
+│   │   ├── shot_balancer.py     # Composition diversity scoring + rebalancing
 │   │   ├── identity_system.py   # Character DNA + CKG + scene continuity
 │   │   ├── continuity_engine.py # Frame impact detection on edits
 │   │   └── visual_qa.py         # Gemini Vision anatomy audit + Visual DNA tokens
@@ -515,13 +526,19 @@ BaseBoardAI/
 │   │   ├── models.py            # SQLAlchemy ORM models
 │   │   └── session.py           # DB session + init_db()
 │   ├── routers/storyboard.py    # All FastAPI endpoints
-│   ├── schemas/storyboard.py    # All Pydantic v2 schemas
+│   ├── schemas/storyboard.py    # All Pydantic v2 schemas (robust LLM coercions)
 │   └── main.py                  # FastAPI app entry point
 │
 └── frontend/src/
+    ├── index.html               # Theme bootstrap script — dark-mode default, no FOUC
+    ├── index.css                # BMS motion system + .no-transition FOUC guard
     ├── api/storyboard.ts        # All API calls + SSE stream client
-    ├── components/              # FrameCard, UpgradeStyleMenu, SceneContinuityPanel…
-    ├── pages/                   # Studio, Genesis, Library, CharacterPackage…
+    ├── components/
+    │   ├── FrameCard.tsx        # ↺ Regenerate: rewrites direction + reforges image
+    │   └── …                    # ThemeToggle, UpgradeStyleMenu, SceneContinuityPanel…
+    ├── pages/
+    │   ├── StudioPage.tsx       # Collapsible Inspector panel (animated, 260 → 28 px)
+    │   └── …                    # Genesis, Library, CharacterPackage…
     ├── types/storyboard.ts      # TypeScript types mirroring backend schemas
     ├── types/renderUpgrade.ts   # Style presets and tier labels
     └── data/demoProject.ts      # Pre-baked demo project

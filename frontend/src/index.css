@@ -178,6 +178,12 @@ body.bms-light-active.dark::after {
   --cyan:       #00D4FF;
 }
 
+/* Suppress all transitions during initial theme bootstrap to prevent FOUC */
+.no-transition,
+.no-transition * {
+  transition: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg-base);

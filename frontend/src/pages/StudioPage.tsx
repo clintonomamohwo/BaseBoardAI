@@ -29,7 +29,7 @@ type ViewMode = typeof VIEW_MODES[number]
 
 interface Props {
   initialProject?: StoryboardProject | null
-  onNotify?: (msg: string, type?: 'success' | 'info') => void
+  onNotify?: (msg: string, type?: 'success' | 'info' | 'error') => void
 }
 
 export default function StudioPage({ initialProject, onNotify }: Props) {
@@ -45,6 +45,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
   const [rerunLoading, setRerunLoading] = useState(false)
   const [rerunError, setRerunError]     = useState<string | null>(null)
   const [projectUpgrading, setProjectUpgrading] = useState(false)
+  const [inspectorOpen, setInspectorOpen] = useState(true)
 
   async function handleRerun() {
     if (!project) return
@@ -98,7 +99,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
     } catch (err) {
       const e = classifyError(err)
       setRerunError(`${e.title} — ${e.detail}`)
-      onNotify?.(e.title, 'error', e.detail)
+      onNotify?.(`${e.title} — ${e.detail}`, 'error')
     } finally {
       setRerunLoading(false)
     }
@@ -205,7 +206,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
         total += result.total
       } catch (err) {
         const e = classifyError(err)
-        onNotify?.(e.title, 'error', e.detail)
+        onNotify?.(`${e.title} — ${e.detail}`, 'error')
       }
     }
     setProjectUpgrading(false)
@@ -313,8 +314,8 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
           <AnimaticPlayer frames={displayScene.frames} />
         </div>
       ) : (
-        /* Main 3-col storyboard layout */
-        <div className="flex-1 grid grid-cols-12 gap-0 min-h-0 overflow-hidden relative">
+        /* Main storyboard layout */
+        <div className="flex-1 flex gap-0 min-h-0 overflow-hidden relative">
 
           {/* Re-run overlay */}
           {rerunOpen && (
@@ -433,8 +434,8 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
               </div>
             </div>
           )}
-          {/* Scene Index — col 2 */}
-          <aside className="col-span-2 border-r border-[var(--border)] overflow-y-auto flex flex-col">
+          {/* Scene Index */}
+          <aside style={{ width: 160, minWidth: 160, flexShrink: 0 }} className="border-r border-[var(--border)] overflow-y-auto flex flex-col">
             <SceneIndex
               project={project}
               activeSceneNumber={displayScene?.scene_number ?? 0}
@@ -444,8 +445,8 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
             />
           </aside>
 
-          {/* Storyboard Canvas — col 7 */}
-          <main className="col-span-7 overflow-hidden flex flex-col border-r border-[var(--border)]">
+          {/* Storyboard Canvas — grows to fill remaining space */}
+          <main className="flex-1 overflow-hidden flex flex-col border-r border-[var(--border)]">
             {displayScene && (
               <StoryboardCanvas
                   scene={displayScene}
@@ -461,20 +462,92 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
             )}
           </main>
 
-          {/* Inspector — col 3 */}
-          <aside className="col-span-3 overflow-y-auto">
-            <StudioInspector
-              scene={displayScene}
-              onReferenceChange={setReferenceImage}
-              canon={project?.canon ?? null}
-              referenceImage={referenceImage}
-              renderStyle={project?.render_style}
-              allScenes={project?.scenes}
-              onBackgroundVariation={(sceneNumber, frameNumber, newUrl) => {
-                handleUpgradeFrame(sceneNumber, frameNumber, newUrl)
-                onNotify?.('Background variation applied ✓', 'success')
+          {/* Inspector — collapsible right panel */}
+          <aside
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              width: inspectorOpen ? 260 : 28,
+              minWidth: inspectorOpen ? 260 : 28,
+              maxWidth: inspectorOpen ? 260 : 28,
+              transition: 'width 220ms cubic-bezier(0.22,1,0.36,1), min-width 220ms cubic-bezier(0.22,1,0.36,1), max-width 220ms cubic-bezier(0.22,1,0.36,1)',
+              borderLeft: '1px solid var(--border)',
+              position: 'relative',
+              overflow: 'hidden',
+              flexShrink: 0,
+            }}
+          >
+            {/* Toggle button — always visible, vertically centred */}
+            <button
+              onClick={() => setInspectorOpen(o => !o)}
+              title={inspectorOpen ? 'Collapse inspector' : 'Expand inspector'}
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: inspectorOpen ? 0 : 0,
+                transform: 'translateY(-50%)',
+                zIndex: 10,
+                width: 28,
+                height: 48,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'var(--bg-raised)',
+                border: '1px solid var(--border)',
+                borderLeft: 'none',
+                borderRadius: '0 4px 4px 0',
+                cursor: 'pointer',
+                color: 'var(--gold)',
+                fontSize: 9,
+                opacity: 0.6,
+                transition: 'opacity 150ms ease',
+                flexShrink: 0,
               }}
-            />
+              onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+              onMouseLeave={e => (e.currentTarget.style.opacity = '0.6')}
+            >
+              {inspectorOpen ? '›' : '‹'}
+            </button>
+
+            {/* Collapsed label */}
+            {!inspectorOpen && (
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%) rotate(90deg)',
+                  fontSize: 8,
+                  letterSpacing: '0.25em',
+                  textTransform: 'uppercase',
+                  color: 'var(--gold)',
+                  opacity: 0.35,
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  marginTop: 32,
+                }}
+              >
+                Inspector
+              </span>
+            )}
+
+            {/* Inspector content — hidden when collapsed */}
+            {inspectorOpen && (
+              <div style={{ flex: 1, overflowY: 'auto', paddingLeft: 28 }}>
+                <StudioInspector
+                  scene={displayScene}
+                  onReferenceChange={setReferenceImage}
+                  canon={project?.canon ?? null}
+                  referenceImage={referenceImage}
+                  renderStyle={project?.render_style}
+                  allScenes={project?.scenes}
+                  onBackgroundVariation={(sceneNumber, frameNumber, newUrl) => {
+                    handleUpgradeFrame(sceneNumber, frameNumber, newUrl)
+                    onNotify?.('Background variation applied ✓', 'success')
+                  }}
+                />
+              </div>
+            )}
           </aside>
         </div>
       )}

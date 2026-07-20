@@ -8,7 +8,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { classifyError } from '../utils/classifyError'
 import logoSrc from '../assets/logo.png'
-import type { RenderStyle, StoryboardProject } from '../types/storyboard'
+import type { RenderStyle, StoryboardProject, StoryboardScene } from '../types/storyboard'
 import { forgePipelineStream } from '../api/storyboard'
 import { extractDocumentText } from '../utils/extractDocumentText'
 import type { DirectorStyle } from './NewProjectPage'
@@ -52,7 +52,7 @@ interface Props {
   renderStyle: RenderStyle
   directorStyle?: DirectorStyle
   onComplete: (project: StoryboardProject) => void
-  onNotify?: (msg: string, type?: 'success' | 'info') => void
+  onNotify?: (msg: string, type?: 'success' | 'info' | 'error') => void
   onBack: () => void
   onLanding: () => void
 }
@@ -120,7 +120,7 @@ export default function GenesisEnginePage({
     } catch (err) {
       const e = classifyError(err)
       setError(`${e.title}\n\n${e.detail}`)
-      onNotify?.(e.title, 'error', e.detail)
+      onNotify?.(`${e.title} — ${e.detail}`, 'error')
       return
     }
 
@@ -179,16 +179,17 @@ export default function GenesisEnginePage({
       )
 
       if (!finalProject) throw new Error('Pipeline ended without a result.')
+      const project = finalProject as StoryboardProject
 
       // Snap everything to done
       setTaskStatus(Object.fromEntries(TASKS.map(t => [t.id, 'done'])))
       setTaskProgress(Object.fromEntries(TASKS.map(t => [t.id, 1])))
-      const uniqueLocations = new Set(finalProject.scenes.map(s => s.location_heading)).size
-      const totalFrames = finalProject.scenes.reduce((s, sc) => s + sc.frames.length, 0)
+      const uniqueLocations = new Set(project.scenes.map((s: StoryboardScene) => s.location_heading)).size
+      const totalFrames = project.scenes.reduce((sum: number, sc: StoryboardScene) => sum + sc.frames.length, 0)
       setCounts({
-        chars:     finalProject.characters.length,
+        chars:     project.characters.length,
         locations: uniqueLocations,
-        scenes:    finalProject.scenes.length,
+        scenes:    project.scenes.length,
         frames:    totalFrames,
       })
       onNotify?.('Genesis Engine complete ✓')
@@ -217,7 +218,7 @@ export default function GenesisEnginePage({
       )
       const e = classifyError(err)
       setError(`${e.title}\n\n${e.detail}`)
-      onNotify?.(e.title, 'error', e.detail)
+      onNotify?.(`${e.title} — ${e.detail}`, 'error')
     }
   }
 

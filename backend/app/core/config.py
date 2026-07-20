@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     # VISION_PROVIDER: gemini  (only gemini supported today)
     VISION_PROVIDER: str = "gemini"
 
+    # CORS allowed origins — space-separated list loaded from .env.
+    # Defaults to Vite dev server. Add your deployed frontend URL here or in .env.
+    # Example: CORS_ORIGINS=http://localhost:5173 https://my-app.example.com
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000", "http://127.0.0.1:3000"]
+
     # -----------------------------------------------------------------------
     # IBM WatsonX (TEXT_PROVIDER=watsonx)
     # -----------------------------------------------------------------------
@@ -70,12 +75,12 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     GEMINI_API_KEY: str = ""
     # Text / Director Engine model
-    GEMINI_TEXT_MODEL: str = "gemini-3.5-flash"
+    GEMINI_TEXT_MODEL: str = "gemini-2.0-flash"
     # Vision / QA model — maps to GEMINI_FAST_MODEL in .env
-    GEMINI_VISION_MODEL: str = "gemini-3.5-flash"
-    GEMINI_FAST_MODEL: str = "gemini-3.5-flash"   # alias accepted from .env
+    GEMINI_VISION_MODEL: str = "gemini-2.0-flash"
+    GEMINI_FAST_MODEL: str = "gemini-2.0-flash"   # alias accepted from .env
     # Image generation model (Imagen)
-    GEMINI_IMAGE_MODEL: str = "gemini-3.1-flash-lite-image"
+    GEMINI_IMAGE_MODEL: str = "imagen-3.0-generate-001"
 
     # -----------------------------------------------------------------------
     # Hugging Face (IMAGE_PROVIDER=huggingface)

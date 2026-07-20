@@ -637,8 +637,8 @@ export default function WorldBiblePage({ scenes, project, renderStyle = 'bw_sket
             emptyLabel="No timeline entries yet"
             renderItem={(item: Record<string, unknown>) => (
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                {item.date && <span style={{ fontSize: 10, color: 'var(--gold)', opacity: 0.7, minWidth: 80, flexShrink: 0 }}>{String(item.date)}</span>}
-                {item.event && <span style={{ fontSize: 11, color: 'var(--text-base)', opacity: 0.8 }}>{String(item.event)}</span>}
+                {!!item.date && <span style={{ fontSize: 10, color: 'var(--gold)', opacity: 0.7, minWidth: 80, flexShrink: 0 }}>{String(item.date)}</span>}
+                {!!item.event && <span style={{ fontSize: 11, color: 'var(--text-base)', opacity: 0.8 }}>{String(item.event)}</span>}
                 {!item.date && !item.event && <span style={{ fontSize: 11, color: 'var(--text-base)', opacity: 0.8 }}>{JSON.stringify(item)}</span>}
               </div>
             )}

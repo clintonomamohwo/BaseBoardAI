@@ -126,7 +126,7 @@ def save_standalone_character(
         wardrobe_defaults=char.wardrobe_defaults,
         facial_blueprint=char.facial_blueprint.model_dump(),
         story_role=char.story_role,
-        relationships=[r.model_dump() for r in char.relationships] if char.relationships else [],
+        relationships=list(char.relationships) if char.relationships else [],
         full_data=char.model_dump(),
         label=payload.label,
     )

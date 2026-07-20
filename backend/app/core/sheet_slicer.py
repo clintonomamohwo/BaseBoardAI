@@ -116,7 +116,7 @@ def slice_sheet(sheet_data_url: str, layout: "SheetLayout") -> dict[str, str]:
             from PIL import Image  # type: ignore[import-untyped]
             sheet_img = sheet_img.resize(
                 (layout.canvas_width, layout.canvas_height),
-                Image.LANCZOS,
+                Image.Resampling.LANCZOS,
             )
         except Exception as exc:
             logger.warning("sheet_slicer: resize failed (%s), proceeding with original size", exc)
@@ -157,7 +157,7 @@ def slice_cell(sheet_data_url: str, layout: "SheetLayout", cell_id: str) -> str 
             from PIL import Image  # type: ignore[import-untyped]
             sheet_img = sheet_img.resize(
                 (layout.canvas_width, layout.canvas_height),
-                Image.LANCZOS,
+                Image.Resampling.LANCZOS,
             )
         except Exception as exc:
             logger.warning("sheet_slicer: resize failed (%s), proceeding with original size", exc)

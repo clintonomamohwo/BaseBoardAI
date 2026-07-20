@@ -431,7 +431,7 @@ function CharacterRow({
               <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
                 <p style={{ fontSize: 8, letterSpacing: '0.2em', color: 'var(--gold)', textTransform: 'uppercase', opacity: 0.6, marginBottom: 8 }}>Relationships</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {char.relationships.map((rel: { target_name: string; relationship_type: string; notes?: string }, i: number) => {
+                  {char.relationships.map((rel, i) => {
                     const typeColor: Record<string, string> = {
                       ally: '#4ade80', enemy: '#e06060', romantic: '#f472b6',
                       mentor: '#a78bfa', family: '#fb923c', rival: '#facc15', neutral: 'var(--text-muted)',

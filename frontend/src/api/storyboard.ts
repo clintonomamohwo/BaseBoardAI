@@ -27,6 +27,9 @@ export interface CharacterPackageInput {
     distinct_markers: string | null
     fixed_seed_reference: number | null
   }
+  /** When set, the backend uses this as the base generation prompt verbatim
+   *  instead of auto-assembling one from facial_blueprint fields. */
+  _canonical_prompt?: string | null
 }
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
@@ -462,14 +465,17 @@ export async function importCharacterAsset(
   return handleResponse<ImportAssetResponse>(res)
 }
 
-/** Write Identity + Species + Variants into the project CKG. */
+/** Write Identity + Species + Variants into the project CKG.
+ *  Pass canonicalPrompt to persist a user-edited AI prompt verbatim so every
+ *  subsequent image generation uses it instead of the auto-assembled summary. */
 export async function updateCKGIdentity(
   projectId: number,
   characterId: string,
   identity: CharacterIdentity,
   species: SpeciesProfile,
   variants: CharacterVariant[],
-): Promise<{ character_id: string; appearance_summary: string }> {
+  canonicalPrompt?: string | null,
+): Promise<{ character_id: string; appearance_summary: string; canonical_prompt: string }> {
   const res = await fetch(`${BASE_URL}/storyboard/ckg/update-identity`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -479,9 +485,10 @@ export async function updateCKGIdentity(
       identity,
       species,
       variants,
+      canonical_prompt: canonicalPrompt ?? null,
     }),
   })
-  return handleResponse<{ character_id: string; appearance_summary: string }>(res)
+  return handleResponse<{ character_id: string; appearance_summary: string; canonical_prompt: string }>(res)
 }
 
 /** Save abilities, visual rules and/or a reference portrait to the project CKG. */
