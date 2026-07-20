@@ -390,12 +390,44 @@ _ALL_REGISTRIES: dict[str, dict[str, Any]] = {
 }
 
 
-def get_species(species_id: str) -> dict[str, Any]:
+def get_species(species_id: str, label: str | None = None, custom_notes: str | None = None) -> dict[str, Any]:
     """
     Return the profile for the given species/asset id.
-    Falls back to human for unknown ids.
+
+    The registry is open-ended: any species string is valid.
+    - If the id is in the registry, return the full profile.
+    - If it is unknown, synthesise a minimal profile from the label (or the id
+      itself) so the prompt prefix is always meaningful rather than silently
+      falling back to human anatomy.
+
+    This means a character defined as species_id='giant_scorpion', label='Giant Scorpion'
+    will produce "anthropomorphic giant scorpion humanoid" in the prompt without
+    needing a registry entry.
     """
-    return _ALL_REGISTRIES.get(species_id.lower(), SPECIES_REGISTRY[DEFAULT_SPECIES_ID])
+    sid = species_id.lower().strip() if species_id else DEFAULT_SPECIES_ID
+    if sid in _ALL_REGISTRIES:
+        return _ALL_REGISTRIES[sid]
+
+    # Unknown species — synthesise from label or id so the prompt is still correct
+    display = (label or sid.replace("_", " ")).strip()
+    notes   = custom_notes or ""
+    prefix  = f"anthropomorphic {display.lower()} humanoid"
+    if notes:
+        prefix = f"{prefix}, {notes}"
+    prefix += ", "
+
+    return {
+        "id":               sid,
+        "label":            display,
+        "limbs":            "user-defined",
+        "anatomy_notes":    f"Custom species: {display}. {notes}".strip(". "),
+        "ear_shape":        "user-defined",
+        "extra_features":   [],
+        "required_features": [],
+        "forbidden_features": [],
+        "qa_anatomy_rules": [],
+        "prompt_prefix":    prefix,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -550,12 +582,14 @@ def build_identity_prompt(
     classification: str | None = None,
     abilities: list[str] | None = None,
     render_style: str = "bw_sketch",
+    species_label: str | None = None,
+    species_custom_notes: str | None = None,
 ) -> str:
     """
     Build a canonical identity-grounded character description for image generation.
 
     Layer order:
-      1. Species prefix (anatomy constraints)
+      1. Species prefix (anatomy constraints) — synthesised for any species, registered or not
       2. Classification modifier (god → divine authority, demon → menacing, etc.)
       3. Core identity (face, proportions, markers, hair, eyes)
       4. Active variant overrides (outfit, hair colour, accessories, age)
@@ -563,8 +597,10 @@ def build_identity_prompt(
       6. Render style modifier (prepended by prompt_builder — not duplicated here)
 
     Only the variant layer changes per scene. Identity and species never change.
+    species_label and species_custom_notes are passed through to get_species so
+    unknown species synthesise a correct prompt prefix from the display name.
     """
-    species = get_species(species_id)
+    species = get_species(species_id, label=species_label, custom_notes=species_custom_notes)
 
     # ── Layer 1: Species ──────────────────────────────────────────────────────
     parts: list[str] = []
