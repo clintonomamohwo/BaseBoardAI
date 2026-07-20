@@ -31,7 +31,7 @@ A professional pre-visualization pass — storyboards, character sheets, locatio
 - A **pre-vis producer** coordinating the full visual package
 - A budget of **$10,000–$50,000+** just for a short film
 
-**Independent filmmakers, solo game designers, animation students, and small creative studios cannot afford this.** Their stories stay trapped as text documents, never reaching a visual form that can be pitched, funded, or produced.
+**Independent filmmakers, storytellers, solo game designers, animation students, and small creative studios cannot afford this.** Their stories stay trapped as text documents, never reaching a visual form that can be pitched, funded, or produced.
 
 There is no tool that takes a story as input and returns a complete production-ready visual package as output — until now.
 
@@ -162,7 +162,7 @@ Three independent AI axes, each switchable in `.env`:
 
 ```
 TEXT_PROVIDER   = watsonx | gemini
-IMAGE_PROVIDER  = pollinations | gemini | huggingface
+IMAGE_PROVIDER  = pollinations | gemini | huggingface 
 VISION_PROVIDER = gemini
 ```
 
@@ -331,7 +331,7 @@ VISION_PROVIDER=gemini
 
 WATSONX_API_KEY=your_key
 WATSONX_PROJECT_ID=your_project_id
-WATSONX_URL=https://us-south.ml.cloud.ibm.com
+WATSONX_URL=https://us-south.ml.cloud.ibm.com or https://ca-tor.ml.cloud.ibm.com
 WATSONX_PRIMARY_TEXT_MODEL=meta-llama/llama-3-3-70b-instruct
 WATSONX_FALLBACK_TEXT_MODEL=mistralai/mistral-small-3-1-24b-instruct-2503
 WATSONX_LAST_RESORT_MODEL=meta-llama/llama-3-1-8b
