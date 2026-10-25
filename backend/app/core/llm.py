@@ -159,23 +159,27 @@ def _invoke_with_fallback(prompt_text: str, max_new_tokens: int = 4096) -> str:
 
     TEXT_PROVIDER=gemini:
         Routes directly to _GeminiTextProvider from ai_factory.py.
-        Falls back to WatsonX if Gemini itself fails.
+        Falls back to WatsonX if Gemini itself fails and a WatsonX model is
+        configured. If none is configured, surfaces the original Gemini error.
 
     Raises the last exception if all candidates are exhausted.
     """
     import logging
     log = logging.getLogger(__name__)
 
+    gemini_error: Exception | None = None
     if settings.TEXT_PROVIDER.lower() == "gemini":
         try:
             from app.core.ai_factory import AIFactory
             return AIFactory.get_text_provider().generate(prompt_text, max_tokens=max_new_tokens)
         except Exception as exc:
-            log.warning("Gemini text provider failed (%s) — falling back to WatsonX.", exc)
-            # Fall through to WatsonX below
+            log.warning("Gemini text provider failed (%s); checking WatsonX fallback.", exc)
+            gemini_error = exc
 
     candidates = _watsonx_candidates()
     if not candidates:
+        if gemini_error is not None:
+            raise gemini_error
         raise RuntimeError(
             "No WatsonX models configured. "
             "Set WATSONX_PRIMARY_TEXT_MODEL in your .env file."
