@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import type { StoryboardFrame, StoryboardScene, SceneContinuityReport, SceneQARequest, FrameExpectedContext } from '../types/storyboard'
+import type { CreativeKnowledgeGraph, RenderStyle, StoryboardFrame, StoryboardScene, SceneContinuityReport, SceneQARequest, FrameExpectedContext } from '../types/storyboard'
 import { runSceneQA, upgradeSceneStyle } from '../api/storyboard'
 import FrameCard from './FrameCard'
 import ActionTimeline from './ActionTimeline'
@@ -11,9 +11,20 @@ interface Props {
   allScenes?: StoryboardScene[]
   renderStyleLabel: string
   /** The current project render_style key — passed to UpgradeStyleMenu to show ✓ on current */
-  projectRenderStyle?: string
+  projectRenderStyle?: RenderStyle
+  projectCanon?: CreativeKnowledgeGraph | null
   selectedKeys: Map<string, boolean>
   onToggleSelect: (key: string) => void
+  inspectorFrameKey: string | null
+  onSelectFrame: (key: string) => void
+  premiumSelectedKeys: Set<string>
+  onTogglePremiumSelect: (key: string) => void
+  premiumSelectedCount: number
+  premiumSelectedEstimate: string
+  premiumRenderProgress: { completed: number; total: number } | null
+  onSelectPremiumScene: (scene: StoryboardScene) => void
+  onClearPremiumSelection: () => void
+  onRenderSelectedPremium: () => void
   onOpenPlayer: () => void
   onReplaceImage?: (sceneNumber: number, frameNumber: number, dataUrl: string) => void
   /** Called when a frame's visual_action is regenerated so parent can patch project state */
@@ -26,8 +37,10 @@ interface Props {
 }
 
 export default function StoryboardCanvas({
-  scene, allScenes = [scene], renderStyleLabel, projectRenderStyle,
-  selectedKeys, onToggleSelect, onOpenPlayer,
+  scene, allScenes = [scene], renderStyleLabel, projectRenderStyle, projectCanon,
+  selectedKeys, onToggleSelect, inspectorFrameKey, onSelectFrame, premiumSelectedKeys, onTogglePremiumSelect,
+  premiumSelectedCount, premiumSelectedEstimate, premiumRenderProgress,
+  onSelectPremiumScene, onClearPremiumSelection, onRenderSelectedPremium, onOpenPlayer,
   onReplaceImage, onVisualActionUpdate, onFrameUpdate, onFocusFrame, onUpgradeFrame,
 }: Props) {
   // BMS-3: track which frame key is currently nearest the cursor
@@ -40,9 +53,11 @@ export default function StoryboardCanvas({
   const [qaLoading, setQaLoading]     = useState(false)
   // Scene-level style upgrade
   const [sceneUpgrading, setSceneUpgrading] = useState(false)
+  const [sceneActionsOpen, setSceneActionsOpen] = useState(false)
 
   async function handleUpgradeScene(targetStyle: string) {
     if (sceneUpgrading) return
+    setSceneActionsOpen(false)
     setSceneUpgrading(true)
     try {
       const result = await upgradeSceneStyle(scene.frames, scene, targetStyle, null)
@@ -58,8 +73,30 @@ export default function StoryboardCanvas({
   }
 
   async function handleRunSceneQA() {
-    // Only frames that have a generated prompt are useful; frames with no prompt
-    // get a placeholder so the QA still counts them.
+    // The backend rebuilds the same prompt used for rendering. Omit image bytes
+    // from scene data so QA stays a small metadata-only request.
+    const sceneData: StoryboardScene = {
+      ...scene,
+      frames: scene.frames.map(frame => ({ ...frame, generated_image_url: null })),
+    }
+    const promptCanonContext = projectCanon ? {
+      character_identities: Object.fromEntries(
+        Object.entries(projectCanon.character_identities).map(([id, identity]) => [id, {
+          name: identity.name,
+          face_description: identity.face_description,
+          _canonical_prompt: identity._canonical_prompt,
+        }]),
+      ),
+      approved_characters: Object.fromEntries(
+        Object.entries(projectCanon.approved_characters).map(([id, character]) => [id, {
+          name: character.name,
+          appearance_summary: character.appearance_summary,
+          canonical_prompt: character.canonical_prompt,
+        }]),
+      ),
+      character_species: projectCanon.character_species,
+      character_abilities: projectCanon.character_abilities,
+    } : null
     const frames: FrameExpectedContext[] = scene.frames.map(f => ({
       scene_number:      scene.scene_number,
       frame_number:      f.frame_number,
@@ -70,6 +107,7 @@ export default function StoryboardCanvas({
       lighting_notes:    f.lighting_notes ?? '',
       mood:              f.mood ?? null,
       shot_type:         f.shot_type ?? 'Wide Shot',
+      // Fallback for older callers; the backend rebuilds the actual prompt from scene_data.
       generated_prompt:  f.visual_action ?? f.action_breakdown ?? '',
     }))
 
@@ -78,6 +116,9 @@ export default function StoryboardCanvas({
       location_heading:  scene.location_heading,
       time_of_day:       scene.time_of_day,
       environmental_type: scene.environmental_type,
+      scene_data:        sceneData,
+      render_style:      projectRenderStyle ?? 'bw_sketch',
+      canon_context:     promptCanonContext,
       frames,
     }
 
@@ -90,6 +131,7 @@ export default function StoryboardCanvas({
     finally { setQaLoading(false) }
   }
   const scrollRef = useRef<HTMLDivElement>(null)
+  const scenePremiumFrameCount = scene.frames.filter(frame => Boolean(frame.generated_image_url)).length
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const scroll = scrollRef.current
@@ -129,12 +171,26 @@ export default function StoryboardCanvas({
           <span className="text-[9px] tracking-widest text-[var(--gold)]/50 border border-[var(--gold)]/20 px-2 py-0.5 rounded uppercase">
             {renderStyleLabel}
           </span>
-          <UpgradeStyleMenu
-            currentStyle={projectRenderStyle}
-            onSelect={handleUpgradeScene}
-            loading={sceneUpgrading}
-            label="Upgrade Scene ▾"
-          />
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={sceneActionsOpen}
+              onClick={() => setSceneActionsOpen(open => !open)}
+              className="text-[9px] tracking-widest uppercase text-[var(--text-base)]/55 hover:text-[var(--gold)] border border-[var(--border)] hover:border-[var(--gold)]/40 px-2 py-1 rounded transition-all"
+              title="Scene actions"
+            >⋯</button>
+            {sceneActionsOpen && (
+              <div role="menu" aria-label="Scene actions" style={{ position: 'absolute', top: 'calc(100% + 5px)', right: 0, zIndex: 50, width: 220, padding: 8, display: 'flex', flexDirection: 'column', gap: 5, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', boxShadow: '0 12px 30px rgba(0,0,0,0.45)' }}>
+                <span style={{ padding: '2px 4px 4px', color: 'var(--text-muted)', fontSize: 7, letterSpacing: '0.2em', textTransform: 'uppercase' }}>Scene actions</span>
+                <button type="button" role="menuitem" disabled={scenePremiumFrameCount === 0 || premiumRenderProgress !== null} onClick={() => { onSelectPremiumScene(scene); setSceneActionsOpen(false) }} style={{ border: 'none', borderRadius: 4, background: 'transparent', color: 'var(--text-base)', opacity: scenePremiumFrameCount === 0 ? 0.4 : 0.84, textAlign: 'left', padding: '7px 6px', fontSize: 9, cursor: scenePremiumFrameCount === 0 ? 'default' : 'pointer' }}>＋ Add {scenePremiumFrameCount} rendered frames from this scene</button>
+                <button type="button" role="menuitem" disabled={premiumSelectedCount === 0 || premiumRenderProgress !== null} onClick={() => { onClearPremiumSelection(); setSceneActionsOpen(false) }} style={{ border: 'none', borderRadius: 4, background: 'transparent', color: 'var(--text-base)', opacity: premiumSelectedCount === 0 ? 0.4 : 0.84, textAlign: 'left', padding: '7px 6px', fontSize: 9, cursor: premiumSelectedCount === 0 ? 'default' : 'pointer' }}>Clear selection across all scenes</button>
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 7, marginTop: 2 }}>
+                  <UpgradeStyleMenu currentStyle={projectRenderStyle} onSelect={handleUpgradeScene} loading={sceneUpgrading} label="Upgrade scene style" />
+                </div>
+              </div>
+            )}
+          </div>
           <button
             onClick={onOpenPlayer}
             className="text-[9px] tracking-widest uppercase text-[var(--text-base)]/40 hover:text-[var(--gold)] border border-[var(--border)] hover:border-[var(--gold)]/40 px-2 py-1 rounded transition-all"
@@ -144,7 +200,40 @@ export default function StoryboardCanvas({
         </div>
       </div>
 
-      {/* Frame grid — horizontal scroll, BMS-3 cursor tracking */}
+      {/* Cost and batch controls appear only while premium frames are selected. */}
+      {(premiumSelectedCount > 0 || premiumRenderProgress !== null) && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(90deg, rgba(201,168,76,0.08), var(--bg-base))' }}>
+          <div style={{ minWidth: 0 }}>
+            <div role="status" aria-live="polite" style={{ color: 'var(--gold)', fontSize: 9, letterSpacing: '0.08em' }}>
+              {premiumRenderProgress
+                ? `Rendering selected frames · ${premiumRenderProgress.completed}/${premiumRenderProgress.total}`
+                : `${premiumSelectedCount} frame${premiumSelectedCount === 1 ? '' : 's'} selected · Approx. ${premiumSelectedEstimate} USD`}
+            </div>
+            <div style={{ marginTop: 3, color: 'var(--text-muted)', opacity: 0.75, fontSize: 7 }}>
+              Output-only estimate at $0.0336 per image; prompt and reference input charges are excluded.
+            </div>
+            <div style={{ marginTop: 3, color: 'var(--text-muted)', opacity: 0.65, fontSize: 7 }}>
+              Add frames from other scenes to keep building this project-wide batch.
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, flexShrink: 0 }}>
+            <button
+              type="button"
+              disabled={premiumSelectedCount === 0 || premiumRenderProgress !== null}
+              onClick={onClearPremiumSelection}
+              style={{ border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text-muted)', cursor: premiumSelectedCount === 0 || premiumRenderProgress ? 'default' : 'pointer', fontSize: 8, padding: '6px 8px', opacity: premiumSelectedCount === 0 ? 0.45 : 0.85 }}
+            >Clear</button>
+            <button
+              type="button"
+              disabled={premiumSelectedCount === 0 || premiumRenderProgress !== null}
+              onClick={onRenderSelectedPremium}
+              className="btn-tactile"
+              style={{ border: '1px solid rgba(201,168,76,0.55)', borderRadius: 4, background: 'rgba(201,168,76,0.1)', color: 'var(--gold)', cursor: premiumSelectedCount === 0 || premiumRenderProgress ? 'default' : 'pointer', fontSize: 8, padding: '6px 9px', opacity: premiumSelectedCount === 0 || premiumRenderProgress ? 0.5 : 1, whiteSpace: 'nowrap' }}
+            >{premiumRenderProgress ? 'Rendering…' : `Render ${premiumSelectedCount} · ${premiumSelectedEstimate} · Paid`}</button>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-x-auto overflow-y-hidden">
         <div
           ref={scrollRef}
@@ -162,6 +251,12 @@ export default function StoryboardCanvas({
                 scene={scene}
                 allScenes={allScenes}
                 isSelected={selectedKeys.get(fk) ?? false}
+                isInspectorSelected={inspectorFrameKey === fk}
+                onSelectFrame={onSelectFrame}
+                compact
+                isPremiumSelected={premiumSelectedKeys.has(fk)}
+                onTogglePremiumSelect={onTogglePremiumSelect}
+                premiumSelectionDisabled={premiumRenderProgress !== null}
                 isFocused={focusedKey === fk}
                 onToggleSelect={onToggleSelect}
                 onReplaceImage={onReplaceImage}

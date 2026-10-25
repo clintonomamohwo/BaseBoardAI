@@ -9,6 +9,7 @@ import type {
   SceneContinuityReport,
   SceneQARequest,
   SpeciesProfile,
+  PhysicalForm,
   StoryboardFrame,
   StoryboardProject,
   StoryboardScene,
@@ -28,8 +29,10 @@ export interface CharacterPackageInput {
     distinct_markers: string | null
     fixed_seed_reference: number | null
   }
-  /** When set, the backend uses this as the base generation prompt verbatim
-   *  instead of auto-assembling one from facial_blueprint fields. */
+  species?: SpeciesProfile
+  physical_form?: PhysicalForm
+  /** When set, the backend adds this editable text while retaining structured
+   *  identity, species, physical-form anatomy, and marker details. */
   _canonical_prompt?: string | null
 }
 
@@ -547,8 +550,8 @@ export async function importCharacterAsset(
 }
 
 /** Write Identity + Species + Variants into the project CKG.
- *  Pass canonicalPrompt to persist a user-edited AI prompt verbatim so every
- *  subsequent image generation uses it instead of the auto-assembled summary. */
+ *  Pass canonicalPrompt to add user-edited prompt text; the backend retains
+ *  missing structured identity, species, anatomy and marker details as well. */
 export async function updateCKGIdentity(
   projectId: number,
   characterId: string,
@@ -556,6 +559,7 @@ export async function updateCKGIdentity(
   species: SpeciesProfile,
   variants: CharacterVariant[],
   canonicalPrompt?: string | null,
+  physicalForm?: PhysicalForm,
 ): Promise<{ character_id: string; appearance_summary: string; canonical_prompt: string }> {
   const res = await fetch(`${BASE_URL}/storyboard/ckg/update-identity`, {
     method: 'POST',
@@ -566,6 +570,7 @@ export async function updateCKGIdentity(
       identity,
       species,
       variants,
+      ...(physicalForm ? { physical_form: physicalForm } : {}),
       canonical_prompt: canonicalPrompt ?? null,
     }),
   })

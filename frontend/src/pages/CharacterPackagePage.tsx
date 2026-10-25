@@ -121,7 +121,20 @@ const DEFAULT_SPECIES: SpeciesProfile = {
 
 function buildEmptyPackage(char: CharacterProfile, renderStyle: RenderStyle): CharacterPackage {
   const fb = char.facial_blueprint
+  const species = char.species ?? DEFAULT_SPECIES
+  const physicalForm = char.physical_form ?? DEFAULT_PHYSICAL_FORM
+  const speciesLabel = species.species_id !== 'human' && species.label.toLowerCase() === 'human'
+    ? species.species_id.replace(/_/g, ' ')
+    : species.label
+  const anatomyPrefix = species.species_id !== 'human'
+    ? (physicalForm.form === 'humanoid' || physicalForm.form === 'custom'
+      ? `anthropomorphic ${speciesLabel.toLowerCase()} humanoid`
+      : `${speciesLabel.toLowerCase()} ${physicalForm.form} form`)
+    : (physicalForm.form !== 'humanoid' ? `${physicalForm.form} form` : '')
   const basePrompt = [
+    anatomyPrefix,
+    species.custom_notes ?? '',
+    physicalForm.custom_description ?? '',
     char.name,
     fb?.base_ethnicity_or_type,
     fb?.estimated_age ? `age ${fb.estimated_age}` : '',
@@ -156,8 +169,8 @@ function buildEmptyPackage(char: CharacterProfile, renderStyle: RenderStyle): Ch
     autoInitDone: false,
     // ── Character DNA System ─────────────────────────────────────────────
     identity: char.identity ?? null,
-    species: char.species ?? DEFAULT_SPECIES,
-    physicalForm: char.physical_form ?? DEFAULT_PHYSICAL_FORM,
+    species,
+    physicalForm,
     classification: char.classification ?? null,
     abilities: char.abilities ?? [],
     visualRules: char.visual_rules ?? [],
@@ -991,6 +1004,16 @@ export default function CharacterPackagePage({
   const pkgRef = useRef(pkg)
   pkgRef.current = pkg  // keep ref in sync on every render
 
+  function buildCharacterImageInput(canonicalPrompt = pkgRef.current.prompt) {
+    const current = pkgRef.current
+    return {
+      ...character,
+      species: current.species,
+      physical_form: current.physicalForm,
+      _canonical_prompt: canonicalPrompt,
+    }
+  }
+
   // Pre-populate loadedTabs for any section that already has images in the
   // initial pkg state (from autoInit or a previous session). This prevents
   // loadTab from firing API calls on tabs that don't need them after a
@@ -1054,7 +1077,7 @@ export default function CharacterPackagePage({
 
     try {
       const result = await generateCharacterPackage(
-        { ...character, _canonical_prompt: pkg.prompt },
+        buildCharacterImageInput(),
         AUTO_INIT_SECTIONS, effectiveStyle, pkg.starredImage,
       )
       setPkg(p => ({
@@ -1179,7 +1202,7 @@ export default function CharacterPackagePage({
     setLoading(section, true)
     try {
       const result = await generateCharacterPackage(
-        { ...character, _canonical_prompt: pkgRef.current.prompt },
+        buildCharacterImageInput(),
         [section], pkgRef.current.renderStyle,
       )
       setPkg(p => ({
@@ -1208,7 +1231,7 @@ export default function CharacterPackagePage({
         setLoading('portrait', true)
         try {
           const result = await generateCharacterPackage(
-            { ...character, _canonical_prompt: pkg.prompt },
+            buildCharacterImageInput(),
             ['portrait'], pkg.renderStyle, pkg.starredImage,
           )
           setPkg(p => ({ ...p, prompt: promptDraft, portrait: result['portrait'] as string | null }))
@@ -1275,7 +1298,7 @@ export default function CharacterPackagePage({
     setLoading(sectionKey, true)
     try {
       const url = await regenerateCharacterImage(
-        { ...character, _canonical_prompt: pkg.prompt },
+        buildCharacterImageInput(),
         sectionKey, pkg.renderStyle, pkg.starredImage,
       )
       const [topSection, subKey] = sectionKey.includes('/') ? sectionKey.split('/') : [sectionKey, null]
@@ -1332,7 +1355,7 @@ export default function CharacterPackagePage({
     setPkg(p => ({ ...p, fullPackLoading: true }))
     try {
       const result = await generateFullCharacterPack(
-        character, pkg.renderStyle,
+        buildCharacterImageInput(), pkg.renderStyle,
         ['turnaround_360', 'premium_poses', 'material_closeups'],
       )
       setPkg(p => ({
@@ -2191,6 +2214,7 @@ export default function CharacterPackagePage({
                       pkg.species,
                       pkg.variants,
                       promptDraft,
+                      pkg.physicalForm,
                     )
                     setPromptSaveState('saved')
                     setTimeout(() => setPromptSaveState('idle'), 2500)

@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { classifyError } from '../utils/classifyError'
 import type { RenderStyle, StoryboardFrame, StoryboardProject, StoryboardScene } from '../types/storyboard'
-import { forgePipeline, upgradeSceneStyle } from '../api/storyboard'
+import { forgePipeline, renderFrameImage, upgradeSceneStyle } from '../api/storyboard'
 import PipelineForm from '../components/PipelineForm'
 import EmptyBlueprintState from '../components/EmptyBlueprintState'
 import SceneIndex from '../components/SceneIndex'
@@ -14,6 +14,7 @@ import BatchExportBar from '../components/BatchExportBar'
 import ConstellationLoader from '../components/ConstellationLoader'
 import UpgradeStyleMenu from '../components/UpgradeStyleMenu'
 import { patchShotWithContinuityReview } from '../utils/shotContinuity'
+import { formatPremiumRenderOutputEstimate } from '../utils/premiumRenderEstimate'
 
 const RENDER_OPTIONS: { value: RenderStyle; label: string }[] = [
   { value: 'bw_sketch',   label: 'B&W Sketch' },
@@ -37,9 +38,18 @@ interface Props {
 export default function StudioPage({ initialProject, onProjectChange, onNotify }: Props) {
   const [project, setProject]           = useState<StoryboardProject | null>(initialProject ?? null)
   const projectRef = useRef(project)
-  projectRef.current = project
+  useEffect(() => {
+    projectRef.current = project
+  }, [project])
   const [activeScene, setActiveScene]   = useState<StoryboardScene | null>(null)
+  const [inspectedFrameKey, setInspectedFrameKey] = useState<string | null>(() => {
+    const firstScene = initialProject?.scenes[0]
+    const firstFrame = firstScene?.frames[0]
+    return firstScene && firstFrame ? `s${firstScene.scene_number}_f${firstFrame.frame_number}` : null
+  })
   const [selectedKeys, setSelectedKeys] = useState<Map<string, boolean>>(new Map())
+  const [premiumSelectedKeys, setPremiumSelectedKeys] = useState<Set<string>>(new Set())
+  const [premiumRenderProgress, setPremiumRenderProgress] = useState<{ completed: number; total: number } | null>(null)
   const [viewMode, setViewMode]         = useState<ViewMode>('storyboard')
   const [showForm, setShowForm]         = useState(false)
   const [referenceImage, setReferenceImage] = useState<string | null>(null)
@@ -124,9 +134,19 @@ export default function StudioPage({ initialProject, onProjectChange, onNotify }
     projectRef.current = updated
     setProject(updated)
     onProjectChange(updated)
+    setPremiumSelectedKeys(prev => new Set([...prev].filter(key => !key.startsWith(`s${sceneNumber}_f`))))
     if (activeScene?.scene_number === sceneNumber) {
-      setActiveScene(updated.scenes[0] ?? null)
+      const nextScene = updated.scenes[0] ?? null
+      setActiveScene(nextScene)
+      const nextFrame = nextScene?.frames[0]
+      setInspectedFrameKey(nextScene && nextFrame ? `s${nextScene.scene_number}_f${nextFrame.frame_number}` : null)
     }
+  }
+
+  function handleSelectScene(scene: StoryboardScene) {
+    setActiveScene(scene)
+    const firstFrame = scene.frames[0]
+    setInspectedFrameKey(firstFrame ? `s${scene.scene_number}_f${firstFrame.frame_number}` : null)
   }
 
   function handleReorderScenes(scenes: StoryboardScene[]) {
@@ -139,7 +159,11 @@ export default function StudioPage({ initialProject, onProjectChange, onNotify }
     setProject(p)
     onProjectChange(p, true)
     setActiveScene(p.scenes[0] ?? null)
+    const firstScene = p.scenes[0]
+    const firstFrame = firstScene?.frames[0]
+    setInspectedFrameKey(firstScene && firstFrame ? `s${firstScene.scene_number}_f${firstFrame.frame_number}` : null)
     setSelectedKeys(new Map())
+    setPremiumSelectedKeys(new Set())
     setViewMode('storyboard')
     setShowForm(false)
   }
@@ -204,13 +228,116 @@ export default function StudioPage({ initialProject, onProjectChange, onNotify }
     })
   }
 
+  function handleToggleFrameLock(frameNumber: number, fieldKey: string, locked: boolean) {
+    if (!displayScene) return
+    const frame = displayScene.frames.find(item => item.frame_number === frameNumber)
+    if (!frame) return
+    const existing = frame.locked_fields ?? []
+    const lockedFields = locked
+      ? [...new Set([...existing, fieldKey])]
+      : existing.filter(field => field !== fieldKey)
+    handleFrameUpdate(displayScene.scene_number, frameNumber, { locked_fields: lockedFields })
+  }
+
   const displayScene = activeScene ?? project?.scenes[0] ?? null
+  const inspectedFrame = displayScene?.frames.find(frame => `s${displayScene.scene_number}_f${frame.frame_number}` === inspectedFrameKey)
+    ?? displayScene?.frames[0]
+    ?? null
   const renderStyleLabel = project ? (RENDER_STYLE_LABELS[project.render_style] ?? project.render_style) : ''
   const lockedCount = [...selectedKeys.values()].filter(Boolean).length
+  const premiumSelectedCount = project
+    ? project.scenes.reduce((count, scene) => count + scene.frames.filter(frame => premiumSelectedKeys.has(`s${scene.scene_number}_f${frame.frame_number}`) && Boolean(frame.generated_image_url)).length, 0)
+    : 0
+  const premiumAvailableCount = project
+    ? project.scenes.reduce((count, scene) => count + scene.frames.filter(frame => Boolean(frame.generated_image_url)).length, 0)
+    : 0
+  const premiumSelectedEstimate = formatPremiumRenderOutputEstimate(premiumSelectedCount)
   // Frames the artist has manually overridden — protected from re-run
   const overrideCount = project
     ? project.scenes.reduce((sum, s) => sum + s.frames.filter(f => f.is_manual_override).length, 0)
     : 0
+
+  function handleTogglePremiumSelect(key: string) {
+    setPremiumSelectedKeys(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function handleSelectPremiumScene(scene: StoryboardScene) {
+    setPremiumSelectedKeys(prev => {
+      const next = new Set(prev)
+      for (const frame of scene.frames) {
+        if (frame.generated_image_url) next.add(`s${scene.scene_number}_f${frame.frame_number}`)
+      }
+      return next
+    })
+  }
+
+  function handleSelectAllPremiumFrames() {
+    if (!project || premiumRenderProgress) return
+    const allRenderedKeys = project.scenes.flatMap(scene => scene.frames.flatMap(frame =>
+      frame.generated_image_url ? [`s${scene.scene_number}_f${frame.frame_number}`] : []
+    ))
+    setPremiumSelectedKeys(new Set(allRenderedKeys))
+  }
+
+  function handleClearPremiumSelection() {
+    setPremiumSelectedKeys(new Set())
+  }
+
+  async function handleRenderSelectedPremium() {
+    const current = projectRef.current
+    if (!current || premiumRenderProgress) return
+
+    const selectedFrames = current.scenes.flatMap(scene => scene.frames.flatMap(frame => {
+      const key = `s${scene.scene_number}_f${frame.frame_number}`
+      if (!premiumSelectedKeys.has(key) || !frame.generated_image_url) return []
+      return [{ key, scene, frame, referenceImage: frame.generated_image_url }]
+    }))
+    if (selectedFrames.length === 0) return
+
+    const total = selectedFrames.length
+    const succeededKeys: string[] = []
+    let completed = 0
+    let firstError: string | null = null
+    setPremiumRenderProgress({ completed, total })
+
+    try {
+      for (const item of selectedFrames) {
+        try {
+          const result = await renderFrameImage(
+            item.frame,
+            item.scene,
+            current.render_style,
+            'premium',
+            item.referenceImage,
+          )
+          handleUpgradeFrame(item.scene.scene_number, item.frame.frame_number, result.generated_image_url)
+          succeededKeys.push(item.key)
+        } catch (error) {
+          firstError ??= error instanceof Error ? error.message : 'Unknown render error'
+        }
+        completed += 1
+        setPremiumRenderProgress({ completed, total })
+      }
+
+      if (succeededKeys.length > 0) {
+        const succeeded = new Set(succeededKeys)
+        setPremiumSelectedKeys(prev => new Set([...prev].filter(key => !succeeded.has(key))))
+      }
+      const failed = total - succeededKeys.length
+      if (failed > 0) {
+        onNotify?.(`Premium batch finished: ${succeededKeys.length}/${total} updated; ${failed} failed and remain selected to retry. ${firstError ?? ''}`.trim(), succeededKeys.length > 0 ? 'info' : 'error')
+      } else {
+        onNotify?.(`Premium batch complete — ${succeededKeys.length} frame${succeededKeys.length === 1 ? '' : 's'} updated.`, 'success')
+      }
+    } finally {
+      setPremiumRenderProgress(null)
+    }
+  }
 
   if (!project || showForm) {
     return (
@@ -249,6 +376,31 @@ export default function StudioPage({ initialProject, onProjectChange, onNotify }
           </button>
         ))}
         <div className="ml-auto flex items-center gap-3 pb-1">
+          {project && (
+            <>
+              {premiumSelectedCount > 0 && (
+                <span role="status" aria-live="polite" style={{ color: 'var(--gold)', fontSize: 8, whiteSpace: 'nowrap' }}>
+                  {premiumSelectedCount} selected · Approx. {premiumSelectedEstimate} USD
+                </span>
+              )}
+              <button
+                type="button"
+                title="Select every rendered frame across all scenes for the premium batch"
+                disabled={premiumAvailableCount === 0 || premiumSelectedCount === premiumAvailableCount || premiumRenderProgress !== null}
+                onClick={handleSelectAllPremiumFrames}
+                className="btn-tactile"
+                style={{ fontSize: 9, letterSpacing: '0.12em', color: 'var(--gold)', background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.28)', borderRadius: 4, padding: '5px 8px', cursor: premiumAvailableCount === 0 || premiumSelectedCount === premiumAvailableCount || premiumRenderProgress ? 'default' : 'pointer', opacity: premiumAvailableCount === 0 || premiumSelectedCount === premiumAvailableCount || premiumRenderProgress ? 0.45 : 0.9, whiteSpace: 'nowrap' }}
+              >Select all</button>
+              <button
+                type="button"
+                title="Clear the premium selection across all scenes"
+                disabled={premiumSelectedCount === 0 || premiumRenderProgress !== null}
+                onClick={handleClearPremiumSelection}
+                className="btn-tactile"
+                style={{ fontSize: 9, letterSpacing: '0.08em', color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, padding: '5px 8px', cursor: premiumSelectedCount === 0 || premiumRenderProgress ? 'default' : 'pointer', opacity: premiumSelectedCount === 0 || premiumRenderProgress ? 0.45 : 0.85, whiteSpace: 'nowrap' }}
+              >Clear selection</button>
+            </>
+          )}
           {project && <BatchExportBar project={project} scenes={project.scenes} selectedKeys={selectedKeys} onNotify={onNotify} />}
           {project && (
             <UpgradeStyleMenu
@@ -422,7 +574,7 @@ export default function StudioPage({ initialProject, onProjectChange, onNotify }
             <SceneIndex
               project={project}
               activeSceneNumber={displayScene?.scene_number ?? 0}
-              onSelectScene={setActiveScene}
+              onSelectScene={handleSelectScene}
               onDeleteScene={handleDeleteScene}
               onReorderScenes={handleReorderScenes}
             />
@@ -436,8 +588,19 @@ export default function StudioPage({ initialProject, onProjectChange, onNotify }
                   allScenes={project?.scenes ?? []}
                   renderStyleLabel={renderStyleLabel}
                   projectRenderStyle={project?.render_style}
+                  projectCanon={project?.canon ?? null}
                   selectedKeys={selectedKeys}
                   onToggleSelect={handleToggleSelect}
+                  inspectorFrameKey={inspectedFrameKey}
+                  onSelectFrame={setInspectedFrameKey}
+                  premiumSelectedKeys={premiumSelectedKeys}
+                  onTogglePremiumSelect={handleTogglePremiumSelect}
+                  premiumSelectedCount={premiumSelectedCount}
+                  premiumSelectedEstimate={premiumSelectedEstimate}
+                  premiumRenderProgress={premiumRenderProgress}
+                  onSelectPremiumScene={handleSelectPremiumScene}
+                  onClearPremiumSelection={handleClearPremiumSelection}
+                  onRenderSelectedPremium={handleRenderSelectedPremium}
                   onOpenPlayer={() => setViewMode('player')}
                   onReplaceImage={handleReplaceFrameImage}
                   onVisualActionUpdate={handleVisualActionUpdate}
@@ -521,6 +684,9 @@ export default function StudioPage({ initialProject, onProjectChange, onNotify }
               <div style={{ flex: 1, overflowY: 'auto', paddingLeft: 28 }}>
                 <StudioInspector
                   scene={displayScene}
+                  frame={inspectedFrame}
+                  onFrameUpdate={handleFrameUpdate}
+                  onToggleLock={handleToggleFrameLock}
                   onReferenceChange={setReferenceImage}
                   canon={project?.canon ?? null}
                   referenceImage={referenceImage}

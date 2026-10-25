@@ -4,12 +4,12 @@ Prompt Builder — Structured cinematic prompt assembly.
 Replaces the inline string concatenation in image.py with a single, ordered
 assembly function that incorporates all Director Engine metadata:
   1. Style prefix (render mode)
-  2. Shot type + composition descriptor
-  3. Action breakdown
-  4. Lens + depth style (from Lens Planner)
-  5. Scene-type modifier
-  6. Lighting notes
-  7. Character appearance constraints (from Project Canon, if provided)
+  2. Species/anatomy and character appearance constraints (from Project Canon)
+  3. Shot type + composition descriptor
+  4. Action breakdown
+  5. Lens + depth style (from Lens Planner)
+  6. Scene-type modifier
+  7. Lighting notes
   8. Negative constraints (B&W styles)
   9. URL-safe 500-character cap
 
@@ -118,6 +118,7 @@ def _get_lens_suffix(frame: "StoryboardFrameBase") -> str:
 def _get_canon_constraints(
     char_ids_in_action: list[str],
     canon_context: dict[str, Any] | None,
+    character_names: list[str] | None = None,
 ) -> str:
     """
     Build a character appearance constraint string from the CKG.
@@ -126,25 +127,64 @@ def _get_canon_constraints(
       1. CKG character_identities[char_id]._canonical_prompt  (identity-system-derived)
       2. CKG approved_characters[char_id].appearance_summary  (backwards-compat flat summary)
 
-    Only returns constraints for characters that appear in this frame's action text.
+    Resolves IDs from the action text and names from characters_present.
     """
-    if not canon_context or not char_ids_in_action:
+    if not canon_context:
         return ""
 
     identities = canon_context.get("character_identities", {})
     approved   = canon_context.get("approved_characters", {})
+    species_map = canon_context.get("character_species", {})
+    candidate_ids = list(dict.fromkeys(char_ids_in_action))
+    requested_names = {name.strip().casefold() for name in (character_names or []) if name.strip()}
+
+    if requested_names:
+        for char_id, character_data in {**approved, **identities}.items():
+            if not isinstance(character_data, dict):
+                continue
+            name = str(character_data.get("name") or "").strip().casefold()
+            if name in requested_names and char_id not in candidate_ids:
+                candidate_ids.append(char_id)
 
     constraints: list[str] = []
-    for char_id in char_ids_in_action:
+    for char_id in candidate_ids:
         # Prefer the richer identity-system canonical prompt
         if char_id in identities:
             prompt = identities[char_id].get("_canonical_prompt") or identities[char_id].get("face_description") or ""
-            if prompt:
-                constraints.append(prompt)
-                continue
+        else:
+            prompt = ""
         # Fall back to flat approved_characters summary
-        if char_id in approved:
-            constraints.append(approved[char_id].get("appearance_summary", ""))
+        if not prompt and char_id in approved:
+            prompt = approved[char_id].get("appearance_summary", "")
+
+        species_data = species_map.get(char_id, {}) if isinstance(species_map, dict) else {}
+        if isinstance(species_data, dict) and species_data:
+            from app.core.identity_system import build_species_anatomy_prefix
+
+            physical_form = species_data.get("physical_form") or {}
+            if not isinstance(physical_form, dict):
+                physical_form = {}
+            anatomy_prefix = build_species_anatomy_prefix(
+                species_id=str(species_data.get("species_id") or "human"),
+                species_label=species_data.get("label"),
+                species_custom_notes=species_data.get("custom_notes"),
+                physical_form=str(physical_form.get("form") or "humanoid"),
+                physical_form_description=physical_form.get("custom_description"),
+                limb_count=physical_form.get("limb_count"),
+                has_wings=bool(physical_form.get("has_wings")),
+                has_tail=bool(physical_form.get("has_tail")),
+            )
+            if anatomy_prefix:
+                lower_prompt = str(prompt).casefold()
+                missing_anatomy = [
+                    part.strip() for part in anatomy_prefix.split(",")
+                    if part.strip() and part.strip().casefold() not in lower_prompt
+                ]
+                if missing_anatomy:
+                    prompt = f"{', '.join(missing_anatomy)}, {prompt}" if prompt else ", ".join(missing_anatomy)
+
+        if prompt:
+            constraints.append(str(prompt))
 
     return ", ".join(c for c in constraints if c)
 
@@ -198,8 +238,8 @@ def build_frame_prompt(
     Assemble a complete image generation prompt for a storyboard frame.
 
     Assembly order:
-      [style_prefix] [shot_type], [camera_angle]. [scene_type_modifier]
-      [lens_suffix][action_breakdown]. [lighting_notes][canon_constraints]
+      [style_prefix] [canon_constraints] [shot_type], [camera_angle].
+      [scene_type_modifier][lens_suffix][action_breakdown]. [lighting_notes]
       [negatives]
 
     Capped at _MAX_PROMPT_LENGTH characters.
@@ -208,10 +248,32 @@ def build_frame_prompt(
     scene_mod    = _SCENE_TYPE_MODIFIERS.get(scene_type, "")
     lens_suffix  = _get_lens_suffix(frame)
 
-    # Detect any CHAR_ID tokens in the action text for canon lookup
-    char_ids = re.findall(r"\bCHAR_[A-Z]+\b", frame.action_breakdown or "")
-    canon_str   = _get_canon_constraints(char_ids, canon_context)
+    # Detect any CHAR_ID tokens in action text; names are resolved from the
+    # frame's explicit characters_present list as a reliable fallback.
+    action_text = getattr(frame, "visual_action", None) or getattr(frame, "action_breakdown", "")
+    char_ids = re.findall(r"\bCHAR_[A-Z0-9_]+\b", action_text or "")
+    canon_str   = _get_canon_constraints(char_ids, canon_context, getattr(frame, "characters_present", None))
     ability_str = _get_ability_modifiers(char_ids, canon_context)
+
+    # Scene and frame metadata must be part of the same prompt that is sent to
+    # the image provider, not inferred later by continuity QA.
+    prompt_context: list[str] = []
+    location_heading = getattr(scene, "location_heading", None)
+    if location_heading:
+        prompt_context.append(f"Location: {location_heading}")
+    time_of_day = getattr(scene, "time_of_day", None)
+    if time_of_day:
+        prompt_context.append(f"Time of day: {time_of_day}")
+    character_names = [str(name).strip() for name in (getattr(frame, "characters_present", None) or []) if str(name).strip()]
+    if character_names:
+        prompt_context.append(f"Characters: {', '.join(character_names)}")
+    lighting_notes = getattr(frame, "lighting_notes", None)
+    if lighting_notes:
+        prompt_context.append(f"Lighting: {lighting_notes}")
+    context_prefix = ". ".join(prompt_context)
+    if context_prefix:
+        context_prefix += ". "
+
     continuity_parts: list[str] = []
     if getattr(frame, "action_pose", None):
         continuity_parts.append(f"end pose: {frame.action_pose}")
@@ -224,19 +286,17 @@ def build_frame_prompt(
     if getattr(frame, "continuity_notes", None):
         continuity_parts.append(f"continuity: {frame.continuity_notes}")
 
-    body = (
+    body = context_prefix + (
+        f"{canon_str}. " if canon_str else ""
+    ) + (
         f"{frame.shot_type}, {frame.camera_angle}. "
         f"{scene_mod}"
         f"{lens_suffix}"
-        f"{frame.action_breakdown}. "
-        f"{' '.join(continuity_parts)}. "
-        f"{frame.lighting_notes}"
+        f"{action_text}. "
+        f"{' '.join(continuity_parts)}."
     )
     if ability_str:
         body += f", {ability_str}"
-    if canon_str:
-        body += f", {canon_str}"
-
     # Append B&W negative constraints via lookup (no chained if/elif needed)
     _NEGATIVES: dict[str, str] = {
         "bw_sketch":   _BW_SKETCH_NEGATIVES,

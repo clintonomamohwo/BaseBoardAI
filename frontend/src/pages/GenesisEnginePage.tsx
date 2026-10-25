@@ -11,6 +11,11 @@ import logoSrc from '../assets/logo.png'
 import type { RenderStyle, StoryboardProject, StoryboardScene, StoryDevelopmentDraft } from '../types/storyboard'
 import { forgePipelineStream } from '../api/storyboard'
 import { extractDocumentText } from '../utils/extractDocumentText'
+import {
+  estimateRemainingImageTime,
+  formatElapsedTime,
+  formatRemainingTimeRange,
+} from '../utils/genesisTimeEstimate'
 import type { DirectorStyle } from './NewProjectPage'
 
 interface TaskDef {
@@ -75,7 +80,29 @@ export default function GenesisEnginePage({
   const [statusLine,  setStatusLine]  = useState('Genesis Engine initialising…')
   const [imagesDone,  setImagesDone]  = useState(0)
   const [imagesTotal, setImagesTotal] = useState(0)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [imageElapsedSeconds, setImageElapsedSeconds] = useState(0)
+  const [imageStageStarted, setImageStageStarted] = useState(false)
+  const [imageStageDone, setImageStageDone] = useState(false)
   const ran = useRef(false)
+  const startedAt = useRef<number | null>(null)
+  const imageStartedAt = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!started || countdown !== null || error) return
+    const updateElapsed = () => {
+      const now = performance.now()
+      if (startedAt.current !== null) {
+        setElapsedSeconds(Math.floor((now - startedAt.current) / 1000))
+      }
+      if (imageStartedAt.current !== null) {
+        setImageElapsedSeconds(Math.floor((now - imageStartedAt.current) / 1000))
+      }
+    }
+    updateElapsed()
+    const timer = window.setInterval(updateElapsed, 1000)
+    return () => window.clearInterval(timer)
+  }, [countdown, error, started])
 
   // Map SSE stage names → task card IDs that should flip to done
   const STAGE_TASKS: Record<string, string[]> = {
@@ -107,6 +134,7 @@ export default function GenesisEnginePage({
   }
 
   async function runGenesis() {
+    startedAt.current = performance.now()
     setStarted(true)
 
     let docText = ''
@@ -137,6 +165,12 @@ export default function GenesisEnginePage({
         },
         (ev) => {
           if (ev.event === 'stage_start') {
+            if (ev.stage === 'images') {
+              imageStartedAt.current = performance.now()
+              setImageElapsedSeconds(0)
+              setImageStageStarted(true)
+              setImageStageDone(false)
+            }
             const tasks = STAGE_TASKS[ev.stage] ?? []
             markRunning(tasks)
             const labels: Record<string, string> = {
@@ -148,6 +182,9 @@ export default function GenesisEnginePage({
             setStatusLine(labels[ev.stage] ?? `Running ${ev.stage}…`)
             if (ev.stage === 'images') setImagesTotal(ev.total ?? 0)
           } else if (ev.event === 'stage_done') {
+            if (ev.stage === 'images' || ev.stage === 'images_skipped') {
+              setImageStageDone(true)
+            }
             const tasks = STAGE_TASKS[ev.stage] ?? []
             markDone(tasks)
             if (ev.stage === 'chars')
@@ -226,6 +263,7 @@ export default function GenesisEnginePage({
 
   const totalDone  = Object.values(taskStatus).filter(s => s === 'done').length
   const overallPct = Math.round((totalDone / TASKS.length) * 100)
+  const remainingEstimate = estimateRemainingImageTime(imageElapsedSeconds, imagesDone, imagesTotal)
 
   /** Resolve a task's display label — appends real counts once the pipeline resolves */
   function resolveLabel(task: TaskDef): string {
@@ -334,6 +372,23 @@ export default function GenesisEnginePage({
                   transition: 'width 200ms ease',
                 }} />
               </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 8, fontSize: 10, color: 'var(--text-muted)' }}>
+                <span>Elapsed {formatElapsedTime(elapsedSeconds)}</span>
+                <span style={{ color: 'var(--gold)', textAlign: 'right' }}>
+                  {remainingEstimate
+                    ? `Approx. ${formatRemainingTimeRange(remainingEstimate)} remaining`
+                    : imageStageDone || (imagesTotal > 0 && imagesDone >= imagesTotal)
+                    ? 'Finishing up…'
+                    : imageStageStarted
+                    ? 'Estimating image time…'
+                    : 'Estimate starts during image rendering'}
+                </span>
+              </div>
+              {remainingEstimate && (
+                <p style={{ margin: '4px 0 0', fontSize: 9, color: 'var(--text-muted)', textAlign: 'right' }}>
+                  Rough estimate from completed images; rendering pace can vary.
+                </p>
+              )}
             </div>
 
             {/* 2-column task grid */}

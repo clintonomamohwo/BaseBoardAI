@@ -74,6 +74,7 @@ from app.schemas.storyboard import (
     WorldBibleImportResult,
 )
 from app.core.identity_system import (
+    build_species_anatomy_prefix,
     build_identity_prompt,
     compute_qa_score,
     compute_scene_continuity,
@@ -87,7 +88,7 @@ from app.core.llm import (
     invoke_world_stage,
     invoke_storyboard_stage,
 )
-from app.core.image import generate_frame_image, generate_image, _generate_pollinations, _strip_data_url_header
+from app.core.image import _build_image_prompt, generate_frame_image, generate_image, _generate_pollinations, _strip_data_url_header
 from app.core.director_engine import direct_storyboard
 from app.core.continuity_engine import scan_continuity_impact
 from app.core.lens_planner import assign_lens, detect_scene_type
@@ -220,46 +221,58 @@ _MATERIAL_CLOSEUPS = [
 ]
 
 
+def _prompt_with_profile_parts(profile_parts: list[str | None], custom_prompt: str | None) -> str:
+    """Keep structured character identity details alongside user-edited prompt text."""
+    required = [str(part).strip() for part in profile_parts if part and str(part).strip()]
+    custom = str(custom_prompt or "").strip()
+    if not custom:
+        return ", ".join(required)
+
+    custom_lower = custom.casefold()
+    missing = [part for part in required if part.casefold() not in custom_lower]
+    return ", ".join([*missing, custom]) if missing else custom
+
+
 def _char_base_desc(char_data: dict) -> str:
     """Build a consistent base description for character image prompts.
 
-    Priority:
-      1. _canonical_prompt — user-edited or CKG-derived species-first prompt (highest fidelity)
-      2. Auto-assembled species-first description using Identity System structured fields
-      3. Flat FacialBlueprint fallback for legacy characters with no DNA data
-
-    Species and physical_form are always front-loaded so image models cannot
-    default to a human interpretation for non-human characters.
+    Structured species and physical-form constraints always come first. The
+    canonical prompt supplements identity details; it cannot override anatomy.
     """
-    if canonical := char_data.get("_canonical_prompt"):
-        return str(canonical)
-
     name = char_data.get("name", "character")
     fb   = char_data.get("facial_blueprint", {})
 
-    # ── Species-first prefix ──────────────────────────────────────────────────
     species_data   = char_data.get("species") or {}
     physical_data  = char_data.get("physical_form") or {}
     species_id     = (species_data.get("species_id") or "human") if isinstance(species_data, dict) else "human"
-    species_label  = (species_data.get("label") or "Human") if isinstance(species_data, dict) else "Human"
+    species_label  = (species_data.get("label") or "") if isinstance(species_data, dict) else ""
     species_custom = (species_data.get("custom_notes") or None) if isinstance(species_data, dict) else None
     physical_form  = (physical_data.get("form") or "humanoid") if isinstance(physical_data, dict) else "humanoid"
+    species_prefix = build_species_anatomy_prefix(
+        species_id=species_id,
+        species_label=species_label or None,
+        species_custom_notes=species_custom,
+        physical_form=physical_form,
+        physical_form_description=(physical_data.get("custom_description") if isinstance(physical_data, dict) else None),
+        limb_count=(physical_data.get("limb_count") if isinstance(physical_data, dict) else None),
+        has_wings=bool(physical_data.get("has_wings")) if isinstance(physical_data, dict) else False,
+        has_tail=bool(physical_data.get("has_tail")) if isinstance(physical_data, dict) else False,
+    )
 
-    species_prefix_parts: list[str] = []
-    if species_id != "human":
-        # Prepend "anthropomorphic" for non-human humanoid forms
-        if physical_form in ("humanoid", "custom"):
-            species_prefix_parts.append("anthropomorphic")
-        species_prefix_parts.append(species_label.lower())
-        if physical_form not in ("humanoid", "custom"):
-            species_prefix_parts.append(physical_form)
-        species_prefix_parts.append("humanoid")
+    canonical = str(char_data.get("_canonical_prompt") or "").strip()
+    if canonical.casefold().startswith(name.casefold()):
+        canonical = canonical[len(name):].lstrip(" ,:—-")
+    canonical = ", ".join(
+        part.strip() for part in canonical.split(",")
+        if part.strip() and part.strip().casefold() != name.casefold()
+    )
+    if canonical and species_prefix:
+        canonical_lower = canonical.casefold()
+        species_prefix = ", ".join(
+            part.strip() for part in species_prefix.split(",")
+            if part.strip() and part.strip().casefold() not in canonical_lower
+        )
 
-    species_prefix = " ".join(p for p in species_prefix_parts if p).strip()
-    if species_custom:
-        species_prefix = f"{species_prefix}, {species_custom}" if species_prefix else species_custom
-
-    # ── Core identity fields ──────────────────────────────────────────────────
     ethnicity = fb.get("base_ethnicity_or_type", "")
     core_parts = [
         f"{ethnicity} inspired" if (ethnicity and species_id != "human") else ethnicity,
@@ -268,11 +281,12 @@ def _char_base_desc(char_data: dict) -> str:
         fb.get("distinct_markers", "") or "",
         char_data.get("wardrobe_defaults", ""),
     ]
-    core_summary = ", ".join(p for p in core_parts if p)
+    core_summary = (
+        _prompt_with_profile_parts(core_parts, canonical)
+        if canonical else ", ".join(p for p in core_parts if p)
+    )
 
-    if species_prefix:
-        return f"{name}, {species_prefix}, {core_summary}" if core_summary else f"{name}, {species_prefix}"
-    return f"{name}, {core_summary}" if core_summary else name
+    return ", ".join(part for part in (species_prefix, name, core_summary) if part)
 
 
 def _pkg_prompt(base: str, view_desc: str, render_style: str) -> str:
@@ -550,28 +564,18 @@ def _build_canon(
         species_id = (char.species.species_id if char.species else None) or "human"
         species_label = char.species.label if char.species else "Human"
         species_custom = char.species.custom_notes if char.species else None
-        physical_form = char.physical_form.form if char.physical_form else "humanoid"
-
-        # Build species prefix: always front-load what the character IS
-        # so image models cannot default to a human interpretation.
-        species_prefix_parts: list[str] = []
-        if physical_form and physical_form not in ("humanoid", "custom"):
-            species_prefix_parts.append(physical_form)
-        if species_id != "human":
-            species_prefix_parts.append(species_label.lower())
-        if physical_form == "humanoid" and species_id != "human":
-            species_prefix_parts.append("humanoid")
-        elif physical_form not in ("humanoid", "custom") and species_id != "human":
-            species_prefix_parts.append("humanoid")  # anthropomorphic
-        # Prepend "anthropomorphic" when a non-human species is humanoid-form
-        if species_id != "human" and physical_form in ("humanoid", "custom"):
-            species_prefix_parts.insert(0, "anthropomorphic")
-
-        species_prefix = " ".join(p for p in species_prefix_parts if p).strip()
-
-        # Append custom species notes (e.g. "giant tortoise shell, scaled skin, beak")
-        if species_custom:
-            species_prefix = f"{species_prefix}, {species_custom}" if species_prefix else species_custom
+        physical_form_data = char.physical_form.model_dump() if char.physical_form else {"form": "humanoid"}
+        physical_form = physical_form_data.get("form") or "humanoid"
+        species_prefix = build_species_anatomy_prefix(
+            species_id=species_id,
+            species_label=species_label,
+            species_custom_notes=species_custom,
+            physical_form=physical_form,
+            physical_form_description=physical_form_data.get("custom_description"),
+            limb_count=physical_form_data.get("limb_count"),
+            has_wings=bool(physical_form_data.get("has_wings")),
+            has_tail=bool(physical_form_data.get("has_tail")),
+        )
 
         # Core identity fields (after species, so species is never buried)
         core_parts = [
@@ -632,9 +636,15 @@ def _build_canon(
 
         # ── Species node ───────────────────────────────────────────────────
         if char.species is not None:
-            character_species_map[char.id] = char.species.model_dump()
+            character_species_map[char.id] = {
+                **char.species.model_dump(),
+                "physical_form": physical_form_data,
+            }
         else:
-            character_species_map[char.id] = {"species_id": "human", "label": "Human", "custom_notes": None}
+            character_species_map[char.id] = {
+                "species_id": "human", "label": "Human", "custom_notes": None,
+                "physical_form": physical_form_data,
+            }
 
         # ── Variants node ──────────────────────────────────────────────────
         if char.variants:
@@ -1871,12 +1881,27 @@ def scene_qa_continuity(payload: SceneQARequest) -> SceneContinuityReport:
       - Continuity groups
       - Scene-level overall score + summary
     """
+    frames = payload.frames
+    if payload.scene_data is not None:
+        scene_frames = {frame.frame_number: frame for frame in payload.scene_data.frames}
+        frames = [
+            frame.model_copy(update={
+                "generated_prompt": _build_image_prompt(
+                    scene_frames[frame.frame_number],
+                    payload.scene_data,
+                    payload.render_style,
+                    payload.canon_context,
+                )
+            }) if frame.frame_number in scene_frames else frame
+            for frame in payload.frames
+        ]
+
     return compute_scene_continuity(
         scene_number=payload.scene_number,
         location_heading=payload.location_heading,
         time_of_day=payload.time_of_day,
         environmental_type=payload.environmental_type,
-        frames=payload.frames,
+        frames=frames,
     )
 
 
@@ -1989,22 +2014,27 @@ def ckg_update_identity(payload: CKGUpdateIdentityRequest, db: DbSession) -> dic
     # Write identity, species, variants nodes
     identity_dict = payload.identity.model_dump()
 
-    # If the user supplied an explicit canonical prompt (from the AI Prompt tab),
-    # embed it directly so the Prompt Builder uses it verbatim for every
-    # subsequent image generation.  Otherwise fall back to the auto-assembled
-    # appearance summary derived from the structured identity fields.
-    if payload.canonical_prompt:
-        identity_dict["_canonical_prompt"] = payload.canonical_prompt.strip()
-
     ckg.character_identities[payload.character_id] = identity_dict
-    ckg.character_species[payload.character_id] = payload.species.model_dump()
+    ckg.character_species[payload.character_id] = {
+        **payload.species.model_dump(),
+        "physical_form": payload.physical_form.model_dump(),
+    }
     ckg.character_variants[payload.character_id] = [v.model_dump() for v in payload.variants]
 
     # Build the auto-assembled appearance summary (always kept in sync for
     # backwards-compat and as a fallback when no explicit prompt is set).
     identity = payload.identity
-    species_data = get_species(payload.species.species_id)
-    species_prefix = species_data.get("prompt_prefix", "").rstrip(", ")
+    physical_form_data = payload.physical_form.model_dump()
+    species_prefix = build_species_anatomy_prefix(
+        species_id=payload.species.species_id,
+        species_label=payload.species.label,
+        species_custom_notes=payload.species.custom_notes,
+        physical_form=physical_form_data.get("form") or "humanoid",
+        physical_form_description=physical_form_data.get("custom_description"),
+        limb_count=physical_form_data.get("limb_count"),
+        has_wings=bool(physical_form_data.get("has_wings")),
+        has_tail=bool(physical_form_data.get("has_tail")),
+    )
 
     parts = [p for p in [
         species_prefix if species_prefix else None,
@@ -2019,9 +2049,13 @@ def ckg_update_identity(payload: CKGUpdateIdentityRequest, db: DbSession) -> dic
     ] if p]
     appearance_summary = ", ".join(parts)
 
-    # The canonical_prompt stored in approved_characters is what the Prompt
-    # Builder reads first.  Use the explicit user prompt when provided.
-    effective_prompt = payload.canonical_prompt.strip() if payload.canonical_prompt else appearance_summary
+    # A custom AI Prompt can add outfit/prop direction, but must not replace
+    # the structured character identity, species, anatomy, or distinct markers.
+    effective_prompt = _prompt_with_profile_parts(
+        appearance_summary.split(","), payload.canonical_prompt
+    )
+    identity_dict["_canonical_prompt"] = effective_prompt
+    ckg.character_identities[payload.character_id] = identity_dict
 
     if payload.character_id in ckg.approved_characters:
         ckg.approved_characters[payload.character_id]["appearance_summary"] = appearance_summary

@@ -430,6 +430,100 @@ def get_species(species_id: str, label: str | None = None, custom_notes: str | N
     }
 
 
+def build_species_anatomy_prefix(
+    species_id: str,
+    species_label: str | None = None,
+    species_custom_notes: str | None = None,
+    physical_form: str = "humanoid",
+    physical_form_description: str | None = None,
+    limb_count: int | None = None,
+    has_wings: bool = False,
+    has_tail: bool = False,
+) -> str:
+    """Return concise, species-first anatomy constraints for image prompts."""
+    sid = species_id.lower().strip() if species_id else DEFAULT_SPECIES_ID
+    form = physical_form.lower().strip() if physical_form else "humanoid"
+    label_for_lookup = species_label
+    if sid != "human" and label_for_lookup and label_for_lookup.casefold() == "human":
+        label_for_lookup = None
+    profile = get_species(sid, label=label_for_lookup, custom_notes=species_custom_notes)
+    display = (species_label or profile.get("label") or sid.replace("_", " ")).strip()
+    if sid != "human" and display.casefold() == "human":
+        profile_label = str(profile.get("label") or "").strip()
+        display = profile_label if profile_label.casefold() != "human" else sid.replace("_", " ")
+
+    if sid == "human" and form == "humanoid":
+        return ""
+
+    if sid != "human" and form in ("humanoid", "custom"):
+        lead = f"anthropomorphic {display.lower()} humanoid"
+    else:
+        lead = f"{display.lower()} {form} form"
+
+    parts = [lead]
+    profile_prefix = str(profile.get("prompt_prefix") or "").strip(" ,")
+    profile_parts = [part.strip() for part in profile_prefix.split(",") if part.strip()]
+    if profile_parts and profile_parts[0].casefold() == lead.casefold():
+        profile_parts = profile_parts[1:]
+    elif form not in ("humanoid", "custom") and profile_parts and profile_parts[0].casefold().startswith("anthropomorphic "):
+        profile_parts = profile_parts[1:]
+
+    # Real-animal registry prompts describe quadrupeds by default. Keep their
+    # coat, face and species markers for an anthro form, but not four-leg rules.
+    if form in ("humanoid", "custom"):
+        profile_parts = [
+            part for part in profile_parts
+            if not any(term in part.casefold() for term in ("four-legged", "four legs", "4 legs", "quadruped"))
+        ]
+
+    for detail in profile_parts:
+        if detail.casefold() not in ", ".join(parts).casefold():
+            parts.append(detail)
+
+    custom_notes = (species_custom_notes or "").strip()
+    if custom_notes and custom_notes.casefold() not in ", ".join(parts).casefold():
+        parts.append(custom_notes)
+
+    anatomy_text = " ".join([
+        sid,
+        display,
+        str(profile.get("anatomy_notes") or ""),
+        profile_prefix,
+        custom_notes,
+    ]).casefold()
+    animal_like = sid in ANIMAL_REGISTRY or sid in {"wolf", "tortoise", "hare", "panther", "bear", "fox"}
+    animal_like = animal_like or any(
+        marker in anatomy_text
+        for marker in ("animal", "fur", "feather", "snout", "beak", "canine", "feline", "reptilian", "ursine", "shell")
+    )
+    if animal_like and form in ("humanoid", "custom"):
+        animal_face = "distinct species-specific animal head and face, not a human face or an animal costume"
+        if animal_face.casefold() not in ", ".join(parts).casefold():
+            parts.append(animal_face)
+
+    for feature in profile.get("required_features", []):
+        feature_text = str(feature).strip()
+        if not feature_text:
+            continue
+        if form in ("humanoid", "custom") and any(
+            term in feature_text.casefold() for term in ("four-legged", "four legs", "4 legs", "quadruped")
+        ):
+            continue
+        if feature_text.casefold() not in ", ".join(parts).casefold():
+            parts.append(f"visible {feature_text}")
+
+    if physical_form_description:
+        parts.append(physical_form_description.strip())
+    if limb_count is not None:
+        parts.append(f"{limb_count} limbs")
+    if has_wings:
+        parts.append("wings present")
+    if has_tail and "tail" not in ", ".join(parts).casefold():
+        parts.append("tail present")
+
+    return ", ".join(part for part in parts if part)
+
+
 # ---------------------------------------------------------------------------
 # Classification → Director Engine shot hints
 # ---------------------------------------------------------------------------

@@ -1050,21 +1050,20 @@ class CKGUpdateIdentityRequest(BaseModel):
     Payload for POST /storyboard/ckg/update-identity.
 
     Writes a CharacterIdentity into the CKG for a project.
-    When canonical_prompt is provided it is stored verbatim as the
-    _canonical_prompt / canonical_prompt used by the Prompt Builder for
-    every subsequent image generation, overriding the auto-assembled summary.
+    When canonical_prompt is provided, it supplements the structured identity,
+    species, anatomy, and marker details used by the Prompt Builder.
     """
     project_id: int
     character_id: str
     identity: CharacterIdentity
     species: SpeciesProfile = Field(default_factory=lambda: SpeciesProfile())  # pyright: ignore[reportCallIssue]
+    physical_form: PhysicalForm = Field(default_factory=lambda: PhysicalForm())  # pyright: ignore[reportCallIssue]
     variants: list[CharacterVariant] = Field(default_factory=list)
     canonical_prompt: str | None = Field(
         None,
-        description="Explicit prompt text set by the user on the AI Prompt tab. "
-                    "When present, overrides the auto-assembled appearance summary "
-                    "in both character_identities._canonical_prompt and "
-                    "approved_characters.canonical_prompt."
+        description="Editable prompt text set by the user on the AI Prompt tab. "
+                    "When present, it is combined with missing structured identity, "
+                    "species, anatomy, and marker details in both canonical prompts."
     )
 
 
@@ -1158,6 +1157,15 @@ class SceneQARequest(BaseModel):
     location_heading: str
     time_of_day: str
     environmental_type: str = "Interior"
+    scene_data: ScriptSceneBase | None = Field(
+        None,
+        description="Current scene and frame data used by the shared image-prompt builder for accurate QA.",
+    )
+    render_style: str = Field("bw_sketch", description="Render style used by the image-prompt builder")
+    canon_context: dict[str, Any] | None = Field(
+        None,
+        description="Project canon used by the image-prompt builder, when available.",
+    )
     frames: list[FrameExpectedContext] = Field(
         description="All frames in the scene, each carrying its expected context + generated prompt"
     )

@@ -24,6 +24,9 @@ interface Props {
   label?: string
   /** If true, renders as a compact icon button */
   compact?: boolean
+  /** Align the floating preset panel toward the available side of the viewport. */
+  align?: 'left' | 'right'
+  placement?: 'above' | 'below'
 }
 
 const TIER_COLORS: Record<string, string> = {
@@ -34,7 +37,7 @@ const TIER_COLORS: Record<string, string> = {
 }
 
 export default function UpgradeStyleMenu({
-  currentStyle, onSelect, loading = false, label = 'Upgrade Style ▾', compact = false,
+  currentStyle, onSelect, loading = false, label = 'Upgrade Style ▾', compact = false, align = 'right', placement = 'below',
 }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -87,8 +90,10 @@ export default function UpgradeStyleMenu({
         <div
           style={{
             position: 'absolute',
-            top: 'calc(100% + 4px)',
-            right: 0,
+            top: placement === 'below' ? 'calc(100% + 4px)' : undefined,
+            bottom: placement === 'above' ? 'calc(100% + 4px)' : undefined,
+            left: align === 'left' ? 0 : undefined,
+            right: align === 'right' ? 0 : undefined,
             zIndex: 9999,
             width: 280,
             background: 'var(--bg-surface)',

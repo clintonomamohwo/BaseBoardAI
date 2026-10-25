@@ -1,4 +1,5 @@
-import { useRef, useState, useMemo } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import type { StoryboardFrame, StoryboardScene } from '../types/storyboard'
 import { downloadFramePng } from '../utils/exportFrames'
 import { resolveFrameContinuityInputs } from '../utils/shotContinuity'
@@ -11,6 +12,12 @@ interface Props {
   scene: StoryboardScene
   allScenes?: StoryboardScene[]
   isSelected: boolean
+  isPremiumSelected?: boolean
+  onTogglePremiumSelect?: (key: string) => void
+  premiumSelectionDisabled?: boolean
+  compact?: boolean
+  isInspectorSelected?: boolean
+  onSelectFrame?: (key: string) => void
   /** BMS-3: passed from StoryboardCanvas to apply focus glow */
   isFocused?: boolean
   /** Stable composite key — avoids recomputing in card */
@@ -29,7 +36,9 @@ interface Props {
 }
 
 export default function FrameCard({
-  frame, scene, allScenes = [scene], isSelected, isFocused = false, frameKey,
+  frame, scene, allScenes = [scene], isSelected, isPremiumSelected = false,
+  onTogglePremiumSelect, premiumSelectionDisabled = false, compact = false,
+  isInspectorSelected = false, onSelectFrame, isFocused = false, frameKey,
   onToggleSelect, onReplaceImage, onVisualActionUpdate, onFrameUpdate,
   onUpgradeFrame, projectRenderStyle,
 }: Props) {
@@ -39,11 +48,17 @@ export default function FrameCard({
   const continuityInputs = resolveFrameContinuityInputs(allScenes, scene.scene_number, frame.frame_number)
   const cardRef = useRef<HTMLDivElement>(null)
   const uploadRef = useRef<HTMLInputElement>(null)
+  const compactTriggerRef = useRef<HTMLButtonElement>(null)
+  const compactMenuRef = useRef<HTMLDivElement>(null)
 
   // null = closed; number = index into galleryItems to open at
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   // Production sheet expand/collapse
   const [sheetExpanded, setSheetExpanded] = useState(false)
+  const [compactMenuOpen, setCompactMenuOpen] = useState(false)
+  const [compactMenuPosition, setCompactMenuPosition] = useState({ top: 8, left: 8 })
+  const [compactUpgradeMenuAlign, setCompactUpgradeMenuAlign] = useState<'left' | 'right'>('left')
+  const [compactUpgradeMenuPlacement, setCompactUpgradeMenuPlacement] = useState<'above' | 'below'>('below')
   const [editingFrame, setEditingFrame] = useState(false)
   const [durationDraft, setDurationDraft] = useState({
     frameNumber: frame.frame_number,
@@ -65,6 +80,67 @@ export default function FrameCard({
   const [premiumLoading, setPremiumLoading] = useState(false)
   const [premiumError, setPremiumError] = useState<string | null>(null)
   const [premiumSuccess, setPremiumSuccess] = useState(false)
+
+  useEffect(() => {
+    if (!compactMenuOpen) return
+    function closeOnOutsideClick(event: MouseEvent) {
+      const target = event.target as Node
+      if (cardRef.current?.contains(target) || compactMenuRef.current?.contains(target)) return
+      setCompactMenuOpen(false)
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setCompactMenuOpen(false)
+    }
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [compactMenuOpen])
+
+  useLayoutEffect(() => {
+    if (!compactMenuOpen) return
+    function repositionCompactMenu() {
+      const trigger = compactTriggerRef.current
+      if (!trigger) return
+      const rect = trigger.getBoundingClientRect()
+      const menuRect = compactMenuRef.current?.getBoundingClientRect()
+      const menuHeight = Math.min(menuRect?.height || 390, window.innerHeight - 16)
+      const menuWidth = menuRect?.width || 226
+      const spaceBelow = window.innerHeight - rect.bottom - 8
+      const placeAbove = spaceBelow < menuHeight && rect.top > menuHeight + 14
+      const top = placeAbove
+        ? Math.max(8, rect.top - menuHeight - 6)
+        : Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - menuHeight - 8))
+      const left = Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.right - menuWidth))
+      setCompactMenuPosition(current => current.top === top && current.left === left ? current : { top, left })
+      setCompactUpgradeMenuAlign(rect.left > window.innerWidth - 300 ? 'right' : 'left')
+      setCompactUpgradeMenuPlacement(top + 320 + 420 > window.innerHeight ? 'above' : 'below')
+    }
+    repositionCompactMenu()
+    window.addEventListener('resize', repositionCompactMenu)
+    window.addEventListener('scroll', repositionCompactMenu, true)
+    return () => {
+      window.removeEventListener('resize', repositionCompactMenu)
+      window.removeEventListener('scroll', repositionCompactMenu, true)
+    }
+  }, [compactMenuOpen])
+
+  function toggleCompactMenu(event: React.MouseEvent<HTMLButtonElement>) {
+    if (compactMenuOpen) {
+      setCompactMenuOpen(false)
+      return
+    }
+    const rect = event.currentTarget.getBoundingClientRect()
+    const maxHeight = Math.min(390, window.innerHeight - 16)
+    const top = rect.bottom + maxHeight <= window.innerHeight ? rect.bottom + 6 : Math.max(8, rect.top - maxHeight - 6)
+    const left = Math.max(8, Math.min(window.innerWidth - 234, rect.right - 226))
+    setCompactMenuPosition({ top, left })
+    setCompactUpgradeMenuAlign(rect.left > window.innerWidth - 300 ? 'right' : 'left')
+    setCompactUpgradeMenuPlacement(top + 320 + 420 > window.innerHeight ? 'above' : 'below')
+    setCompactMenuOpen(true)
+  }
 
   async function handleUpgradeStyle(targetStyle: string) {
     if (upgradeLoading) return
@@ -105,6 +181,45 @@ export default function FrameCard({
     }
   }
 
+
+  async function handleRegenerateVisualAction() {
+    if (regenLoading || regenImgLoading || premiumLoading) return
+    setRegenLoading(true)
+    setRegenError(null)
+    setRegenSuccess(false)
+    try {
+      const result = await regenerateVisualAction(frame, scene)
+      const textPatch = {
+        visual_action: result.visual_action,
+        animation_beats: result.animation_beats,
+        director_notes: result.director_notes ?? frame.director_notes,
+      }
+      onVisualActionUpdate?.(scene.scene_number, frame.frame_number, textPatch)
+      setRegenLoading(false)
+
+      setRegenImgLoading(true)
+      const updatedFrame = { ...frame, ...textPatch }
+      const res = await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/storyboard/frame/reforge-composition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frame: updatedFrame, scene, render_style: projectRenderStyle ?? 'bw_sketch' }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.generated_image_url && onUpgradeFrame) {
+          onUpgradeFrame(scene.scene_number, frame.frame_number, data.generated_image_url)
+        }
+      }
+      setRegenSuccess(true)
+      setTimeout(() => setRegenSuccess(false), 2500)
+    } catch (err) {
+      setRegenError(err instanceof Error ? err.message : 'Regeneration failed')
+    } finally {
+      setRegenLoading(false)
+      setRegenImgLoading(false)
+    }
+  }
+
   // Build gallery from all rendered frames in the scene
   const galleryItems = useMemo(() =>
     scene.frames
@@ -135,11 +250,13 @@ export default function FrameCard({
   }
 
   function openLightbox() {
+    onSelectFrame?.(key)
     if (!frame.generated_image_url) return
     setLightboxIndex(thisGalleryIndex >= 0 ? thisGalleryIndex : 0)
   }
 
   function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    if (compact) return
     const el = cardRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
@@ -153,7 +270,8 @@ export default function FrameCard({
     const el = cardRef.current
     if (!el) return
     el.style.transform = ''
-    el.style.boxShadow = isSelected ? `0 0 0 1.5px var(--gold)` : ''
+    el.style.boxShadow = isInspectorSelected || isSelected ? `0 0 0 1.5px var(--gold)` : ''
+    if (compact) el.style.transform = 'none'
   }
 
   return (
@@ -170,11 +288,12 @@ export default function FrameCard({
       <div
         ref={cardRef}
         data-frame-key={key}
-        className={`relative flex-shrink-0 w-56 rounded frame-card-hover card-tilt cursor-pointer group bms-brass${isFocused ? ' bms-frame-focus' : ''}`}
+        className={`relative flex-shrink-0 ${compact ? 'w-60' : 'w-56'} rounded frame-card-hover card-tilt group bms-brass${isFocused ? ' bms-frame-focus' : ''}`}
         style={{
           background: 'var(--bg-surface)',
-          border: `1px solid ${isSelected ? 'var(--gold)' : frame.is_manual_override ? 'rgba(74,222,128,0.45)' : 'var(--border)'}`,
-          boxShadow: isSelected ? '0 0 0 1.5px var(--gold)' : frame.is_manual_override ? '0 0 0 1px rgba(74,222,128,0.3)' : undefined,
+          border: `1px solid ${isInspectorSelected || isSelected ? 'var(--gold)' : frame.is_manual_override ? 'rgba(74,222,128,0.45)' : 'var(--border)'}`,
+          boxShadow: isInspectorSelected ? '0 0 0 1.5px rgba(201,168,76,0.65)' : isSelected ? '0 0 0 1.5px var(--gold)' : frame.is_manual_override ? '0 0 0 1px rgba(74,222,128,0.3)' : undefined,
+          transform: compact ? 'none' : undefined,
         }}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
@@ -219,7 +338,7 @@ export default function FrameCard({
           </div>
 
           {/* 🎬 Director Notes badge — bottom-right, always visible, hover reveals full note */}
-          {frame.director_notes && (
+          {frame.director_notes && !compact && (
             <div
               className="absolute bottom-1.5 right-1.5"
               style={{ pointerEvents: 'none' }}
@@ -251,6 +370,7 @@ export default function FrameCard({
         </div>
 
         {/* ── Action buttons — OUTSIDE image div so never bubble into lightbox trigger ── */}
+        {!compact && (
         <div
           className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-all"
           style={{ zIndex: 10 }}
@@ -320,8 +440,91 @@ export default function FrameCard({
             />
           )}
         </div>
+        )}
+
+        {compact && (
+          <div style={{ position: 'absolute', top: 6, right: 6, zIndex: 20 }}>
+            <button
+              type="button"
+              aria-label={`More actions for frame ${frameId}`}
+              aria-haspopup="menu"
+              aria-expanded={compactMenuOpen}
+              ref={compactTriggerRef}
+              onClick={toggleCompactMenu}
+              style={{ width: 27, height: 25, border: '1px solid rgba(255,255,255,0.2)', borderRadius: 5, background: 'rgba(0,0,0,0.68)', color: 'white', cursor: 'pointer', fontSize: 15, lineHeight: 1, backdropFilter: 'blur(5px)' }}
+            >⋯</button>
+            {compactMenuOpen && createPortal(
+              <div
+                role="menu"
+                aria-label={`Frame ${frameId} actions`}
+                ref={compactMenuRef}
+                onClick={event => event.stopPropagation()}
+                style={{ position: 'fixed', top: compactMenuPosition.top, left: compactMenuPosition.left, zIndex: 10000, width: 226, padding: 7, display: 'flex', flexDirection: 'column', gap: 4, overflow: 'visible', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 7, boxShadow: '0 12px 34px rgba(0,0,0,0.5)' }}
+              >
+                <div style={{ padding: '2px 4px 5px', color: 'var(--text-muted)', fontSize: 7, letterSpacing: '0.2em', textTransform: 'uppercase' }}>Frame actions</div>
+                <button type="button" role="menuitem" aria-pressed={isSelected} onClick={() => { onToggleSelect(key); setCompactMenuOpen(false) }} style={{ border: 'none', borderRadius: 3, padding: '7px 8px', background: 'transparent', color: isSelected ? 'var(--gold)' : 'var(--text-base)', opacity: 0.84, textAlign: 'left', fontSize: 9, cursor: 'pointer' }}>{isSelected ? '★ Remove from locked cut' : '★ Lock to cut'}</button>
+                <button type="button" role="menuitem" disabled={!frame.generated_image_url} onClick={() => { openLightbox(); setCompactMenuOpen(false) }} style={{ border: 'none', borderRadius: 3, padding: '7px 8px', background: 'transparent', color: 'var(--text-base)', opacity: frame.generated_image_url ? 0.82 : 0.35, textAlign: 'left', fontSize: 9, cursor: frame.generated_image_url ? 'pointer' : 'default' }}>⤢ View full size</button>
+                <button type="button" role="menuitem" disabled={!frame.generated_image_url} onClick={() => { downloadFramePng(frame.generated_image_url, filename); setCompactMenuOpen(false) }} style={{ border: 'none', borderRadius: 3, padding: '7px 8px', background: 'transparent', color: 'var(--text-base)', opacity: frame.generated_image_url ? 0.82 : 0.35, textAlign: 'left', fontSize: 9, cursor: frame.generated_image_url ? 'pointer' : 'default' }}>↓ Download PNG</button>
+                {onReplaceImage && (
+                  <>
+                    <input ref={uploadRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" style={{ display: 'none' }} onChange={handleUpload} />
+                    <button type="button" role="menuitem" onClick={() => uploadRef.current?.click()} style={{ border: 'none', borderRadius: 3, padding: '7px 8px', background: 'transparent', color: 'var(--text-base)', opacity: 0.82, textAlign: 'left', fontSize: 9, cursor: 'pointer' }}>⇪ Replace artwork</button>
+                  </>
+                )}
+                <button type="button" role="menuitem" disabled={premiumSelectionDisabled || !frame.generated_image_url || !onTogglePremiumSelect} aria-pressed={isPremiumSelected} onClick={() => onTogglePremiumSelect?.(key)} style={{ border: `1px solid ${isPremiumSelected ? 'rgba(201,168,76,0.42)' : 'transparent'}`, borderRadius: 3, padding: '7px 8px', background: isPremiumSelected ? 'rgba(201,168,76,0.08)' : 'transparent', color: 'var(--gold)', opacity: frame.generated_image_url ? 0.9 : 0.35, textAlign: 'left', fontSize: 9, cursor: premiumSelectionDisabled ? 'wait' : 'pointer' }}>{isPremiumSelected ? '✓ Remove from premium batch' : '＋ Select for premium batch'}</button>
+                {frame.generated_image_url && onUpgradeFrame && (
+                  <div style={{ borderTop: '1px solid var(--border)', padding: '5px 2px 1px', marginTop: 2 }}>
+                    <UpgradeStyleMenu currentStyle={projectRenderStyle} onSelect={handleUpgradeStyle} loading={upgradeLoading} label="Upgrade style" align={compactUpgradeMenuAlign} placement={compactUpgradeMenuPlacement} />
+                    <button type="button" role="menuitem" disabled={premiumLoading || regenLoading || regenImgLoading || upgradeLoading} onClick={() => { void handlePremiumRender() }} className="btn-tactile" style={{ width: '100%', marginTop: 5, border: '1px solid rgba(201,168,76,0.3)', borderRadius: 4, background: 'rgba(201,168,76,0.07)', color: 'var(--gold)', padding: '7px 8px', textAlign: 'left', fontSize: 9, cursor: premiumLoading ? 'wait' : 'pointer' }}>{premiumLoading ? 'Rendering…' : premiumSuccess ? '✓ Premium frame updated' : 'Render this frame · Paid'}</button>
+                    <p style={{ margin: '5px 2px 2px', color: 'var(--text-muted)', opacity: 0.62, fontSize: 7, lineHeight: 1.5 }}>Nano Banana 2.1 uses this image as a consistency reference. Approx. $0.0336 output-only; input charges may add. <a href="https://ai.google.dev/gemini-api/docs/pricing" target="_blank" rel="noreferrer" style={{ color: 'var(--gold)' }}>Pricing</a>.</p>
+                    {premiumError && <p role="alert" style={{ margin: '3px 2px', color: '#e06060', fontSize: 8 }}>{premiumError}</p>}
+                  </div>
+                )}
+                {(onVisualActionUpdate || onUpgradeFrame) && (
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 5, marginTop: 2 }}>
+                    {regenError && <p role="alert" style={{ margin: '2px 4px 5px', color: '#e06060', fontSize: 8 }}>{regenError}</p>}
+                    <button type="button" role="menuitem" disabled={regenLoading || regenImgLoading || premiumLoading} onClick={() => { void handleRegenerateVisualAction() }} style={{ width: '100%', border: 'none', borderRadius: 3, padding: '7px 8px', background: 'transparent', color: 'var(--text-base)', opacity: 0.82, textAlign: 'left', fontSize: 9, cursor: regenLoading || regenImgLoading ? 'wait' : 'pointer' }}>{regenLoading ? 'Rewriting direction…' : regenImgLoading ? 'Rendering updated frame…' : regenSuccess ? '✓ Action updated' : '↻ Regenerate action & frame'}</button>
+                  </div>
+                )}
+              </div>,
+              document.body,
+            )}
+          </div>
+        )}
+
+        {compact && (
+          <div style={{ padding: '10px 11px 9px' }}>
+            <button
+              type="button"
+              aria-pressed={isInspectorSelected}
+              onClick={() => onSelectFrame?.(key)}
+              style={{ display: 'block', width: '100%', border: 'none', padding: 0, background: 'transparent', textAlign: 'left', cursor: onSelectFrame ? 'pointer' : 'default' }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--gold)', fontSize: 9, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{frame.shot_type || 'Shot'}</span>
+              </span>
+              <span style={{ display: '-webkit-box', marginTop: 5, color: 'var(--text-base)', opacity: frame.visual_action || frame.action_breakdown ? 0.72 : 0.32, fontSize: 9, lineHeight: 1.5, textAlign: 'left', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } as React.CSSProperties}>
+                {frame.visual_action || frame.action_breakdown || 'No action summary yet.'}
+              </span>
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 9, paddingTop: 7, borderTop: '1px solid var(--border)' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: frame.approval_status === 'approved' ? 'var(--approval-color)' : 'var(--text-muted)', opacity: 0.86, fontSize: 8 }}>
+                <span aria-hidden="true">{frame.approval_status === 'approved' ? '✓' : '○'}</span>
+                {frame.approval_status === 'approved' ? 'Approved' : 'Pending approval'}
+              </span>
+              {onFrameUpdate && (
+                <button
+                  type="button"
+                  onClick={() => onFrameUpdate(scene.scene_number, frame.frame_number, { approval_status: frame.approval_status === 'approved' ? 'pending' : 'approved' })}
+                  style={{ border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: frame.approval_status === 'approved' ? 'var(--approval-color)' : 'var(--gold)', cursor: 'pointer', padding: '4px 6px', fontSize: 7, letterSpacing: '0.08em', textTransform: 'uppercase' }}
+                >{frame.approval_status === 'approved' ? 'Reopen' : 'Approve'}</button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ── Production Sheet ── */}
+        {!compact && (
         <div style={{ padding: '8px 10px' }}>
 
           {/* Summary row — always visible */}
@@ -358,7 +561,7 @@ export default function FrameCard({
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginTop: 7 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <span style={{ fontSize: 8, color: frame.approval_status === 'approved' ? '#4ade80' : 'var(--text-muted)', opacity: 0.8 }}>
+              <span style={{ fontSize: 8, color: frame.approval_status === 'approved' ? 'var(--approval-color)' : 'var(--text-muted)', opacity: 0.8 }}>
                 {frame.approval_status === 'approved' ? '✓ Human approved' : 'Pending approval'}
               </span>
               {frame.continuity_review_required && (
@@ -373,12 +576,32 @@ export default function FrameCard({
                 onClick={() => onFrameUpdate(scene.scene_number, frame.frame_number, {
                   approval_status: frame.approval_status === 'approved' ? 'pending' : 'approved',
                 })}
-                style={{ border: '1px solid var(--border)', borderRadius: 3, background: frame.approval_status === 'approved' ? 'rgba(74,222,128,0.08)' : 'transparent', color: frame.approval_status === 'approved' ? '#4ade80' : 'var(--gold)', cursor: 'pointer', fontSize: 7, letterSpacing: '0.1em', padding: '3px 6px', textTransform: 'uppercase' }}
+                style={{ border: '1px solid var(--border)', borderRadius: 3, background: frame.approval_status === 'approved' ? 'var(--approval-bg)' : 'transparent', color: frame.approval_status === 'approved' ? 'var(--approval-color)' : 'var(--gold)', cursor: 'pointer', fontSize: 7, letterSpacing: '0.1em', padding: '3px 6px', textTransform: 'uppercase' }}
               >
                 {frame.approval_status === 'approved' ? 'Reopen' : 'Approve frame'}
               </button>
             )}
           </div>
+
+          {frame.generated_image_url && onUpgradeFrame && onTogglePremiumSelect && (
+            <button
+              type="button"
+              disabled={premiumSelectionDisabled}
+              aria-pressed={isPremiumSelected}
+              onClick={() => onTogglePremiumSelect(key)}
+              className="btn-tactile"
+              style={{
+                width: '100%', marginTop: 7, padding: '5px 6px', borderRadius: 3,
+                border: `1px solid ${isPremiumSelected ? 'var(--gold)' : 'rgba(201,168,76,0.24)'}`,
+                background: isPremiumSelected ? 'rgba(201,168,76,0.12)' : 'transparent',
+                color: 'var(--gold)', cursor: premiumSelectionDisabled ? 'wait' : 'pointer',
+                fontSize: 7, letterSpacing: '0.12em', textTransform: 'uppercase',
+                opacity: premiumSelectionDisabled ? 0.55 : isPremiumSelected ? 1 : 0.72,
+              }}
+            >
+              {isPremiumSelected ? '✓ Selected for premium render' : '＋ Select for premium render'}
+            </button>
+          )}
 
           {/* Expanded production sheet */}
           {sheetExpanded && (
@@ -398,7 +621,7 @@ export default function FrameCard({
                         <img src={source.image_url} alt={`${source.frame_id} approved ending frame`} style={{ width: 48, height: 28, objectFit: 'cover', borderRadius: 2, flexShrink: 0 }} />
                       )}
                       <div style={{ minWidth: 0 }}>
-                        <p style={{ fontSize: 8, color: source.available ? '#4ade80' : '#fbbf24', marginBottom: 2 }}>
+                        <p style={{ fontSize: 8, color: source.available ? 'var(--approval-color)' : '#fbbf24', marginBottom: 2 }}>
                           {source.frame_id} · {source.available ? 'approved source' : source.review_required ? 'source needs review' : source.approval_status === 'approved' ? 'not available' : 'source not approved'}
                         </p>
                         {source.available && (
@@ -583,44 +806,7 @@ export default function FrameCard({
               )}
               <button
                 disabled={regenLoading || regenImgLoading || premiumLoading}
-                onClick={async () => {
-                  setRegenLoading(true)
-                  setRegenError(null)
-                  setRegenSuccess(false)
-                  try {
-                    // Step 1 — rewrite the staging direction text
-                    const result = await regenerateVisualAction(frame, scene)
-                    const textPatch = {
-                      visual_action: result.visual_action,
-                      animation_beats: result.animation_beats,
-                      director_notes: result.director_notes ?? frame.director_notes,
-                    }
-                    onVisualActionUpdate?.(scene.scene_number, frame.frame_number, textPatch)
-                    setRegenLoading(false)
-
-                    // Step 2 — regenerate the image from the new direction
-                    setRegenImgLoading(true)
-                    const updatedFrame = { ...frame, ...textPatch }
-                    const res = await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/storyboard/frame/reforge-composition`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ frame: updatedFrame, scene, render_style: projectRenderStyle ?? 'bw_sketch' }),
-                    })
-                    if (res.ok) {
-                      const data = await res.json()
-                      if (data.generated_image_url && onUpgradeFrame) {
-                        onUpgradeFrame(scene.scene_number, frame.frame_number, data.generated_image_url)
-                      }
-                    }
-                    setRegenSuccess(true)
-                    setTimeout(() => setRegenSuccess(false), 2500)
-                  } catch (err) {
-                    setRegenError(err instanceof Error ? err.message : 'Regeneration failed')
-                  } finally {
-                    setRegenLoading(false)
-                    setRegenImgLoading(false)
-                  }
-                }}
+                onClick={handleRegenerateVisualAction}
                 className="btn-tactile bms-brass"
                 style={{
                   width: '100%', padding: '6px 0', borderRadius: 3,
@@ -664,6 +850,7 @@ export default function FrameCard({
             </div>
           )}
         </div>
+        )}
 
         {/* Selected gold strip */}
         {isSelected && (

@@ -155,15 +155,26 @@ body.bms-light-active.dark::after {
    Theme CSS variables
 ───────────────────────────────────────── */
 :root {
-  --bg-base:    #f2ece0;
-  --bg-surface: #e8e0d0;
-  --bg-raised:  #ddd4c0;
-  --border:     #b8a888;
-  --text-base:  #1a1208;
-  --text-muted: #3d2e18;
-  --gold:       #7a5c10;
-  --gold-dim:   rgba(122,92,16,0.4);
-  --cyan:       #0a6a7a;
+  --bg-base:    #F5F5F7;
+  --bg-surface: #FFFFFF;
+  --bg-raised:  #ECEAF3;
+  --border:     #BEB9CA;
+  --text-base:  #201B2F;
+  --text-muted: #554E64;
+  --gold:       #2D1B69;
+  --gold-dim:   rgba(212,168,83,0.22);
+  --cyan:       #006A7B;
+  --brand-purple: #2D1B69;
+  --brand-cyan: #00D4FF;
+  --brand-offwhite: #F5F5F7;
+  --brand-gold: #D4A853;
+  --control-bg: #FFFFFF;
+  --focus-ring: rgba(45,27,105,0.24);
+  --approval-color: #166534;
+  --approval-border: rgba(22,101,52,0.35);
+  --approval-button-border: rgba(22,101,52,0.3);
+  --approval-bg: rgba(22,101,52,0.08);
+  --approval-soft-bg: rgba(22,101,52,0.07);
 }
 
 .dark {
@@ -176,6 +187,49 @@ body.bms-light-active.dark::after {
   --gold:       #C9A84C;
   --gold-dim:   rgba(201,168,76,0.35);
   --cyan:       #00D4FF;
+  --brand-purple: #2D1B69;
+  --brand-cyan: #00D4FF;
+  --brand-offwhite: #F5F5F7;
+  --brand-gold: #D4A853;
+  --control-bg: #110e09;
+  --focus-ring: rgba(201,168,76,0.4);
+  --approval-color: #4ade80;
+  --approval-border: rgba(74,222,128,0.35);
+  --approval-button-border: rgba(74,222,128,0.3);
+  --approval-bg: rgba(74,222,128,0.08);
+  --approval-soft-bg: rgba(74,222,128,0.07);
+}
+
+/* Light mode: keep text, labels, and controls readable against the brighter surfaces. */
+html:not(.dark) :is(input, select, textarea) {
+  color-scheme: light;
+  background-color: var(--control-bg) !important;
+  color: var(--text-base) !important;
+}
+
+html:not(.dark) :is(input, select, textarea)::placeholder {
+  color: var(--text-muted);
+  opacity: 0.82;
+}
+
+html:not(.dark) :is(input, select, textarea):focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* Tailwind alpha text utilities made secondary labels nearly disappear in light mode. */
+html:not(.dark) [class*="text-[var(--gold)]/"] { color: var(--gold) !important; }
+html:not(.dark) [class*="text-[var(--text-muted)]/"] { color: var(--text-muted) !important; }
+html:not(.dark) [class*="text-[var(--text-base)]/"] { color: var(--text-base) !important; }
+
+/* Inline low-opacity gold and muted labels are common in the studio inspector. */
+html:not(.dark) [style*="color: var(--gold)"][style*="opacity: 0."],
+html:not(.dark) [style*="color: var(--text-muted)"][style*="opacity: 0."] {
+  opacity: 0.82 !important;
+}
+
+html:not(.dark) ::selection {
+  background: rgba(45,27,105,0.18);
+  color: var(--text-base);
 }
 
 /* Suppress all transitions during initial theme bootstrap to prevent FOUC */

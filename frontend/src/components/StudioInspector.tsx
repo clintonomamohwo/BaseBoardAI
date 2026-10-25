@@ -2,22 +2,11 @@ import { useState } from 'react'
 import { classifyError } from '../utils/classifyError'
 import type { ProjectCanon, StoryboardScene, StoryboardFrame } from '../types/storyboard'
 import ShotPlanner from './ShotPlanner'
+import SelectedFrameInspector from './SelectedFrameInspector'
 import { generateBackgroundVariation } from '../api/storyboard'
 
 const LIGHTING_OPTIONS = ['Golden Hour / Sunrise', 'Chiaroscuro / Cyber', 'Natural Daylight', 'Neon Noir', 'Moonlit']
 const VALENCE_OPTIONS   = ['High-Contrast', 'Muted', 'Saturated', 'Monochrome']
-
-// Cinematic fields managed by the Director / Cinematic Brain
-type CinematicFieldKey = 'shot_type' | 'camera_angle' | 'camera_movement' | 'lighting_notes' | 'mood' | 'purpose'
-
-const CINEMATIC_FIELDS: { key: CinematicFieldKey; label: string }[] = [
-  { key: 'shot_type',       label: 'Shot Type' },
-  { key: 'camera_angle',    label: 'Camera Angle' },
-  { key: 'camera_movement', label: 'Camera Movement' },
-  { key: 'lighting_notes',  label: 'Lighting' },
-  { key: 'mood',            label: 'Mood' },
-  { key: 'purpose',         label: 'Purpose' },
-]
 
 interface SceneImageOption {
   sceneNumber: number
@@ -33,6 +22,7 @@ interface Props {
   onReferenceChange: (url: string | null) => void
   /** Called when the user locks or unlocks a cinematic field on the current frame */
   onToggleLock?: (frameNumber: number, fieldKey: string, locked: boolean) => void
+  onFrameUpdate?: (sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) => void
   canon?: ProjectCanon | null
   /** Called after a successful background variation with the new image URL.
    *  The parent decides whether to commit it to project state. */
@@ -48,7 +38,7 @@ interface Props {
 
 export default function StudioInspector({
   scene, frame, onReferenceChange, onToggleLock, canon,
-  onBackgroundVariation, referenceImage, renderStyle, allScenes,
+  onBackgroundVariation, referenceImage, renderStyle, allScenes, onFrameUpdate,
 }: Props) {
   const [swatchOverrides, setSwatchOverrides] = useState<Record<number, string>>({})
   const [lightingMood, setLightingMood]       = useState(LIGHTING_OPTIONS[0])
@@ -57,7 +47,6 @@ export default function StudioInspector({
   const [exposure, setExposure]               = useState(0.75)
   const [lens, setLens]                       = useState(24)
   const [shotPlannerOpen, setShotPlannerOpen] = useState(false)
-  const [directorNotesOpen, setDirectorNotesOpen] = useState(true)
   const [bgVariating, setBgVariating]         = useState(false)
   const [bgVariationError, setBgVariationError] = useState<string | null>(null)
   // null = picker closed; true = picker open waiting for selection
@@ -72,31 +61,6 @@ export default function StudioInspector({
   const palette  = scene?.color_palette ?? ['#2D1B69', '#00D4FF', '#D4A853']
   const selectClass = 'w-full bg-[var(--bg-surface)] border border-[var(--border)] rounded px-2 py-1.5 text-[10px] text-[var(--text-base)]/70 focus:outline-none focus:border-[var(--gold)]/50 transition-all'
   const sceneKey = scene?.scene_number ?? 'empty'
-
-  // Frame-level cinematic data
-  const autoSelected: Record<string, boolean>  = frame?.auto_selected  ?? {}
-  const rationale:    Record<string, string>   = frame?.director_rationale ?? {}
-  const lockedFields: string[]                 = frame?.locked_fields  ?? []
-
-  function isAutoSelected(key: string) { return !!autoSelected[key] }
-  function isLocked(key: string)       { return lockedFields.includes(key) }
-
-  function handleToggleLock(key: string) {
-    if (!frame || !onToggleLock) return
-    onToggleLock(frame.frame_number, key, !isLocked(key))
-  }
-
-  // Get the current value of a frame cinematic field
-  function fieldValue(key: CinematicFieldKey): string {
-    if (!frame) return '—'
-    const v = frame[key]
-    return (v && String(v).trim()) ? String(v) : '—'
-  }
-
-  // How many fields were auto-selected for the current frame
-  const autoCount = Object.values(autoSelected).filter(Boolean).length
-  const totalCinematicFields = CINEMATIC_FIELDS.length
-  const allRationale = Object.entries(rationale).filter(([, v]) => v)
 
   // The frame to apply the variation to — defaults to the first frame of the scene.
   // Reset to null (first frame) whenever the active scene changes.
@@ -214,113 +178,23 @@ export default function StudioInspector({
       {/* Header */}
       <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
         <span className="text-[9px] tracking-[0.3em] uppercase text-[var(--gold)]/50">Inspector</span>
-        <button className="text-[var(--text-base)]/20 hover:text-[var(--text-base)]/60 text-xs transition-all">∧</button>
       </div>
 
       <div key={sceneKey} className="p-4 space-y-6 bms-inspector-enter">
 
-        {/* ── Director Notes Panel ──────────────────────────────────────────── */}
-        {frame && (
-          <section>
-            <button
-              type="button"
-              onClick={() => setDirectorNotesOpen(o => !o)}
-              style={{ width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', background:'none', border:'none', cursor:'pointer', padding:0, marginBottom: directorNotesOpen ? 10 : 0 }}>
-              <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                <span style={{ fontSize:9, letterSpacing:'0.3em', color:'var(--gold)', opacity:0.6, textTransform:'uppercase' }}>Director Notes</span>
-                {autoCount > 0 && (
-                  <span style={{ fontSize:8, background:'rgba(201,168,76,0.12)', border:'1px solid rgba(201,168,76,0.3)', borderRadius:999, padding:'1px 6px', color:'var(--gold)', opacity:0.8 }}>
-                    {autoCount}/{totalCinematicFields} AI
-                  </span>
-                )}
-              </div>
-              <span style={{ fontSize:9, color:'var(--gold)', opacity:0.5, transition:'transform 150ms', display:'inline-block', transform: directorNotesOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span>
-            </button>
-
-            {directorNotesOpen && (
-              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-                {/* Cinematic field rows */}
-                {CINEMATIC_FIELDS.map(({ key, label }) => {
-                  const ai      = isAutoSelected(key)
-                  const locked  = isLocked(key)
-                  const value   = fieldValue(key)
-                  const note    = rationale[key]
-
-                  return (
-                    <div key={key} style={{
-                      background:'var(--bg-surface)', border:`1px solid ${locked ? 'var(--gold)' : 'var(--border)'}`,
-                      borderRadius:5, padding:'7px 10px', transition:'border-color 120ms',
-                    }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                        {/* Field label */}
-                        <span style={{ fontSize:8, letterSpacing:'0.15em', textTransform:'uppercase', color:'var(--text-muted)', opacity:0.5, minWidth:72 }}>
-                          {label}
-                        </span>
-                        {/* AI badge */}
-                        {ai && !locked && (
-                          <span style={{ fontSize:7, letterSpacing:'0.1em', color:'var(--gold)', opacity:0.7, background:'rgba(201,168,76,0.1)', borderRadius:999, padding:'1px 5px', flexShrink:0 }}>
-                            AI ✦
-                          </span>
-                        )}
-                        {/* Locked badge */}
-                        {locked && (
-                          <span style={{ fontSize:7, letterSpacing:'0.1em', color:'#4ade80', opacity:0.8, background:'rgba(74,222,128,0.08)', borderRadius:999, padding:'1px 5px', flexShrink:0 }}>
-                            ✓ Locked
-                          </span>
-                        )}
-                        {/* Value */}
-                        <span style={{ flex:1, fontSize:9, color:'var(--text-base)', opacity: value === '—' ? 0.25 : 0.8, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                          {value}
-                        </span>
-                        {/* Lock / unlock button */}
-                        {onToggleLock && (
-                          <button
-                            onClick={() => handleToggleLock(key)}
-                            title={locked ? 'Unlock — let AI decide' : 'Lock — keep my choice'}
-                            style={{ background:'none', border:'none', cursor:'pointer', padding:0, color: locked ? '#4ade80' : 'var(--text-muted)', opacity: locked ? 0.8 : 0.35, fontSize:11, flexShrink:0, lineHeight:1 }}>
-                            {locked ? '🔒' : '🔓'}
-                          </button>
-                        )}
-                      </div>
-                      {/* Rationale tooltip row */}
-                      {note && (
-                        <p style={{ fontSize:8, color:'var(--text-muted)', opacity:0.4, marginTop:4, lineHeight:1.5, fontStyle:'italic' }}>
-                          {note}
-                        </p>
-                      )}
-                    </div>
-                  )
-                })}
-
-                {/* Full director notes text if present */}
-                {frame.director_notes && allRationale.length === 0 && (
-                  <p style={{ fontSize:9, color:'var(--text-muted)', opacity:0.5, lineHeight:1.6, padding:'6px 10px', background:'var(--bg-surface)', borderRadius:4, border:'1px solid var(--border)' }}>
-                    {frame.director_notes}
-                  </p>
-                )}
-
-                {/* Lens info from Lens Planner */}
-                {(frame.focal_length || frame.depth_style) && (
-                  <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:2 }}>
-                    {frame.focal_length && (
-                      <span style={{ fontSize:8, background:'rgba(124,92,216,0.08)', border:'1px solid rgba(124,92,216,0.2)', borderRadius:999, padding:'2px 7px', color:'#7c5cd8', opacity:0.8 }}>
-                        🎞 {frame.focal_length}
-                      </span>
-                    )}
-                    {frame.depth_style && (
-                      <span style={{ fontSize:8, background:'rgba(124,92,216,0.08)', border:'1px solid rgba(124,92,216,0.2)', borderRadius:999, padding:'2px 7px', color:'#7c5cd8', opacity:0.8 }}>
-                        ◉ {frame.depth_style}
-                      </span>
-                    )}
-                    <span style={{ fontSize:7, color:'var(--text-muted)', opacity:0.35, padding:'2px 0', letterSpacing:'0.08em', textTransform:'uppercase' }}>
-                      Lens Planner
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
-        )}
+        {frame && scene ? (
+          <SelectedFrameInspector
+            scene={scene}
+            allScenes={allScenes}
+            frame={frame}
+            onFrameUpdate={onFrameUpdate}
+            onToggleLock={onToggleLock}
+          />
+        ) : scene ? (
+          <div style={{ margin: '14px 12px', padding: '12px', border: '1px dashed var(--border)', borderRadius: 5, color: 'var(--text-muted)', opacity: 0.62, fontSize: 9, lineHeight: 1.5 }}>
+            Select a storyboard frame to inspect its shot, continuity, props, and notes.
+          </div>
+        ) : null}
 
         {/* ── Scene Background Variation ───────────────────────────────────── */}
         {scene && (

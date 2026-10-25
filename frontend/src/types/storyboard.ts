@@ -511,5 +511,8 @@ export interface SceneQARequest {
   location_heading: string
   time_of_day: string
   environmental_type: string
+  scene_data: StoryboardScene
+  render_style: RenderStyle
+  canon_context: Record<string, unknown> | null
   frames: FrameExpectedContext[]
 }

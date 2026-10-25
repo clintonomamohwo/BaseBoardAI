@@ -14,6 +14,18 @@ RULES:
     "distinct_markers": "<scars, tattoos, or null>",
     "fixed_seed_reference": null
   }},
+  "species": {{
+    "species_id": "<lowercase species key, e.g. human, fox, wolf, dragon>",
+    "label": "<display name for the species>",
+    "custom_notes": "<visible species-specific anatomy, or null>"
+  }},
+  "physical_form": {{
+    "form": "<one of: humanoid | quadruped | dragon | bird | serpent | spirit | robot | vehicle | hybrid | custom>",
+    "custom_description": "<anatomy details if form is custom, otherwise null>",
+    "limb_count": null,
+    "has_wings": false,
+    "has_tail": false
+  }},
   "wardrobe_defaults": "<signature clothing and accessories as a single sentence>",
   "story_role": "<one of: Protagonist | Antagonist | Supporting | Other — based on their centrality and function in the story>",
   "relationships": [
@@ -25,6 +37,13 @@ RULES:
     }}
   ]
 }}
+
+SPECIES AND ANATOMY RULES:
+- Always return both "species" and "physical_form". Use "human" only when the notes actually describe a human or give no species clue.
+- Preserve explicit animals and fantasy species. A bipedal, speaking, or clothed animal is still that animal species, not a human.
+- For an animal humanoid (for example, an anthropomorphic fox), set species_id to the animal and form to "humanoid". Put distinctive visible traits in custom_notes (such as fur, muzzle, species-specific ears, tail, scales, feathers, or beak); do not describe only a human face or a person wearing a costume.
+- Set form to "quadruped" or the matching non-humanoid form when the notes describe that anatomy. Do not infer humanoid solely from the character's role or clothing.
+- For unknown species, use a concise lowercase species_id with underscores if needed, a readable label, and anatomy details in custom_notes.
 
 STORY ROLE RULES:
 - Protagonist: the central character the story follows most closely

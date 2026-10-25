@@ -401,18 +401,23 @@ function CharacterRow({
                       <span style={{ fontSize: 7, color: 'var(--gold)', opacity: 0.4, letterSpacing: '0.1em', textTransform: 'uppercase' }}>+ Upload</span>
                     </div>
                   )}
-                  {/* Replace overlay — shows on hover when portrait exists */}
-                  {portraitUrl && (
-                    <div
-                      className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
-                      style={{ background: 'rgba(0,0,0,0.55)', cursor: 'pointer', borderRadius: 4 }}
-                      onClick={e => { e.stopPropagation(); portraitUploadRef.current?.click() }}
-                      title="Replace portrait"
-                    >
-                      <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.8)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>⇪ Replace</span>
-                    </div>
-                  )}
                 </div>
+                {portraitUrl && (
+                  <div style={{ display: 'flex', gap: 4, marginTop: 5 }}>
+                    <button
+                      type="button"
+                      aria-label={`View portrait of ${char.name}`}
+                      onClick={() => setLightbox(true)}
+                      style={{ flex: 1, minWidth: 0, padding: '4px 2px', borderRadius: 3, border: '1px solid rgba(201,168,76,0.25)', background: 'transparent', color: 'var(--gold)', fontSize: 7, letterSpacing: '0.06em', textTransform: 'uppercase', cursor: 'pointer' }}
+                    >⤢ View</button>
+                    <button
+                      type="button"
+                      aria-label={`Replace portrait of ${char.name}`}
+                      onClick={() => portraitUploadRef.current?.click()}
+                      style={{ flex: 1, minWidth: 0, padding: '4px 2px', borderRadius: 3, border: '1px solid rgba(201,168,76,0.25)', background: 'transparent', color: 'var(--gold)', fontSize: 7, letterSpacing: '0.06em', textTransform: 'uppercase', cursor: 'pointer' }}
+                    >⇪ Replace</button>
+                  </div>
+                )}
                 <p style={{ fontSize: 7, color: 'var(--text-muted)', opacity: 0.4, textAlign: 'center', marginTop: 4, letterSpacing: '0.1em', textTransform: 'uppercase' }}>AI Portrait</p>
               </div>
 
