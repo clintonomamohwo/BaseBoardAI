@@ -23,6 +23,10 @@ export const DEMO_PROJECT: StoryboardProject = {
     'Futuristic Sci-Fi Adventure, Year 2248, Neo Cities with floating gardens and orbital transit gates, ancient ruins and underground vaults, anthropomorphic humanoid characters, cinematic wide establishing shots mixed with intimate character moments',
   render_style: 'flat_color',
   canon: {
+    character_identities: {},
+    character_species: {},
+    character_variants: {},
+    character_abilities: {},
     approved_characters: {
       CHAR_THEO: {
         name: 'Theo Mensah',
@@ -68,6 +72,7 @@ export const DEMO_PROJECT: StoryboardProject = {
     expression_sheets: {},
     pose_libraries: {},
     outfit_libraries: {},
+    accessory_libraries: {},
     world_bible_summary:
       'Year 2248. Earth is a network of futuristic Neo Cities connected by orbital transit gates. ' +
       'Ancient Cartographer civilisation hid humanity\'s knowledge inside the Vault of Humanity. ' +
@@ -77,6 +82,10 @@ export const DEMO_PROJECT: StoryboardProject = {
       'Neo New York (hover-racing circuit, Manhattan Skyspire), Neo Mexico City (floating megahospital, Aztec canals), ' +
       'Neo Cairo (Great Pyramid sanctuary), Neo Rome (underground archive networks), ' +
       'Swiss Alps (Cartographer archive in cliff face), Neo Kyoto (bamboo sanctuary under climate dome).',
+    locations: {},
+    props: {},
+    timeline: [],
+    relationships: {},
     style_guide:
       'Render style: flat_color. Aesthetic: Futuristic Sci-Fi Adventure — bright Neo Cities against ancient stone vaults, warm gold Cartographer glows against cold orbital blues.',
     color_palette: ['#0a1628', '#c9a84c', '#1a3a5c', '#2d5a27', '#8b3a1a', '#3d1f6b', '#e8d5a3', '#1e4d3b'],

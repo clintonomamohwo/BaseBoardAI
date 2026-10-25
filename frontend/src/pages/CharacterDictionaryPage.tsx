@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useRef } from 'react'
 import { saveAs } from 'file-saver'
 import type { CharacterProfile, RenderStyle, StoryboardProject, StoryboardScene } from '../types/storyboard'
 import { generateImage, scanContinuityImpact, reforgeAffectedFrames, updateCKGIdentity } from '../api/storyboard'
@@ -99,6 +99,7 @@ function CharacterRow({
   const [editing,      setEditing]      = useState(false)
   const [portraitUrl,  setPortraitUrl]  = useState<string | null>(null)
   const [portraitLoading, setPortraitLoading] = useState(false)
+  const portraitRequestInProgress = useRef(false)
   const [lightbox,     setLightbox]     = useState(false)
   const portraitUploadRef = useRef<HTMLInputElement>(null)
 
@@ -115,15 +116,19 @@ function CharacterRow({
     setEditMarkers(char.facial_blueprint?.distinct_markers ?? '')
   }
 
-  // Load portrait on first expand
-  useEffect(() => {
-    if (!expanded || portraitUrl || portraitLoading) return
+  // Load the portrait when the user first expands the character.
+  function loadPortrait() {
+    if (portraitUrl || portraitRequestInProgress.current) return
+    portraitRequestInProgress.current = true
     setPortraitLoading(true)
     generateImage(buildPortraitPrompt(char), renderStyle)
       .then(url => setPortraitUrl(url))
       .catch(() => { /* silently leave as null — placeholder shows */ })
-      .finally(() => setPortraitLoading(false))
-  }, [expanded]) // eslint-disable-line react-hooks/exhaustive-deps
+      .finally(() => {
+        portraitRequestInProgress.current = false
+        setPortraitLoading(false)
+      })
+  }
 
   function handleSaveEdit() {
     if (!onEditSave) { setEditing(false); return }
@@ -188,6 +193,7 @@ function CharacterRow({
   }
 
   function handleExpand() {
+    if (!expanded) loadPortrait()
     setExpanded(e => !e)
   }
 

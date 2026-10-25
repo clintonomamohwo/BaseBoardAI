@@ -130,6 +130,16 @@ CAMERA MOVEMENT RULES
   Pan / Tilt     → revealing new information, following action
   Crane / Drone  → scale, geography, epic moments
 
+SHOT-TO-SHOT CONTINUITY (REQUIRED)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+For every frame, record the end-of-shot character pose/action, visible or held props,
+and primary screen-space movement direction. Carry prop hand, body orientation,
+eyeline, and geography forward from adjacent shots unless the screenplay changes them.
+Use screen_direction exactly: left_to_right, right_to_left, toward_camera,
+away_from_camera, static, or unspecified. Add continuity_reference_ids using stable
+IDs such as scene_1_frame_1 for earlier frames that should visually match. Use []
+when there is no meaningful earlier reference. Never invent a reference to a future shot.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -169,7 +179,12 @@ Each scene element must match this EXACT structure:
 
       "director_notes": "<rationale for this shot choice — explain WHY this framing serves the dramatic moment>",
 
-      "sound_cue": "<ambient sound, music cue, or null>"
+      "sound_cue": "<ambient sound, music cue, or null>",
+      "action_pose": "<end-of-shot body pose, position, and orientation>",
+      "props_present": ["<visible or held story prop>"],
+      "screen_direction": "<left_to_right | right_to_left | toward_camera | away_from_camera | static | unspecified>",
+      "continuity_reference_ids": ["<stable earlier frame ID, e.g. scene_1_frame_1>"],
+      "continuity_notes": "<what must carry over, or null>"
     }}
   ]
 }}
@@ -177,6 +192,9 @@ Each scene element must match this EXACT structure:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PRODUCTION CONTEXT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Creator-specified story context (respect the format and genre only when supplied):
+{story_context}
+
 Global aesthetic: {global_aesthetic}
 Draw mode: {render_style} (bw_sketch = fineliner ink cross-hatching; flat_color = solid cell-shaded; full_shaded = cinematic volumetric)
 color_palette must be exactly 3 hex codes reflecting the emotional_tone.

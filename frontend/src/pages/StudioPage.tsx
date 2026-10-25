@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { classifyError } from '../utils/classifyError'
 import type { RenderStyle, StoryboardFrame, StoryboardProject, StoryboardScene } from '../types/storyboard'
 import { forgePipeline, upgradeSceneStyle } from '../api/storyboard'
@@ -13,6 +13,7 @@ import LockedCutFolder from '../components/LockedCutFolder'
 import BatchExportBar from '../components/BatchExportBar'
 import ConstellationLoader from '../components/ConstellationLoader'
 import UpgradeStyleMenu from '../components/UpgradeStyleMenu'
+import { patchShotWithContinuityReview } from '../utils/shotContinuity'
 
 const RENDER_OPTIONS: { value: RenderStyle; label: string }[] = [
   { value: 'bw_sketch',   label: 'B&W Sketch' },
@@ -29,11 +30,14 @@ type ViewMode = typeof VIEW_MODES[number]
 
 interface Props {
   initialProject?: StoryboardProject | null
+  onProjectChange: (project: StoryboardProject, alreadySaved?: boolean) => void
   onNotify?: (msg: string, type?: 'success' | 'info' | 'error') => void
 }
 
-export default function StudioPage({ initialProject, onNotify }: Props) {
+export default function StudioPage({ initialProject, onProjectChange, onNotify }: Props) {
   const [project, setProject]           = useState<StoryboardProject | null>(initialProject ?? null)
+  const projectRef = useRef(project)
+  projectRef.current = project
   const [activeScene, setActiveScene]   = useState<StoryboardScene | null>(null)
   const [selectedKeys, setSelectedKeys] = useState<Map<string, boolean>>(new Map())
   const [viewMode, setViewMode]         = useState<ViewMode>('storyboard')
@@ -46,6 +50,14 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
   const [rerunError, setRerunError]     = useState<string | null>(null)
   const [projectUpgrading, setProjectUpgrading] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(true)
+  function updateProjectState(updater: (current: StoryboardProject) => StoryboardProject) {
+    const current = projectRef.current
+    if (!current) return
+    const next = updater(current)
+    projectRef.current = next
+    setProject(next)
+    onProjectChange(next)
+  }
 
   async function handleRerun() {
     if (!project) return
@@ -89,9 +101,10 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
         }))
       }
 
-      handleProjectLoaded(p)
-      setRerunOpen(false)
       const restoredCount = Object.keys(lockedFrames).length
+      handleProjectLoaded(p)
+      if (restoredCount > 0) onProjectChange(p)
+      setRerunOpen(false)
       onNotify?.(restoredCount > 0
         ? `Re-run complete ✓ — ${restoredCount} locked frame${restoredCount !== 1 ? 's' : ''} preserved`
         : 'Re-run complete ✓'
@@ -108,7 +121,9 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
   function handleDeleteScene(sceneNumber: number) {
     if (!project) return
     const updated = { ...project, scenes: project.scenes.filter(s => s.scene_number !== sceneNumber) }
+    projectRef.current = updated
     setProject(updated)
+    onProjectChange(updated)
     if (activeScene?.scene_number === sceneNumber) {
       setActiveScene(updated.scenes[0] ?? null)
     }
@@ -116,76 +131,44 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
 
   function handleReorderScenes(scenes: StoryboardScene[]) {
     if (!project) return
-    setProject({ ...project, scenes })
+    updateProjectState(current => ({ ...current, scenes }))
   }
 
   function handleProjectLoaded(p: StoryboardProject) {
+    projectRef.current = p
     setProject(p)
+    onProjectChange(p, true)
     setActiveScene(p.scenes[0] ?? null)
     setSelectedKeys(new Map())
     setViewMode('storyboard')
     setShowForm(false)
   }
 
+  function handleFrameUpdate(sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) {
+    const current = projectRef.current
+    if (!current) return
+    const scenes = patchShotWithContinuityReview(current.scenes, sceneNumber, frameNumber, patch)
+    updateProjectState(project => ({ ...project, scenes }))
+    setActiveScene(prev => !prev || prev.scene_number !== sceneNumber
+      ? prev
+      : scenes.find(scene => scene.scene_number === sceneNumber) ?? prev)
+  }
+
   /** Replace a single frame's image and mark it as an artist override.
    *  Marked frames are skipped by re-run so the artwork is never overwritten. */
   function handleReplaceFrameImage(sceneNumber: number, frameNumber: number, dataUrl: string) {
-    const patch = (f: StoryboardFrame) =>
-      f.frame_number === frameNumber
-        ? { ...f, generated_image_url: dataUrl, is_manual_override: true }
-        : f
-
-    setProject(prev => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        scenes: prev.scenes.map(s =>
-          s.scene_number !== sceneNumber ? s : { ...s, frames: s.frames.map(patch) }
-        ),
-      }
-    })
-    // Keep activeScene in sync so the canvas re-renders immediately
-    setActiveScene(prev => {
-      if (!prev || prev.scene_number !== sceneNumber) return prev
-      return { ...prev, frames: prev.frames.map(patch) }
-    })
+    handleFrameUpdate(sceneNumber, frameNumber, { generated_image_url: dataUrl, is_manual_override: true })
   }
 
   /** Patch a frame's visual action fields after regeneration.
    *  Only the returned fields are overwritten — image and overrides are untouched. */
   function handleVisualActionUpdate(sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) {
-    const applyPatch = (f: StoryboardFrame) =>
-      f.frame_number === frameNumber ? { ...f, ...patch } : f
-
-    setProject(prev => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        scenes: prev.scenes.map(s =>
-          s.scene_number !== sceneNumber ? s : { ...s, frames: s.frames.map(applyPatch) }
-        ),
-      }
-    })
-    setActiveScene(prev => {
-      if (!prev || prev.scene_number !== sceneNumber) return prev
-      return { ...prev, frames: prev.frames.map(applyPatch) }
-    })
+    handleFrameUpdate(sceneNumber, frameNumber, patch)
   }
 
   /** Patch a single frame's image after a style upgrade or background variation. */
   function handleUpgradeFrame(sceneNumber: number, frameNumber: number, newUrl: string) {
-    const patch = (f: StoryboardFrame) =>
-      f.frame_number === frameNumber ? { ...f, generated_image_url: newUrl } : f
-    setProject(prev => {
-      if (!prev) return prev
-      return { ...prev, scenes: prev.scenes.map(s =>
-        s.scene_number !== sceneNumber ? s : { ...s, frames: s.frames.map(patch) }
-      )}
-    })
-    setActiveScene(prev => {
-      if (!prev || prev.scene_number !== sceneNumber) return prev
-      return { ...prev, frames: prev.frames.map(patch) }
-    })
+    handleFrameUpdate(sceneNumber, frameNumber, { generated_image_url: newUrl })
   }
 
   /** Upgrade every frame in every scene to a new render style. */
@@ -266,7 +249,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
           </button>
         ))}
         <div className="ml-auto flex items-center gap-3 pb-1">
-          {project && <BatchExportBar project={project} scenes={project.scenes} selectedKeys={selectedKeys} />}
+          {project && <BatchExportBar project={project} scenes={project.scenes} selectedKeys={selectedKeys} onNotify={onNotify} />}
           {project && (
             <UpgradeStyleMenu
               currentStyle={project.render_style}
@@ -450,6 +433,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
             {displayScene && (
               <StoryboardCanvas
                   scene={displayScene}
+                  allScenes={project?.scenes ?? []}
                   renderStyleLabel={renderStyleLabel}
                   projectRenderStyle={project?.render_style}
                   selectedKeys={selectedKeys}
@@ -457,6 +441,7 @@ export default function StudioPage({ initialProject, onNotify }: Props) {
                   onOpenPlayer={() => setViewMode('player')}
                   onReplaceImage={handleReplaceFrameImage}
                   onVisualActionUpdate={handleVisualActionUpdate}
+                  onFrameUpdate={handleFrameUpdate}
                   onUpgradeFrame={handleUpgradeFrame}
                 />
             )}

@@ -55,6 +55,16 @@ class Settings(BaseSettings):
     # Example: CORS_ORIGINS=http://localhost:5173 https://my-app.example.com
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000", "http://127.0.0.1:3000"]
 
+    # Generation safety. Production requests are rejected unless a server-side
+    # bearer token is configured; never ship this token in the browser bundle.
+    APP_ENV: str = "development"
+    GENERATION_ENABLED: bool = True
+    GENERATION_API_TOKEN: str = ""
+    GENERATION_REQUESTS_PER_MINUTE: int = 5
+    GENERATION_REQUESTS_PER_DAY: int = 100
+    MAX_GENERATION_FRAMES_PER_REQUEST: int = 60
+    ENABLE_PREMIUM_IMAGE_GENERATION: bool = False
+
     # -----------------------------------------------------------------------
     # IBM WatsonX (TEXT_PROVIDER=watsonx)
     # -----------------------------------------------------------------------
@@ -81,6 +91,8 @@ class Settings(BaseSettings):
     GEMINI_FAST_MODEL: str = "gemini-2.0-flash"   # alias accepted from .env
     # Image generation model (Imagen)
     GEMINI_IMAGE_MODEL: str = "imagen-3.0-generate-001"
+    # Explicitly requested per-frame premium image render
+    GEMINI_NANO_BANANA_MODEL: str = "gemini-nano-banana-2.1"
 
     # -----------------------------------------------------------------------
     # Hugging Face (IMAGE_PROVIDER=huggingface)
@@ -92,6 +104,9 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     # Pollinations (IMAGE_PROVIDER=pollinations)
     # -----------------------------------------------------------------------
+    POLLINATIONS_API_KEY: str = ""
+    POLLINATIONS_IMAGE_MODELS: str = "black-forest-labs/flux.1-schnell,tongyi-mai/z-image-turbo"
+    POLLINATIONS_EDIT_MODELS: str = "microsoft/mai-image-2.5-flash"
     POLLINATIONS_WIDTH: int = 768
     POLLINATIONS_HEIGHT: int = 512
 

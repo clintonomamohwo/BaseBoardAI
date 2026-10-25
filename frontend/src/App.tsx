@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import logoSrc from './assets/logo.png'
-import type { RenderStyle, StoryboardProject } from './types/storyboard'
+import type { RenderStyle, StoryboardProject, StoryDevelopmentDraft } from './types/storyboard'
 import type { DirectorStyle } from './pages/NewProjectPage'
 import { useDirectorsLight } from './hooks/useDirectorsLight'
 import { DEMO_PROJECT } from './data/demoProject'
 import LandingPage            from './pages/LandingPage'
 import CompassNavPage         from './pages/CompassNavPage'
 import NewProjectPage         from './pages/NewProjectPage'
+import IdeaDevelopmentPage    from './pages/IdeaDevelopmentPage'
 import GenesisEnginePage      from './pages/GenesisEnginePage'
 import CreativeDirectorReport from './pages/CreativeDirectorReport'
 import StudioPage             from './pages/StudioPage'
@@ -15,11 +16,13 @@ import WorldBiblePage         from './pages/WorldBiblePage'
 import ProjectLibraryPage     from './pages/ProjectLibraryPage'
 import ThemeToggle            from './components/ThemeToggle'
 import GraniteNotification    from './components/GraniteNotification'
+import { createProject, updateProject } from './api/storyboard'
 
 type AppView =
   | 'landing'
   | 'compass'
   | 'new-project'      // 3-card creation method selector
+  | 'idea-development' // idea → outline → script authoring
   | 'genesis-running'  // AI analysis pipeline
   | 'report'           // Creative Director's Report
   | 'studio'
@@ -29,7 +32,7 @@ type StudioTab = 'storyboard' | 'characters' | 'world-bible'
 
 interface Notif { id: number; message: string; detail?: string; type?: 'success' | 'info' | 'error' }
 
-interface GenesisState { file: File | null; title: string; renderStyle: RenderStyle; directorStyle: DirectorStyle }
+interface GenesisState { file: File | null; title: string; renderStyle: RenderStyle; directorStyle: DirectorStyle; storyDevelopment: StoryDevelopmentDraft | null }
 
 function getInitialDark(): boolean {
   const stored = localStorage.getItem('theme')
@@ -49,9 +52,67 @@ export default function App() {
   const [notifs, setNotifs]          = useState<Notif[]>([])
   const [notifId, setNotifId]        = useState(0)
   const [idle, setIdle]              = useState(false)
-  const [genesisState, setGenesisState] = useState<GenesisState>({ file: null, title: '', renderStyle: 'bw_sketch', directorStyle: 'balanced' })
+  const [genesisState, setGenesisState] = useState<GenesisState>({ file: null, title: '', renderStyle: 'bw_sketch', directorStyle: 'balanced', storyDevelopment: null })
   // Completed project held for the Report screen before entering Studio
   const [pendingProject, setPending] = useState<StoryboardProject | null>(null)
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved' | 'failed' | 'local'>('saved')
+  const [retrySaveVersion, setRetrySaveVersion] = useState(0)
+  const projectRevision = useRef(0)
+  const savedRevision = useRef(0)
+  const projectSession = useRef(0)
+  const projectIdsBySession = useRef(new Map<number, number>())
+  const saveQueue = useRef<Promise<void>>(Promise.resolve())
+
+  function adoptProject(next: StoryboardProject | null, alreadySaved = false) {
+    projectSession.current += 1
+    if (next?.db_id != null) projectIdsBySession.current.set(projectSession.current, next.db_id)
+    projectRevision.current += 1
+    if (alreadySaved) savedRevision.current = projectRevision.current
+    setProject(next)
+    setSaveStatus(next == null ? 'saved' : alreadySaved && next.db_id != null ? 'saved' : 'local')
+  }
+
+  function publishProjectEdit(next: StoryboardProject) {
+    projectRevision.current += 1
+    setProject(next)
+    setSaveStatus('unsaved')
+  }
+
+  useEffect(() => {
+    if (!project || projectRevision.current <= savedRevision.current) return
+    const revision = projectRevision.current
+    const session = projectSession.current
+    const snapshot = project
+    const timer = window.setTimeout(() => {
+      setSaveStatus('saving')
+      const save = saveQueue.current
+        .catch(() => undefined)
+        .then(() => {
+          const existingId = snapshot.db_id ?? projectIdsBySession.current.get(session)
+          return existingId == null
+            ? createProject(snapshot)
+            : updateProject({ ...snapshot, db_id: existingId })
+        })
+      saveQueue.current = save.then(() => undefined, () => undefined)
+      save.then(saved => {
+        if (saved.db_id == null) {
+          if (revision === projectRevision.current) setSaveStatus('failed')
+          return
+        }
+        projectIdsBySession.current.set(session, saved.db_id)
+        if (session === projectSession.current) {
+          setProject(current => current && current.db_id == null ? { ...current, db_id: saved.db_id } : current)
+        }
+        if (revision !== projectRevision.current) return
+        savedRevision.current = revision
+        setProject(saved)
+        setSaveStatus('saved')
+      }).catch(() => {
+        if (revision === projectRevision.current) setSaveStatus('failed')
+      })
+    }, 650)
+    return () => window.clearTimeout(timer)
+  }, [project, retrySaveVersion])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
@@ -85,7 +146,7 @@ export default function App() {
   /** User clicks "Enter Studio" on the report card */
   function handleEnterStudio() {
     if (!pendingProject) return
-    setProject(pendingProject)
+    adoptProject(pendingProject, pendingProject.db_id != null)
     setPending(null)
     setStudioTab('storyboard')
     setView('studio')
@@ -101,18 +162,18 @@ export default function App() {
   function handleStartBlank() {
     // Start Blank skips Genesis Engine entirely — goes straight to Studio
     // with a null project so the user sees the empty PipelineForm.
-    setProject(null)
+    adoptProject(null, true)
     setStudioTab('storyboard')
     setView('studio')
   }
 
-  function handleFileReady(file: File, title: string, renderStyle: RenderStyle = 'bw_sketch', directorStyle: DirectorStyle = 'balanced') {
-    setGenesisState({ file, title, renderStyle, directorStyle })
+  function handleFileReady(file: File, title: string, renderStyle: RenderStyle = 'bw_sketch', directorStyle: DirectorStyle = 'balanced', storyDevelopment: StoryDevelopmentDraft | null = null) {
+    setGenesisState({ file, title, renderStyle, directorStyle, storyDevelopment })
     setView('genesis-running')
   }
 
   function handleLoadProject(p: StoryboardProject) {
-    setProject(p)
+    adoptProject(p, p.db_id != null)
     setStudioTab('storyboard')
     setView('studio')
     pushNotif(`"${p.project_title}" loaded ✓`)
@@ -129,10 +190,13 @@ export default function App() {
   }
 
   function handleDeleteScene(sceneNumber: number) {
-    setProject(p => p ? {
-      ...p,
-      scenes: p.scenes.filter(s => s.scene_number !== sceneNumber),
-    } : p)
+    if (!project) return
+    publishProjectEdit({ ...project, scenes: project.scenes.filter(s => s.scene_number !== sceneNumber) })
+  }
+
+  function handleProjectChangeFromStudio(next: StoryboardProject, alreadySaved = false) {
+    if (alreadySaved) adoptProject(next, next.db_id != null)
+    else publishProjectEdit(next)
   }
 
   /* ─── Landing ─────────────────────────────────────────────────────────── */
@@ -161,8 +225,19 @@ export default function App() {
   if (view === 'new-project') return (
     <NewProjectPage
       onFileReady={handleFileReady}
+      onDevelopIdea={() => setView('idea-development')}
       onStartBlank={handleStartBlank}
       onLanding={() => setView('landing')}
+    />
+  )
+
+  if (view === 'idea-development') return (
+    <IdeaDevelopmentPage
+      onBack={() => setView('new-project')}
+      onLanding={() => setView('landing')}
+      onScriptReady={(file, title, renderStyle, directorStyle, draft) =>
+        handleFileReady(file, title, renderStyle, directorStyle, draft)
+      }
     />
   )
 
@@ -173,6 +248,7 @@ export default function App() {
       projectTitle={genesisState.title}
       renderStyle={genesisState.renderStyle}
       directorStyle={genesisState.directorStyle}
+      storyDevelopment={genesisState.storyDevelopment}
       onComplete={handleGenesisComplete}
       onNotify={pushNotif}
       onLanding={() => setView('landing')}
@@ -235,6 +311,15 @@ export default function App() {
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
+          {project && (
+            <div role="status" aria-live="polite" style={{ fontSize: 9, color: saveStatus === 'failed' ? '#e06060' : saveStatus === 'saved' ? 'var(--gold)' : 'var(--text-muted)' }}>
+              {saveStatus === 'failed' ? (
+                <button onClick={() => { setSaveStatus('unsaved'); setRetrySaveVersion(v => v + 1) }} style={{ color: 'inherit', background: 'transparent', border: 0, cursor: 'pointer', textDecoration: 'underline' }}>
+                  Save failed — retry
+                </button>
+              ) : saveStatus === 'saving' ? 'Saving…' : saveStatus === 'unsaved' ? 'Unsaved changes' : saveStatus === 'local' ? 'Not saved yet' : 'Saved'}
+            </div>
+          )}
           {/* Library shortcut */}
           <button onClick={() => setView('library')} className="btn-tactile"
             style={{
@@ -274,7 +359,12 @@ export default function App() {
       {/* Content */}
       <div key={tabKey} className="flex flex-1 overflow-hidden anim-tab-in" style={{ height: 'calc(100vh - 44px)' }}>
         {studioTab === 'storyboard' && (
-          <StudioPage key={project?.db_id ?? 'new'} initialProject={project} onNotify={pushNotif} />
+          <StudioPage
+            key={project?.db_id ?? 'new'}
+            initialProject={project}
+            onProjectChange={handleProjectChangeFromStudio}
+            onNotify={pushNotif}
+          />
         )}
         {studioTab === 'characters' && (
           <CharacterDictionaryPage
@@ -282,17 +372,17 @@ export default function App() {
             scenes={project?.scenes ?? []}
             renderStyle={project?.render_style ?? 'bw_sketch'}
             project={project}
-            onReplacePortrait={(_charId, _dataUrl) => {
+            onReplacePortrait={() => {
               // Portrait URLs live in CharacterRow local state — no App-level action needed.
             }}
             onUpdateCharacter={(updated) => {
-              setProject(p => p ? {
-                ...p,
-                characters: p.characters.map(c => c.id === updated.id ? updated : c),
-              } : p)
+              if (project) publishProjectEdit({
+                ...project,
+                characters: project.characters.map(c => c.id === updated.id ? updated : c),
+              })
             }}
             onUpdateSceneFrames={(updatedScenes) => {
-              setProject(p => p ? { ...p, scenes: updatedScenes } : p)
+              if (project) publishProjectEdit({ ...project, scenes: updatedScenes })
             }}
             onNotify={pushNotif}
           />
@@ -304,7 +394,7 @@ export default function App() {
             renderStyle={project?.render_style ?? 'bw_sketch'}
             onDeleteScene={handleDeleteScene}
             onUpdateSceneFrames={(updatedScenes) => {
-              setProject(p => p ? { ...p, scenes: updatedScenes } : p)
+              if (project) publishProjectEdit({ ...project, scenes: updatedScenes })
             }}
             onNotify={pushNotif}
           />

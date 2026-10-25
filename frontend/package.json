@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:production-pack": "node --experimental-strip-types --test tests/productionPack.test.mjs",
+    "test:shot-continuity": "node --experimental-strip-types --test tests/shotContinuity.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

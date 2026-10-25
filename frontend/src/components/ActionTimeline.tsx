@@ -20,15 +20,13 @@ interface Props {
 }
 
 export default function ActionTimeline({ scene }: Props) {
-  // Accumulate timestamps from duration_seconds
-  let elapsed = 0
-  const beats = scene.frames.map(frame => {
-    const ts = elapsed
-    elapsed += frame.duration_seconds
-    return { frame, ts }
-  })
-
-  const totalDuration = elapsed
+  const { beats, totalDuration } = scene.frames.reduce<{
+    beats: { frame: StoryboardScene['frames'][number]; ts: number }[]
+    totalDuration: number
+  }>((acc, frame) => ({
+    beats: [...acc.beats, { frame, ts: acc.totalDuration }],
+    totalDuration: acc.totalDuration + frame.duration_seconds,
+  }), { beats: [], totalDuration: 0 })
 
   if (beats.length === 0) return null
 

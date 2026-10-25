@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import JSZip from 'jszip'
 import { saveAs } from 'file-saver'
 import type { StoryboardProject, StoryboardScene } from '../types/storyboard'
@@ -36,7 +36,7 @@ export default function SceneIndex({ project, activeSceneNumber, onSelectScene, 
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [dragOverIdx, setDragOverIdx]     = useState<number | null>(null)
-  const dragSrcIdx = useRef<number | null>(null)
+  const [dragSrcIdx, setDragSrcIdx] = useState<number | null>(null)
 
   const filtered = project.scenes.filter(s =>
     s.location_heading.toLowerCase().includes(search.toLowerCase()) ||
@@ -44,7 +44,7 @@ export default function SceneIndex({ project, activeSceneNumber, onSelectScene, 
   )
 
   function handleDragStart(idx: number) {
-    dragSrcIdx.current = idx
+    setDragSrcIdx(idx)
   }
 
   function handleDragOver(e: React.DragEvent, idx: number) {
@@ -53,18 +53,18 @@ export default function SceneIndex({ project, activeSceneNumber, onSelectScene, 
   }
 
   function handleDrop(idx: number) {
-    const src = dragSrcIdx.current
+    const src = dragSrcIdx
     if (src === null || src === idx) { setDragOverIdx(null); return }
     const reordered = [...project.scenes]
     const [moved] = reordered.splice(src, 1)
     reordered.splice(idx, 0, moved)
     onReorderScenes?.(reordered)
-    dragSrcIdx.current = null
+    setDragSrcIdx(null)
     setDragOverIdx(null)
   }
 
   function handleDragEnd() {
-    dragSrcIdx.current = null
+    setDragSrcIdx(null)
     setDragOverIdx(null)
   }
 
@@ -107,7 +107,7 @@ export default function SceneIndex({ project, activeSceneNumber, onSelectScene, 
               onDrop={() => handleDrop(sceneIdx)}
               onDragEnd={handleDragEnd}
               style={{
-                opacity: dragSrcIdx.current === sceneIdx ? 0.4 : 1,
+                opacity: dragSrcIdx === sceneIdx ? 0.4 : 1,
                 borderTop: dragOverIdx === sceneIdx ? '2px solid var(--gold)' : '2px solid transparent',
                 transition: 'border-color 100ms ease, opacity 150ms ease',
               }}

@@ -16,7 +16,7 @@
  *   />
  */
 
-import { useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import type { CharacterVariant } from '../types/storyboard'
 
 const PRESET_VARIANTS: Omit<CharacterVariant, 'variant_id'>[] = [
@@ -35,9 +35,9 @@ interface Props {
   onChange: (updated: CharacterVariant[]) => void
 }
 
-function emptyVariant(): CharacterVariant {
+function emptyVariant(variantId: string): CharacterVariant {
   return {
-    variant_id: `variant_${Date.now()}`,
+    variant_id: variantId,
     label: 'New Variant',
     outfit: null,
     hair_override: null,
@@ -52,10 +52,17 @@ function emptyVariant(): CharacterVariant {
 export default function VariantManager({ variants, activeVariantId, onActivate, onChange }: Props) {
   const [editing, setEditing] = useState<string | null>(null)
   const [showPresets, setShowPresets] = useState(false)
+  const idPrefix = useId()
+  const idSequence = useRef(0)
+
+  function nextVariantId(prefix: string) {
+    idSequence.current += 1
+    return `${prefix}_${idPrefix}_${idSequence.current}`
+  }
 
   function addPreset(preset: Omit<CharacterVariant, 'variant_id'>) {
     const v: CharacterVariant = {
-      variant_id: `preset_${preset.label.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`,
+      variant_id: nextVariantId(`preset_${preset.label.toLowerCase().replace(/\s+/g, '_')}`),
       ...preset,
     }
     onChange([...variants, v])
@@ -63,7 +70,7 @@ export default function VariantManager({ variants, activeVariantId, onActivate, 
   }
 
   function addBlank() {
-    const v = emptyVariant()
+    const v = emptyVariant(nextVariantId('variant'))
     onChange([...variants, v])
     setEditing(v.variant_id)
   }

@@ -400,6 +400,7 @@ def _invoke_storyboard_chunk(
     render_style: str,
     director_style: str,
     scene_number_offset: int,
+    story_context: str = "",
 ) -> tuple[list[ScriptSceneBase], bool]:
     """
     Invoke the storyboard LLM for a single chunk of screenplay text.
@@ -409,6 +410,7 @@ def _invoke_storyboard_chunk(
         input_variables=[
             "character_context", "world_context", "raw_script_text",
             "global_aesthetic", "render_style", "director_style", "shot_distribution_guidance",
+            "story_context",
         ],
         template=STORYBOARD_PROMPT,
     )
@@ -420,6 +422,7 @@ def _invoke_storyboard_chunk(
         render_style=render_style,
         director_style=director_style,
         shot_distribution_guidance=_STYLE_GUIDANCE.get(director_style, _STYLE_GUIDANCE["balanced"]),
+        story_context=story_context or "None supplied.",
     )
     raw_response = _invoke_with_fallback(prompt_text, max_new_tokens=16384)
     parsed, truncated = _parse_json_response(raw_response)
@@ -440,6 +443,7 @@ def invoke_storyboard_stage(
     global_aesthetic: str,
     render_style: str = 'bw_sketch',
     director_style: str = 'balanced',
+    story_context: str = "",
 ) -> tuple[list[ScriptSceneBase], bool]:
     """
     Run STORYBOARD_PROMPT with compiled character + world context and the raw screenplay.
@@ -482,6 +486,7 @@ def invoke_storyboard_stage(
                 render_style,
                 director_style,
                 scene_number_offset=len(all_scenes),
+                story_context=story_context,
             )
             all_scenes.extend(chunk_scenes)
             if chunk_truncated:

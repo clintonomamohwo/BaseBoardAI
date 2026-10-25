@@ -8,7 +8,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { classifyError } from '../utils/classifyError'
 import logoSrc from '../assets/logo.png'
-import type { RenderStyle, StoryboardProject, StoryboardScene } from '../types/storyboard'
+import type { RenderStyle, StoryboardProject, StoryboardScene, StoryDevelopmentDraft } from '../types/storyboard'
 import { forgePipelineStream } from '../api/storyboard'
 import { extractDocumentText } from '../utils/extractDocumentText'
 import type { DirectorStyle } from './NewProjectPage'
@@ -23,7 +23,7 @@ interface TaskDef {
 
 const TASKS: TaskDef[] = [
   { id: 'read',       label: 'Reading Story',               icon: '📖', delay: 0, duration: 0 },
-  { id: 'genre',      label: 'Understanding Genre',         icon: '🎭', delay: 0, duration: 0 },
+  { id: 'genre',      label: 'Applying Story Context',      icon: '🎭', delay: 0, duration: 0 },
   { id: 'chars',      label: 'Extracting Characters',       icon: '👤', delay: 0, duration: 0 },
   { id: 'relations',  label: 'Building Relationships',      icon: '🕸', delay: 0, duration: 0 },
   { id: 'locations',  label: 'Detecting Locations',         icon: '📍', delay: 0, duration: 0 },
@@ -51,6 +51,7 @@ interface Props {
   projectTitle: string
   renderStyle: RenderStyle
   directorStyle?: DirectorStyle
+  storyDevelopment?: StoryDevelopmentDraft | null
   onComplete: (project: StoryboardProject) => void
   onNotify?: (msg: string, type?: 'success' | 'info' | 'error') => void
   onBack: () => void
@@ -58,7 +59,7 @@ interface Props {
 }
 
 export default function GenesisEnginePage({
-  file, projectTitle, renderStyle, directorStyle = 'balanced', onComplete, onNotify, onBack, onLanding,
+  file, projectTitle, renderStyle, directorStyle = 'balanced', storyDevelopment = null, onComplete, onNotify, onBack, onLanding,
 }: Props) {
   const [taskStatus,   setTaskStatus]   = useState<Record<string, TaskStatus>>(
     Object.fromEntries(TASKS.map(t => [t.id, 'pending' as TaskStatus]))
@@ -105,12 +106,6 @@ export default function GenesisEnginePage({
     })
   }
 
-  useEffect(() => {
-    if (ran.current) return
-    ran.current = true
-    runGenesis()
-  }, [])
-
   async function runGenesis() {
     setStarted(true)
 
@@ -138,6 +133,7 @@ export default function GenesisEnginePage({
           raw_character_notes:   docText,
           raw_world_notes:       docText,
           raw_script_text:       docText,
+          story_development:     storyDevelopment,
         },
         (ev) => {
           if (ev.event === 'stage_start') {
@@ -222,12 +218,22 @@ export default function GenesisEnginePage({
     }
   }
 
+  useEffect(() => {
+    if (ran.current) return
+    ran.current = true
+    runGenesis()
+  }, [])
+
   const totalDone  = Object.values(taskStatus).filter(s => s === 'done').length
   const overallPct = Math.round((totalDone / TASKS.length) * 100)
 
   /** Resolve a task's display label — appends real counts once the pipeline resolves */
   function resolveLabel(task: TaskDef): string {
     if (!counts) return task.label
+    if (task.id === 'genre') {
+      const selectedGenre = storyDevelopment?.genre?.trim()
+      return selectedGenre ? `Using ${selectedGenre}` : 'Genre left open'
+    }
     if (task.id === 'chars')     return `${counts.chars} Character${counts.chars !== 1 ? 's' : ''} Extracted`
     if (task.id === 'locations') return `${counts.locations} Location${counts.locations !== 1 ? 's' : ''} Detected`
     if (task.id === 'scenes')    return `${counts.scenes} Scene${counts.scenes !== 1 ? 's' : ''} Identified`

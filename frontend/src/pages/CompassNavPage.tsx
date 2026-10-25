@@ -50,7 +50,6 @@ const C_INNER = 2 * Math.PI * 140
 export default function CompassNavPage({ onSelect, entering = false, onEntered }: Props) {
   const [hoveredId,  setHoveredId]  = useState<Section | null>(null)
   const [centerHover, setCenterHov] = useState(false)
-  const [ringAngle,   setRingAngle] = useState(0)  // degrees — driven by hover direction
   const compassContainerRef = useRef<HTMLDivElement>(null)
   // BMS-2: needle follows cursor, pinned to hovered section when hovering a card
   const needleAngle = useCompassNeedle(compassContainerRef, hoveredId)
@@ -60,31 +59,28 @@ export default function CompassNavPage({ onSelect, entering = false, onEntered }
   )
 
   useEffect(() => {
-    if (!entering) { setPhase('done'); return }
+    if (!entering) return
+    const reset = setTimeout(() => setPhase('center'), 0)
     const t1 = setTimeout(() => setPhase('rings'),  200)
     const t2 = setTimeout(() => setPhase('nodes'),  400)
     const t3 = setTimeout(() => setPhase('bloom'),  600)
     const t4 = setTimeout(() => { setPhase('done'); onEntered?.() }, 900)
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4) }
+    return () => { clearTimeout(reset); clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4) }
   }, [entering])
 
-  // When a card is hovered, nudge the ring toward its direction
-  useEffect(() => {
-    const angles: Record<string, number> = { N: -8, S: 8, W: -8, E: 8 }
-    if (hoveredId) {
-      const s = SECTIONS.find(x => x.id === hoveredId)
-      if (s) setRingAngle(angles[s.dir] ?? 0)
-    } else {
-      setRingAngle(0)
-    }
-  }, [hoveredId])
+  // Derive the animation state while inactive and the ring angle from the hovered card.
+  const visiblePhase = entering ? phase : 'done'
+  const hoveredSection = SECTIONS.find(section => section.id === hoveredId)
+  const ringAngle = hoveredSection
+    ? ({ N: -8, S: 8, W: -8, E: 8 }[hoveredSection.dir] ?? 0)
+    : 0
 
-  const ringsVisible = phase !== 'center'
-  const nodesVisible = phase === 'nodes' || phase === 'bloom' || phase === 'done'
-  const bloomVisible = phase === 'bloom' || phase === 'done'
+  const ringsVisible = visiblePhase !== 'center'
+  const nodesVisible = visiblePhase === 'nodes' || visiblePhase === 'bloom' || visiblePhase === 'done'
+  const bloomVisible = visiblePhase === 'bloom' || visiblePhase === 'done'
 
   // Center B size — larger on entrance phase, expanded on center-hover
-  const centerSize = phase === 'center' ? 76 : centerHover ? 72 : 64
+  const centerSize = visiblePhase === 'center' ? 76 : centerHover ? 72 : 64
 
   return (
     <div
@@ -352,7 +348,7 @@ export default function CompassNavPage({ onSelect, entering = false, onEntered }
                    0 0 14px rgba(201,168,76,0.3),
                    inset 0 1px 0 rgba(201,168,76,0.45),
                    inset 0 -1px 0 rgba(0,0,0,0.3)`
-                : phase === 'center'
+                : visiblePhase === 'center'
                 ? '0 0 32px var(--gold), 0 0 8px var(--gold)'
                 : `0 0 18px var(--gold-dim),
                    0 0 6px rgba(0,0,0,0.3),
