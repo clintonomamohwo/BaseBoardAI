@@ -28,7 +28,7 @@ type StageStatus = 'pending' | 'running' | 'done'
 
 interface Props {
   onComplete: (project: StoryboardProject) => void
-  onNotify?: (msg: string, type?: 'success' | 'info') => void
+  onNotify?: (msg: string, type?: 'success' | 'info' | 'error', detail?: string) => void
 }
 
 export default function PipelineForm({ onComplete, onNotify }: Props) {

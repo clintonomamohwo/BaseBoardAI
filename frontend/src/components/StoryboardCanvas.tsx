@@ -8,6 +8,7 @@ import UpgradeStyleMenu from './UpgradeStyleMenu'
 
 interface Props {
   scene: StoryboardScene
+  allScenes?: StoryboardScene[]
   renderStyleLabel: string
   /** The current project render_style key — passed to UpgradeStyleMenu to show ✓ on current */
   projectRenderStyle?: string
@@ -17,6 +18,7 @@ interface Props {
   onReplaceImage?: (sceneNumber: number, frameNumber: number, dataUrl: string) => void
   /** Called when a frame's visual_action is regenerated so parent can patch project state */
   onVisualActionUpdate?: (sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) => void
+  onFrameUpdate?: (sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) => void
   /** BMS-3: called with the focused frame key so the inspector can preview it */
   onFocusFrame?: (frameKey: string | null) => void
   /** Called when a frame image is upgraded to a new style */
@@ -24,9 +26,9 @@ interface Props {
 }
 
 export default function StoryboardCanvas({
-  scene, renderStyleLabel, projectRenderStyle,
+  scene, allScenes = [scene], renderStyleLabel, projectRenderStyle,
   selectedKeys, onToggleSelect, onOpenPlayer,
-  onReplaceImage, onVisualActionUpdate, onFocusFrame, onUpgradeFrame,
+  onReplaceImage, onVisualActionUpdate, onFrameUpdate, onFocusFrame, onUpgradeFrame,
 }: Props) {
   // BMS-3: track which frame key is currently nearest the cursor
   const [focusedKey, setFocusedKey] = useState<string | null>(null)
@@ -158,11 +160,13 @@ export default function StoryboardCanvas({
                 frameKey={fk}
                 frame={frame}
                 scene={scene}
+                allScenes={allScenes}
                 isSelected={selectedKeys.get(fk) ?? false}
                 isFocused={focusedKey === fk}
                 onToggleSelect={onToggleSelect}
                 onReplaceImage={onReplaceImage}
                 onVisualActionUpdate={onVisualActionUpdate}
+                onFrameUpdate={onFrameUpdate}
                 onUpgradeFrame={onUpgradeFrame}
                 projectRenderStyle={projectRenderStyle}
               />

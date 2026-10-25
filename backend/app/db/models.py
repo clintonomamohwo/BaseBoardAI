@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import ForeignKey, Index, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, deferred, mapped_column, relationship
 
 
@@ -43,6 +43,8 @@ class StoryboardProjectORM(Base):
     # Project Canon — the single source of truth for all AI generation in this project.
     # Stored as a JSON blob alongside the project; nullable for backwards compatibility.
     canon: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Creator-approved idea → outline → script material, kept separate from visual canon.
+    story_development: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     # relationships
     characters: Mapped[list[CharacterProfileORM]] = relationship(
@@ -54,7 +56,7 @@ class StoryboardProjectORM(Base):
         "ScriptSceneORM",
         back_populates="project",
         cascade="all, delete-orphan",
-        order_by="ScriptSceneORM.scene_number",
+        order_by="ScriptSceneORM.sort_order, ScriptSceneORM.scene_number",
     )
 
 
@@ -84,6 +86,9 @@ class CharacterProfileORM(Base):
     variants: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
     physical_form: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     classification: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Complete Pydantic profile snapshot preserves newer optional fields without
+    # requiring a column for every character-package attribute.
+    full_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     # Story role & relationships — set by CHARACTER_PROMPT, nullable for backwards compat
     story_role: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -107,6 +112,7 @@ class ScriptSceneORM(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     scene_number: Mapped[int] = mapped_column(nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     location_heading: Mapped[str] = mapped_column(Text, nullable=False)
     environmental_type: Mapped[str] = mapped_column(Text, nullable=False)
     time_of_day: Mapped[str] = mapped_column(Text, nullable=False)
@@ -143,6 +149,15 @@ class StoryboardFrameORM(Base):
     narrative_action: Mapped[str | None] = mapped_column(Text, nullable=True)
     visual_action: Mapped[str | None] = mapped_column(Text, nullable=True)
     animation_beats: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    action_pose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    props_present: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    screen_direction: Mapped[str | None] = mapped_column(String, nullable=True)
+    continuity_reference_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    continuity_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    continuity_dependency_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    continuity_review_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
 
     # ── Legacy (kept for backwards compat) ───────────────────────────────────
     action_breakdown: Mapped[str] = mapped_column(Text, nullable=False)
@@ -171,6 +186,12 @@ class StoryboardFrameORM(Base):
 
     # Deferred: excluded from SELECT on list queries; loaded only on individual project fetch
     generated_image_url: Mapped[str | None] = deferred(mapped_column(Text, nullable=True))
+    approval_status: Mapped[str] = mapped_column(
+        String, nullable=False, default="pending", server_default=text("'pending'")
+    )
+    is_manual_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
 
     # ── Director Engine metadata (nullable for backwards compatibility) ───────
     lens: Mapped[str | None] = mapped_column(Text, nullable=True)

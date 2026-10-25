@@ -5,7 +5,7 @@
  * derives standard animation keyframe positions, visualises them on a timeline,
  * and exports the shot spec to JSON (Maya / Blender compatible).
  */
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { saveAs } from 'file-saver'
 import type { StoryboardScene } from '../types/storyboard'
 import { generateImage } from '../api/storyboard'
@@ -80,28 +80,42 @@ export default function ShotPlanner({ scene, renderStyle = 'bw_sketch' }: Props)
   const [kfImages,    setKfImages]    = useState<Record<number, string | null>>({})
   const [generating,  setGenerating]  = useState(false)
   const [genProgress, setGenProgress] = useState(0)
+  const [generationError, setGenerationError] = useState<string | null>(null)
 
   async function handleGenerateImages() {
     setGenerating(true)
     setGenProgress(0)
+    setGenerationError(null)
     setKfImages({})
     const sceneContext = scene
       ? `${scene.location_heading}, ${scene.emotional_tone}, ${scene.time_of_day}`
       : 'cinematic scene'
     const newImages: Record<number, string | null> = {}
+    let failedCount = 0
+    let firstFailure = ''
     for (let i = 0; i < keyframes.length; i++) {
       const kf = keyframes[i]
       const prompt = `${kf.label} keyframe pose. ${sceneContext}. ${kf.description}. Frame ${kf.number} of ${totalFrames}.`
-      const url = await generateImage(prompt, renderStyle)
+      let url: string | null = null
+      try {
+        url = await generateImage(prompt, renderStyle)
+        if (!url) firstFailure ||= 'The image provider returned no image.'
+      } catch (error) {
+        firstFailure ||= error instanceof Error ? error.message : 'The image request failed.'
+      }
+      if (!url) failedCount += 1
       newImages[kf.number] = url
       setKfImages({ ...newImages })
       setGenProgress(((i + 1) / keyframes.length) * 100)
+    }
+    if (failedCount > 0) {
+      setGenerationError(`${failedCount} of ${keyframes.length} keyframe images failed. ${firstFailure}`)
     }
     setGenerating(false)
   }
 
   const totalFrames = Math.round(fps * duration)
-  const keyframes   = useMemo(() => deriveKeyframes(totalFrames), [totalFrames])
+  const keyframes   = deriveKeyframes(totalFrames)
 
   function handleExport() {
     const data = buildExportJson(shotName, scene, fps, duration, totalFrames, keyframes)
@@ -312,7 +326,7 @@ export default function ShotPlanner({ scene, renderStyle = 'bw_sketch' }: Props)
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {keyframes.map(kf => {
               const img = kfImages[kf.number]
-              const pending = !kfImages.hasOwnProperty(kf.number)
+              const pending = !(kf.number in kfImages)
               return (
                 <div key={kf.number} style={{ textAlign: 'center' }}>
                   <div style={{
@@ -369,6 +383,12 @@ export default function ShotPlanner({ scene, renderStyle = 'bw_sketch' }: Props)
           >
             ✦ Generate Keyframe Images
           </button>
+        )}
+
+        {generationError && (
+          <p role="alert" style={{ fontSize: 9, color: '#e06060', lineHeight: 1.5 }}>
+            {generationError}
+          </p>
         )}
 
         <button

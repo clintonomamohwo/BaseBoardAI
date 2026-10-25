@@ -1,13 +1,15 @@
 import { useRef, useState, useMemo } from 'react'
 import type { StoryboardFrame, StoryboardScene } from '../types/storyboard'
 import { downloadFramePng } from '../utils/exportFrames'
-import { regenerateVisualAction, upgradeFrameStyle } from '../api/storyboard'
+import { resolveFrameContinuityInputs } from '../utils/shotContinuity'
+import { regenerateVisualAction, renderFrameImage, upgradeFrameStyle } from '../api/storyboard'
 import GalleryLightbox from './GalleryLightbox'
 import UpgradeStyleMenu from './UpgradeStyleMenu'
 
 interface Props {
   frame: StoryboardFrame
   scene: StoryboardScene
+  allScenes?: StoryboardScene[]
   isSelected: boolean
   /** BMS-3: passed from StoryboardCanvas to apply focus glow */
   isFocused?: boolean
@@ -18,6 +20,8 @@ interface Props {
   onReplaceImage?: (sceneNumber: number, frameNumber: number, dataUrl: string) => void
   /** Called when visual_action is updated so parent can patch project state */
   onVisualActionUpdate?: (sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) => void
+  /** Called when shot metadata or approval state is edited. */
+  onFrameUpdate?: (sceneNumber: number, frameNumber: number, patch: Partial<StoryboardFrame>) => void
   /** Called when a style upgrade completes for this frame */
   onUpgradeFrame?: (sceneNumber: number, frameNumber: number, newUrl: string) => void
   /** Current project render style — shown as ✓ in the upgrade menu */
@@ -25,13 +29,14 @@ interface Props {
 }
 
 export default function FrameCard({
-  frame, scene, isSelected, isFocused = false, frameKey,
-  onToggleSelect, onReplaceImage, onVisualActionUpdate,
+  frame, scene, allScenes = [scene], isSelected, isFocused = false, frameKey,
+  onToggleSelect, onReplaceImage, onVisualActionUpdate, onFrameUpdate,
   onUpgradeFrame, projectRenderStyle,
 }: Props) {
   const key = frameKey
   const frameId = `${String(scene.scene_number).padStart(2, '0')}${String(frame.frame_number).padStart(1, '0')}`
   const filename = `s${scene.scene_number}_f${frame.frame_number}.png`
+  const continuityInputs = resolveFrameContinuityInputs(allScenes, scene.scene_number, frame.frame_number)
   const cardRef = useRef<HTMLDivElement>(null)
   const uploadRef = useRef<HTMLInputElement>(null)
 
@@ -39,6 +44,17 @@ export default function FrameCard({
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   // Production sheet expand/collapse
   const [sheetExpanded, setSheetExpanded] = useState(false)
+  const [editingFrame, setEditingFrame] = useState(false)
+  const [durationDraft, setDurationDraft] = useState({
+    frameNumber: frame.frame_number,
+    baseDuration: frame.duration_seconds,
+    value: String(frame.duration_seconds),
+  })
+  const durationValue = durationDraft.frameNumber === frame.frame_number
+    && durationDraft.baseDuration === frame.duration_seconds
+    ? durationDraft.value
+    : String(frame.duration_seconds)
+  const [durationError, setDurationError] = useState(false)
   // Regenerate visual action state
   const [regenLoading, setRegenLoading]     = useState(false)
   const [regenImgLoading, setRegenImgLoading] = useState(false)
@@ -46,6 +62,9 @@ export default function FrameCard({
   const [regenSuccess, setRegenSuccess]     = useState(false)
   // Style upgrade state
   const [upgradeLoading, setUpgradeLoading] = useState(false)
+  const [premiumLoading, setPremiumLoading] = useState(false)
+  const [premiumError, setPremiumError] = useState<string | null>(null)
+  const [premiumSuccess, setPremiumSuccess] = useState(false)
 
   async function handleUpgradeStyle(targetStyle: string) {
     if (upgradeLoading) return
@@ -63,6 +82,29 @@ export default function FrameCard({
     finally { setUpgradeLoading(false) }
   }
 
+  async function handlePremiumRender() {
+    if (premiumLoading || regenLoading || regenImgLoading || upgradeLoading) return
+    setPremiumLoading(true)
+    setPremiumError(null)
+    setPremiumSuccess(false)
+    try {
+      const result = await renderFrameImage(
+        frame,
+        scene,
+        projectRenderStyle ?? 'bw_sketch',
+        'premium',
+        frame.generated_image_url,
+      )
+      onUpgradeFrame?.(scene.scene_number, frame.frame_number, result.generated_image_url)
+      setPremiumSuccess(true)
+      setTimeout(() => setPremiumSuccess(false), 2500)
+    } catch (error) {
+      setPremiumError(error instanceof Error ? error.message : 'Premium rendering failed')
+    } finally {
+      setPremiumLoading(false)
+    }
+  }
+
   // Build gallery from all rendered frames in the scene
   const galleryItems = useMemo(() =>
     scene.frames
@@ -73,7 +115,7 @@ export default function FrameCard({
         sublabel: [f.shot_type, f.camera_angle, `${f.duration_seconds}s`, f.action_breakdown]
           .filter(Boolean).join(' · '),
       })),
-    [scene.frames]
+    [scene.frames, scene.scene_number]
   )
 
   // Index of this frame within the gallery list
@@ -314,12 +356,169 @@ export default function FrameCard({
             {sheetExpanded ? '▲ Collapse' : '▼ Full Sheet'}
           </button>
 
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginTop: 7 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={{ fontSize: 8, color: frame.approval_status === 'approved' ? '#4ade80' : 'var(--text-muted)', opacity: 0.8 }}>
+                {frame.approval_status === 'approved' ? '✓ Human approved' : 'Pending approval'}
+              </span>
+              {frame.continuity_review_required && (
+                <span role="status" style={{ fontSize: 7, color: '#fbbf24', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                  Needs continuity review
+                </span>
+              )}
+            </div>
+            {onFrameUpdate && (
+              <button
+                type="button"
+                onClick={() => onFrameUpdate(scene.scene_number, frame.frame_number, {
+                  approval_status: frame.approval_status === 'approved' ? 'pending' : 'approved',
+                })}
+                style={{ border: '1px solid var(--border)', borderRadius: 3, background: frame.approval_status === 'approved' ? 'rgba(74,222,128,0.08)' : 'transparent', color: frame.approval_status === 'approved' ? '#4ade80' : 'var(--gold)', cursor: 'pointer', fontSize: 7, letterSpacing: '0.1em', padding: '3px 6px', textTransform: 'uppercase' }}
+              >
+                {frame.approval_status === 'approved' ? 'Reopen' : 'Approve frame'}
+              </button>
+            )}
+          </div>
+
           {/* Expanded production sheet */}
           {sheetExpanded && (
             <div className="bms-inspector-enter" style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 0 }}>
 
               {/* Divider */}
               <div style={{ height: 1, background: 'var(--border)', opacity: 0.5, margin: '4px 0 8px' }} />
+
+              {continuityInputs.length > 0 && (
+                <div style={{ marginBottom: 8, padding: '7px', border: '1px solid rgba(201,168,76,0.2)', borderRadius: 4, background: 'rgba(201,168,76,0.04)' }}>
+                  <p style={{ fontSize: 7, letterSpacing: '0.16em', color: 'var(--gold)', textTransform: 'uppercase', opacity: 0.65, marginBottom: 5 }}>
+                    Approved continuity inputs
+                  </p>
+                  {continuityInputs.map(source => (
+                    <div key={source.frame_id} style={{ display: 'flex', gap: 6, marginTop: 5, alignItems: 'flex-start' }}>
+                      {source.available && source.image_url && (
+                        <img src={source.image_url} alt={`${source.frame_id} approved ending frame`} style={{ width: 48, height: 28, objectFit: 'cover', borderRadius: 2, flexShrink: 0 }} />
+                      )}
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ fontSize: 8, color: source.available ? '#4ade80' : '#fbbf24', marginBottom: 2 }}>
+                          {source.frame_id} · {source.available ? 'approved source' : source.review_required ? 'source needs review' : source.approval_status === 'approved' ? 'not available' : 'source not approved'}
+                        </p>
+                        {source.available && (
+                          <p style={{ fontSize: 8, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                            {source.action_pose || source.visual_action || 'No ending pose recorded'}
+                            {source.props_present.length ? ` · Props: ${source.props_present.join(', ')}` : ''}
+                            {source.screen_direction && source.screen_direction !== 'unspecified' ? ` · ${source.screen_direction.replaceAll('_', ' ')}` : ''}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {onFrameUpdate && (
+                <button
+                  type="button"
+                  onClick={() => setEditingFrame(editing => !editing)}
+                  style={{ alignSelf: 'flex-start', marginBottom: 7, border: '1px solid var(--border)', borderRadius: 3, background: 'transparent', color: 'var(--gold)', cursor: 'pointer', fontSize: 7, letterSpacing: '0.15em', padding: '4px 7px', textTransform: 'uppercase' }}
+                >
+                  {editingFrame ? 'Done editing' : 'Edit shot / frame'}
+                </button>
+              )}
+
+              {editingFrame && onFrameUpdate && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '7px', border: '1px solid var(--border)', borderRadius: 4, marginBottom: 8, background: 'var(--bg-base)' }}>
+                  {[
+                    { key: 'shot_type', label: 'Shot type' },
+                    { key: 'camera_angle', label: 'Camera angle' },
+                    { key: 'camera_movement', label: 'Camera movement' },
+                    { key: 'visual_action', label: 'Visual action', multiline: true },
+                    { key: 'action_pose', label: 'End pose / action', multiline: true },
+                    { key: 'props_present', label: 'Props present (comma-separated)', list: true },
+                    { key: 'screen_direction', label: 'Screen direction', direction: true },
+                    { key: 'continuity_reference_ids', label: 'Reference frame IDs (comma-separated)', list: true },
+                    { key: 'continuity_dependency_ids', label: 'Depends on shot IDs (comma-separated)', list: true },
+                    { key: 'continuity_notes', label: 'Continuity notes', multiline: true },
+                    { key: 'duration_seconds', label: 'Duration (seconds)', numeric: true },
+                    { key: 'lighting_notes', label: 'Lighting' },
+                    { key: 'mood', label: 'Mood' },
+                    { key: 'purpose', label: 'Purpose' },
+                    { key: 'dialogue', label: 'Dialogue', multiline: true },
+                    { key: 'sound_cue', label: 'Sound cue' },
+                  ].map((field: { key: string; label: string; multiline?: boolean; numeric?: boolean; list?: boolean; direction?: boolean }) => {
+                    const rawValue = (frame as unknown as Record<string, unknown>)[field.key]
+                    const value = field.numeric
+                      ? durationValue
+                      : field.list && Array.isArray(rawValue)
+                        ? rawValue.join(', ')
+                        : String(rawValue ?? '')
+                    const inputStyle = { width: '100%', boxSizing: 'border-box' as const, border: '1px solid var(--border)', borderRadius: 3, background: 'var(--bg-surface)', color: 'var(--text-base)', fontSize: 8, padding: '5px 6px', outline: 'none' }
+                    const onChange = (nextValue: string) => {
+                      if (field.numeric) {
+                        setDurationDraft({
+                          frameNumber: frame.frame_number,
+                          baseDuration: frame.duration_seconds,
+                          value: nextValue,
+                        })
+                        setDurationError(false)
+                        return
+                      }
+                      if (field.list) {
+                        const list = nextValue.split(',').map(item => item.trim()).filter(Boolean)
+                        const patch: Partial<StoryboardFrame> = field.key === 'props_present'
+                          ? { props_present: list }
+                          : field.key === 'continuity_dependency_ids'
+                            ? { continuity_dependency_ids: list }
+                            : { continuity_reference_ids: list }
+                        onFrameUpdate(scene.scene_number, frame.frame_number, patch)
+                        return
+                      }
+                      const patch: Partial<StoryboardFrame> = field.key === 'visual_action'
+                          ? { visual_action: nextValue, action_breakdown: nextValue }
+                          : field.key === 'screen_direction'
+                            ? { screen_direction: nextValue as StoryboardFrame['screen_direction'] }
+                            : { [field.key]: nextValue || null } as Partial<StoryboardFrame>
+                      onFrameUpdate(scene.scene_number, frame.frame_number, patch)
+                    }
+                    const commitDuration = () => {
+                      const nextDuration = Number(durationValue)
+                      if (durationValue.trim() === '' || !Number.isFinite(nextDuration) || nextDuration <= 0) {
+                        setDurationDraft({
+                          frameNumber: frame.frame_number,
+                          baseDuration: frame.duration_seconds,
+                          value: String(frame.duration_seconds),
+                        })
+                        setDurationError(true)
+                        return
+                      }
+                      setDurationError(false)
+                      if (nextDuration !== frame.duration_seconds) {
+                        onFrameUpdate(scene.scene_number, frame.frame_number, { duration_seconds: nextDuration })
+                      }
+                    }
+                    return (
+                      <label key={field.key} style={{ display: 'flex', flexDirection: 'column', gap: 3, color: 'var(--text-muted)', fontSize: 7, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                        {field.label}
+                        {field.direction ? (
+                          <select value={frame.screen_direction ?? 'unspecified'} onChange={event => onChange(event.target.value)} style={{ ...inputStyle, textTransform: 'none' }}>
+                            {[
+                              ['unspecified', 'Unspecified'],
+                              ['left_to_right', 'Left to right'],
+                              ['right_to_left', 'Right to left'],
+                              ['toward_camera', 'Toward camera'],
+                              ['away_from_camera', 'Away from camera'],
+                              ['static', 'Static'],
+                            ].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                          </select>
+                        ) : field.multiline ? (
+                          <textarea value={value} onChange={event => onChange(event.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', textTransform: 'none' }} />
+                        ) : (
+                          <input type={field.numeric ? 'number' : 'text'} min={field.numeric ? 0.1 : undefined} step={field.numeric ? 0.1 : undefined} value={value} onChange={event => onChange(event.target.value)} onBlur={field.numeric ? commitDuration : undefined} style={{ ...inputStyle, textTransform: 'none' }} />
+                        )}
+                        {field.numeric && durationError && <span role="alert" style={{ fontSize: 8, color: '#e06060', letterSpacing: 'normal', textTransform: 'none' }}>Enter a duration greater than zero.</span>}
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
 
               {/* Field rows */}
               {[
@@ -331,6 +530,11 @@ export default function FrameCard({
                 { label: 'Mood',             value: frame.mood },
                 { label: 'Purpose',          value: frame.purpose },
                 { label: 'Characters',       value: frame.characters_present?.join(', ') || null },
+                { label: 'End Pose / Action', value: frame.action_pose },
+                { label: 'Props',             value: frame.props_present?.join(', ') || null },
+                { label: 'Screen Direction',  value: frame.screen_direction && frame.screen_direction !== 'unspecified' ? frame.screen_direction.replace(/_/g, ' ') : null },
+                { label: 'References',        value: frame.continuity_reference_ids?.join(', ') || null },
+                { label: 'Continuity Notes',  value: frame.continuity_notes },
                 { label: 'Emotion',          value: frame.frame_emotion },
                 { label: 'Dialogue',         value: frame.dialogue },
                 { label: 'Sound',            value: frame.sound_cue },
@@ -378,7 +582,7 @@ export default function FrameCard({
                 <p style={{ fontSize: 8, color: '#e06060', marginBottom: 4 }}>{regenError}</p>
               )}
               <button
-                disabled={regenLoading || regenImgLoading}
+                disabled={regenLoading || regenImgLoading || premiumLoading}
                 onClick={async () => {
                   setRegenLoading(true)
                   setRegenError(null)
@@ -400,7 +604,7 @@ export default function FrameCard({
                     const res = await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/storyboard/frame/reforge-composition`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ frame: updatedFrame, scene, render_style: projectRenderStyle ?? frame.render_style ?? 'bw_sketch' }),
+                      body: JSON.stringify({ frame: updatedFrame, scene, render_style: projectRenderStyle ?? 'bw_sketch' }),
                     })
                     if (res.ok) {
                       const data = await res.json()
@@ -420,17 +624,43 @@ export default function FrameCard({
                 className="btn-tactile bms-brass"
                 style={{
                   width: '100%', padding: '6px 0', borderRadius: 3,
-                  cursor: (regenLoading || regenImgLoading) ? 'wait' : 'pointer',
+                  cursor: (regenLoading || regenImgLoading || premiumLoading) ? 'wait' : 'pointer',
                   border: '1px solid rgba(201,168,76,0.4)', background: 'transparent',
                   color: 'var(--gold)', fontSize: 8, letterSpacing: '0.2em',
-                  textTransform: 'uppercase', opacity: (regenLoading || regenImgLoading) ? 0.5 : 0.7,
+                  textTransform: 'uppercase', opacity: (regenLoading || regenImgLoading || premiumLoading) ? 0.5 : 0.7,
                   transition: 'opacity 150ms ease, border-color 150ms ease',
                 }}
-                onMouseEnter={e => { if (!regenLoading && !regenImgLoading) e.currentTarget.style.opacity = '1' }}
-                onMouseLeave={e => { if (!regenLoading && !regenImgLoading) e.currentTarget.style.opacity = '0.7' }}
+                onMouseEnter={e => { if (!regenLoading && !regenImgLoading && !premiumLoading) e.currentTarget.style.opacity = '1' }}
+                onMouseLeave={e => { if (!regenLoading && !regenImgLoading && !premiumLoading) e.currentTarget.style.opacity = '0.7' }}
               >
                 {regenLoading ? 'Rewriting Direction…' : regenImgLoading ? 'Rendering Scene…' : regenSuccess ? '✓ Scene Updated' : '↺ Regenerate Visual Action'}
               </button>
+
+              {frame.generated_image_url && onUpgradeFrame && (
+                <div style={{ marginTop: 8, padding: '7px', border: '1px solid rgba(201,168,76,0.22)', borderRadius: 3 }}>
+                  <p style={{ fontSize: 8, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 6 }}>
+                    With the Pollinations API key configured, drafts use low-cost models; reference edits use a model not currently marked paid-only, but can still consume Pollen. Nano Banana 2.1 uses the server-side Gemini API key and is usage-priced; it renders only this frame and uses the current image as a consistency reference. Reserve it for selected final frames.{' '}
+                    <a href="https://gen.pollinations.ai/image/models" target="_blank" rel="noreferrer" style={{ color: 'var(--gold)' }}>Pollinations model pricing</a>{' '}·{' '}
+                    <a href="https://ai.google.dev/gemini-api/docs/pricing" target="_blank" rel="noreferrer" style={{ color: 'var(--gold)' }}>Gemini API pricing</a>.
+                  </p>
+                  {premiumError && <p role="alert" style={{ fontSize: 8, color: '#e06060', marginBottom: 5 }}>{premiumError}</p>}
+                  <button
+                    type="button"
+                    disabled={premiumLoading || regenLoading || regenImgLoading || upgradeLoading}
+                    onClick={handlePremiumRender}
+                    className="btn-tactile"
+                    style={{
+                      width: '100%', padding: '6px 0', borderRadius: 3,
+                      cursor: premiumLoading ? 'wait' : 'pointer',
+                      border: '1px solid rgba(201,168,76,0.28)', background: 'rgba(201,168,76,0.06)',
+                      color: 'var(--gold)', fontSize: 8, letterSpacing: '0.12em',
+                      textTransform: 'uppercase', opacity: premiumLoading ? 0.5 : 0.9,
+                    }}
+                  >
+                    {premiumLoading ? 'Rendering with Nano Banana 2.1…' : premiumSuccess ? '✓ Premium frame updated' : 'Render this frame with Nano Banana 2.1 · Paid'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

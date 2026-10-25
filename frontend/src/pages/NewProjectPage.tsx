@@ -12,6 +12,7 @@ import { useState } from 'react'
 import type { DragEvent, ChangeEvent } from 'react'
 import { detectFormat, titleFromFilename } from '../utils/extractDocumentText'
 import type { RenderStyle } from '../types/storyboard'
+import type { StoryDevelopmentDraft } from '../types/storyboard'
 
 export type DirectorStyle = 'balanced' | 'cinematic' | 'dialogue' | 'action' | 'intimate'
 
@@ -111,15 +112,16 @@ Dialogue Notes: [Key exchanges or beats]
 `
 
 interface Props {
-  onFileReady:  (file: File, title: string, renderStyle: RenderStyle, directorStyle: DirectorStyle) => void
+  onFileReady:  (file: File, title: string, renderStyle: RenderStyle, directorStyle: DirectorStyle, storyDevelopment?: StoryDevelopmentDraft | null) => void
+  onDevelopIdea: () => void
   onStartBlank: () => void
   onLanding:    () => void
 }
 
-export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }: Props) {
+export default function NewProjectPage({ onFileReady, onDevelopIdea, onStartBlank, onLanding }: Props) {
   const [dragging,       setDragging]       = useState(false)
   const [error,          setError]          = useState<string | null>(null)
-  const [hovered,        setHovered]        = useState<'upload' | 'template' | 'blank' | null>(null)
+  const [hovered,        setHovered]        = useState<'upload' | 'idea' | 'template' | 'blank' | null>(null)
   const [confirmed,      setConfirmed]      = useState<{ file: File; title: string } | null>(null)
   const [renderStyle,    setRenderStyle]    = useState<RenderStyle>('bw_sketch')
   const [directorStyle,  setDirectorStyle]  = useState<DirectorStyle>('balanced')
@@ -158,6 +160,7 @@ export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }:
   }
 
   const isUpHov  = hovered === 'upload'
+  const isIdeaHov = hovered === 'idea'
   const isTplHov = hovered === 'template'
   const isBlkHov = hovered === 'blank'
 
@@ -335,7 +338,7 @@ export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }:
       </div>
 
       {/* Content */}
-      <div className="relative z-10 w-full anim-studio-unfold" style={{ maxWidth: 780 }}>
+      <div className="relative z-10 w-full anim-studio-unfold" style={{ maxWidth: 900 }}>
 
         {/* Heading */}
         <div className="text-center mb-10">
@@ -353,14 +356,14 @@ export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }:
             Create New Project
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.7, maxWidth: 460, margin: '0 auto' }}>
-            Upload your story once.{' '}
+            Start with an idea or bring a story document.{' '}
             <span style={{ color: 'var(--gold)', opacity: 0.85 }}>Genesis Engine</span>{' '}
             will build your characters, world, storyboard, and production bible automatically.
           </p>
         </div>
 
         {/* ── Three option cards ─────────────────────────────────────────── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 16, alignItems: 'stretch' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'stretch' }}>
 
           {/* ── Option 1: Upload Story (PRIMARY — double-wide) ─────────────── */}
           <div
@@ -414,7 +417,45 @@ export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }:
             <input id="np-file-input" type="file" accept={ACCEPTED} style={{ display: 'none' }} onChange={onFileChange} />
           </div>
 
-          {/* ── Option 2: Use Template ─────────────────────────────────────── */}
+          {/* ── Option 2: Develop an Idea ──────────────────────────────────── */}
+          <div
+            className="new-project-card"
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDevelopIdea() } }}
+            onMouseEnter={() => setHovered('idea')}
+            onMouseLeave={() => setHovered(null)}
+            onClick={onDevelopIdea}
+            style={{
+              border: `1px solid ${isIdeaHov ? 'var(--gold)' : 'var(--border)'}`,
+              borderRadius: 8,
+              background: isIdeaHov ? 'rgba(201,168,76,0.05)' : 'var(--bg-surface)',
+              padding: '32px 24px',
+              cursor: 'pointer',
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              textAlign: 'center', gap: 12,
+              transition: 'border-color 180ms ease, background 180ms ease, box-shadow 180ms ease',
+              boxShadow: isIdeaHov ? '0 0 22px var(--gold-dim)' : 'none',
+            }}
+          >
+            <div style={{ fontSize: 28, lineHeight: 1 }}>✍</div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: isIdeaHov ? 'var(--gold)' : 'var(--text-base)', marginBottom: 6, fontFamily: 'Georgia,serif' }}>
+                Develop an Idea
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 280 }}>
+                Work from premise to editable outline to script. Choose a format; genre is optional.
+              </div>
+            </div>
+            <div style={{ fontSize: 9, letterSpacing: '0.2em', color: 'var(--gold)', opacity: 0.55, textTransform: 'uppercase', marginTop: 'auto' }}>
+              Idea → Outline → Script
+            </div>
+            <div style={{ fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: isIdeaHov ? 'var(--gold)' : 'var(--text-muted)', border: `1px solid ${isIdeaHov ? 'var(--gold)' : 'var(--border)'}`, borderRadius: 4, padding: '8px 18px' }}>
+              Start writing →
+            </div>
+          </div>
+
+          {/* ── Option 3: Use Template ─────────────────────────────────────── */}
           <div
             className="new-project-card"
             onMouseEnter={() => setHovered('template')}
@@ -455,7 +496,7 @@ export default function NewProjectPage({ onFileReady, onStartBlank, onLanding }:
             </div>
           </div>
 
-          {/* ── Option 3: Start Blank ──────────────────────────────────────── */}
+          {/* ── Option 4: Start Blank ──────────────────────────────────────── */}
           <div
             className="new-project-card"
             onMouseEnter={() => setHovered('blank')}

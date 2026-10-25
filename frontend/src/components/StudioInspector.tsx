@@ -8,7 +8,9 @@ const LIGHTING_OPTIONS = ['Golden Hour / Sunrise', 'Chiaroscuro / Cyber', 'Natur
 const VALENCE_OPTIONS   = ['High-Contrast', 'Muted', 'Saturated', 'Monochrome']
 
 // Cinematic fields managed by the Director / Cinematic Brain
-const CINEMATIC_FIELDS: { key: string; label: string }[] = [
+type CinematicFieldKey = 'shot_type' | 'camera_angle' | 'camera_movement' | 'lighting_notes' | 'mood' | 'purpose'
+
+const CINEMATIC_FIELDS: { key: CinematicFieldKey; label: string }[] = [
   { key: 'shot_type',       label: 'Shot Type' },
   { key: 'camera_angle',    label: 'Camera Angle' },
   { key: 'camera_movement', label: 'Camera Movement' },
@@ -85,9 +87,9 @@ export default function StudioInspector({
   }
 
   // Get the current value of a frame cinematic field
-  function fieldValue(key: string): string {
+  function fieldValue(key: CinematicFieldKey): string {
     if (!frame) return '—'
-    const v = (frame as Record<string, unknown>)[key]
+    const v = frame[key]
     return (v && String(v).trim()) ? String(v) : '—'
   }
 

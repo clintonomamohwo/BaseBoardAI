@@ -34,7 +34,7 @@ function deriveThemes(project: StoryboardProject): string[] {
   const tones = new Set<string>()
   for (const scene of project.scenes) {
     if (scene.emotional_tone) {
-      scene.emotional_tone.split(/[,·•\/]/).forEach(t => {
+      scene.emotional_tone.split(/[,·•/]/).forEach(t => {
         const clean = t.trim()
         if (clean && clean.length < 30) tones.add(clean)
       })
@@ -78,6 +78,22 @@ function deriveGenre(project: StoryboardProject): string {
   return 'Cinematic Drama'
 }
 
+function ReportRow({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      padding: '7px 0',
+    }}>
+      <span style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--text-muted)', textTransform: 'uppercase', opacity: 0.7 }}>
+        {label}
+      </span>
+      <span style={{ fontSize: 13, color: 'var(--text-base)', fontWeight: 500, textAlign: 'right', maxWidth: '55%' }}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 export default function CreativeDirectorReport({ project, onEnterStudio, onLanding }: Props) {
@@ -97,20 +113,6 @@ export default function CreativeDirectorReport({ project, onEnterStudio, onLandi
       height: 1, background: 'var(--border)',
       margin: '18px 0', opacity: 0.6,
     }} />
-  )
-
-  const ROW = ({ label, value }: { label: string; value: string | number }) => (
-    <div style={{
-      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-      padding: '7px 0',
-    }}>
-      <span style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--text-muted)', textTransform: 'uppercase', opacity: 0.7 }}>
-        {label}
-      </span>
-      <span style={{ fontSize: 13, color: 'var(--text-base)', fontWeight: 500, textAlign: 'right', maxWidth: '55%' }}>
-        {value}
-      </span>
-    </div>
   )
 
   return (
@@ -185,16 +187,16 @@ export default function CreativeDirectorReport({ project, onEnterStudio, onLandi
           <div style={{ padding: '8px 28px 20px' }}>
             {DIVIDER}
 
-            <ROW label="Genre"            value={genre} />
-            <ROW label="Estimated Runtime" value={runtime} />
-            <ROW label="Visual Style"     value={style} />
+            <ReportRow label="Genre"            value={genre} />
+            <ReportRow label="Estimated Runtime" value={runtime} />
+            <ReportRow label="Visual Style"     value={style} />
 
             {DIVIDER}
 
-            <ROW label="Characters"  value={characters} />
-            <ROW label="Locations"   value={locations} />
-            <ROW label="Scenes"      value={scenes} />
-            <ROW label="Storyboard Frames" value={frames} />
+            <ReportRow label="Characters"  value={characters} />
+            <ReportRow label="Locations"   value={locations} />
+            <ReportRow label="Scenes"      value={scenes} />
+            <ReportRow label="Storyboard Frames" value={frames} />
 
             {DIVIDER}
 

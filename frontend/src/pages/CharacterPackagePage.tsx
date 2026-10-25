@@ -23,10 +23,8 @@ import type {
   CharacterRelationship,
   StoryboardScene,
   StoryboardProject,
-  CharacterIdentity,
   SpeciesProfile,
   PhysicalForm,
-  CharacterVariant,
   QARepairAction,
 } from '../types/storyboard'
 import {
@@ -247,6 +245,32 @@ function StarBanner({ starredImage, onClear }: { starredImage: string | null; on
       <button onClick={onClear} title="Clear star" style={{ background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4, padding:'4px 10px', fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', cursor:'pointer', opacity:0.7, textTransform:'uppercase' }}>
         Clear
       </button>
+    </div>
+  )
+}
+
+function SectionHeader({ title, section, onRegenerateAll, isLoading, onDownloadZip }: {
+  title: string
+  section: string
+  onRegenerateAll: (section: string) => void
+  isLoading: boolean
+  onDownloadZip: (section: string) => void
+}) {
+  return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
+      <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500 }}>{title}</h2>
+      <div style={{ display:'flex', gap:8 }}>
+        <button onClick={() => onRegenerateAll(section.toLowerCase())} disabled={isLoading}
+          style={{ fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', textTransform:'uppercase', background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4, padding:'5px 12px', cursor:isLoading?'wait':'pointer', opacity:isLoading?0.4:1 }}>
+          {isLoading ? 'Rendering…' : '↺ Regenerate All'}
+        </button>
+        {section !== 'portrait' && (
+          <button onClick={() => onDownloadZip(section)}
+            style={{ fontSize:9, letterSpacing:'0.15em', color:'var(--text-muted)', textTransform:'uppercase', background:'none', border:'1px solid var(--border)', borderRadius:4, padding:'5px 12px', cursor:'pointer', opacity:0.6 }}>
+            ↓ ZIP
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -1360,6 +1384,10 @@ export default function CharacterPackagePage({
   // ---------------------------------------------------------------------------
 
   const isLoading = (section: string) => !!pkg.loading[section]
+  function handleSectionZipDownload(section: string) {
+    const imgMap = section === 'turnaround' ? pkg.turnaround : section === 'expressions' ? pkg.expressions : section === 'poses' ? pkg.poses : pkg.outfits
+    downloadSectionZip(section, imgMap)
+  }
 
   // Auto-init progress indicator
   const autoInitInProgress = AUTO_INIT_SECTIONS.some(s => isLoading(s))
@@ -1368,29 +1396,6 @@ export default function CharacterPackagePage({
     const map = pkg[s as keyof CharacterPackage] as Record<string, string | null> | null
     return map && Object.values(map).some(v => v !== null)
   }).length
-
-  function SectionHeader({ title, section }: { title: string; section: string }) {
-    return (
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
-        <h2 style={{ fontSize:11, letterSpacing:'0.3em', color:'var(--text-base)', opacity:0.7, textTransform:'uppercase', fontWeight:500 }}>{title}</h2>
-        <div style={{ display:'flex', gap:8 }}>
-          <button onClick={() => handleBulkRegen(section.toLowerCase())} disabled={isLoading(section.toLowerCase())}
-            style={{ fontSize:9, letterSpacing:'0.15em', color:'var(--gold)', textTransform:'uppercase', background:'none', border:'1px solid rgba(201,168,76,0.3)', borderRadius:4, padding:'5px 12px', cursor:isLoading(section.toLowerCase())?'wait':'pointer', opacity:isLoading(section.toLowerCase())?0.4:1 }}>
-            {isLoading(section.toLowerCase()) ? 'Rendering…' : '↺ Regenerate All'}
-          </button>
-          {section !== 'portrait' && (
-            <button onClick={() => {
-              const imgMap = section === 'turnaround' ? pkg.turnaround : section === 'expressions' ? pkg.expressions : section === 'poses' ? pkg.poses : pkg.outfits
-              downloadSectionZip(section, imgMap)
-            }}
-              style={{ fontSize:9, letterSpacing:'0.15em', color:'var(--text-muted)', textTransform:'uppercase', background:'none', border:'1px solid var(--border)', borderRadius:4, padding:'5px 12px', cursor:'pointer', opacity:0.6 }}>
-              ↓ ZIP
-            </button>
-          )}
-        </div>
-      </div>
-    )
-  }
 
   // ---------------------------------------------------------------------------
   // Render
@@ -1713,7 +1718,7 @@ export default function CharacterPackagePage({
         {/* ── Portrait ─────────────────────────────────── */}
         {activeTab === 'Portrait' && (
           <div>
-            <SectionHeader title="Hero Portrait" section="portrait" />
+            <SectionHeader title="Hero Portrait" section="portrait" onRegenerateAll={handleBulkRegen} isLoading={isLoading('portrait')} onDownloadZip={handleSectionZipDownload} />
             <StarBanner starredImage={pkg.starredImage} onClear={() => setPkg(p => ({ ...p, starredImage: null, lockedImage: null }))} />
             <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
               <ImageTile url={pkg.portrait} label="Portrait" width={200} height={260} isLoading={isLoading('portrait')} onRegen={() => handleRegenOne('portrait')}
@@ -1758,7 +1763,7 @@ export default function CharacterPackagePage({
         {/* ── Turnaround ───────────────────────────────── */}
         {activeTab === 'Turnaround' && (
           <div>
-            <SectionHeader title="Turnaround Sheet — 5 Views" section="turnaround" />
+            <SectionHeader title="Turnaround Sheet — 5 Views" section="turnaround" onRegenerateAll={handleBulkRegen} isLoading={isLoading('turnaround')} onDownloadZip={handleSectionZipDownload} />
             <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:20, lineHeight:1.6 }}>
               Industry-standard 5-view reference sheet. For the 360° turntable (8 angles) use the Full Reference Pack.
             </p>
@@ -1803,7 +1808,7 @@ export default function CharacterPackagePage({
         {/* ── Expressions ──────────────────────────────── */}
         {activeTab === 'Expressions' && (
           <div>
-            <SectionHeader title="Expression Sheet — 9 Expressions" section="expressions" />
+            <SectionHeader title="Expression Sheet — 9 Expressions" section="expressions" onRegenerateAll={handleBulkRegen} isLoading={isLoading('expressions')} onDownloadZip={handleSectionZipDownload} />
             <StarBanner starredImage={pkg.starredImage} onClear={() => setPkg(p => ({ ...p, starredImage: null, lockedImage: null }))} />
             <div style={{ display:'flex', gap:14, flexWrap:'wrap' }}>
               {EXPRESSION_KEYS.map(key => (
@@ -1825,7 +1830,7 @@ export default function CharacterPackagePage({
         {/* ── Poses ────────────────────────────────────── */}
         {activeTab === 'Poses' && (
           <div>
-            <SectionHeader title="Pose Sheet — 7 Common Poses" section="poses" />
+            <SectionHeader title="Pose Sheet — 7 Common Poses" section="poses" onRegenerateAll={handleBulkRegen} isLoading={isLoading('poses')} onDownloadZip={handleSectionZipDownload} />
             <StarBanner starredImage={pkg.starredImage} onClear={() => setPkg(p => ({ ...p, starredImage: null, lockedImage: null }))} />
             <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
               {POSE_KEYS.map(key => (
@@ -1867,7 +1872,7 @@ export default function CharacterPackagePage({
         {/* ── Outfits ──────────────────────────────────── */}
         {activeTab === 'Outfits' && (
           <div>
-            <SectionHeader title="Outfit Variations — 7 Costumes" section="outfits" />
+            <SectionHeader title="Outfit Variations — 7 Costumes" section="outfits" onRegenerateAll={handleBulkRegen} isLoading={isLoading('outfits')} onDownloadZip={handleSectionZipDownload} />
             <StarBanner starredImage={pkg.starredImage} onClear={() => setPkg(p => ({ ...p, starredImage: null, lockedImage: null }))} />
             <p style={{ fontSize:10, color:'var(--text-muted)', opacity:0.5, marginBottom:20, lineHeight:1.6 }}>
               Each outfit can be regenerated independently without affecting the others.
@@ -1933,7 +1938,7 @@ export default function CharacterPackagePage({
         {/* ── Props ────────────────────────────────────── */}
         {activeTab === 'Props' && (
           <div>
-            <SectionHeader title="Props & Accessories" section="props" />
+            <SectionHeader title="Props & Accessories" section="props" onRegenerateAll={handleBulkRegen} isLoading={isLoading('props')} onDownloadZip={handleSectionZipDownload} />
             {Object.keys(pkg.props).length === 0 && !isLoading('props') ? (
               <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:180, gap:12 }}>
                 <p style={{ fontSize:11, color:'var(--text-muted)', opacity:0.3, letterSpacing:'0.15em', textTransform:'uppercase' }}>No props generated yet</p>

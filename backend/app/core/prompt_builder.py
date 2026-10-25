@@ -212,12 +212,24 @@ def build_frame_prompt(
     char_ids = re.findall(r"\bCHAR_[A-Z]+\b", frame.action_breakdown or "")
     canon_str   = _get_canon_constraints(char_ids, canon_context)
     ability_str = _get_ability_modifiers(char_ids, canon_context)
+    continuity_parts: list[str] = []
+    if getattr(frame, "action_pose", None):
+        continuity_parts.append(f"end pose: {frame.action_pose}")
+    props = getattr(frame, "props_present", None) or []
+    if props:
+        continuity_parts.append(f"visible props: {', '.join(props)}")
+    screen_direction = getattr(frame, "screen_direction", None)
+    if screen_direction and screen_direction != "unspecified":
+        continuity_parts.append(f"screen movement: {screen_direction.replace('_', ' ')}")
+    if getattr(frame, "continuity_notes", None):
+        continuity_parts.append(f"continuity: {frame.continuity_notes}")
 
     body = (
         f"{frame.shot_type}, {frame.camera_angle}. "
         f"{scene_mod}"
         f"{lens_suffix}"
         f"{frame.action_breakdown}. "
+        f"{' '.join(continuity_parts)}. "
         f"{frame.lighting_notes}"
     )
     if ability_str:

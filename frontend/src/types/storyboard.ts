@@ -265,6 +265,20 @@ export interface StoryboardFrame {
   visual_action: string | null
   /** Level 3 — granular animation cues. Empty until explicitly requested. */
   animation_beats: string[]
+  /** Character action and pose at the end of this shot. */
+  action_pose?: string | null
+  /** Story-relevant props visible or held in this shot. */
+  props_present?: string[]
+  /** Primary movement direction in screen space. */
+  screen_direction?: 'left_to_right' | 'right_to_left' | 'toward_camera' | 'away_from_camera' | 'static' | 'unspecified'
+  /** Stable IDs of earlier storyboard frames or canonical references this shot must match. */
+  continuity_reference_ids?: string[]
+  /** What must carry over from adjacent shots (pose, prop hand, geography, or eyeline). */
+  continuity_notes?: string | null
+  /** Stable shot IDs whose approved ending state this shot depends on. */
+  continuity_dependency_ids?: string[]
+  /** True when an upstream dependency changed after this shot was approved. */
+  continuity_review_required?: boolean
 
   /** Legacy field — kept for backwards compatibility. Mirrors visual_action. */
   action_breakdown: string
@@ -300,6 +314,7 @@ export interface StoryboardFrame {
 
   // ── Output ────────────────────────────────────────────────────────────
   generated_image_url: string | null
+  approval_status?: 'pending' | 'approved'
 
   /** True when the user has uploaded their own artwork for this frame.
    *  Re-run skips locked frames so artist overrides are never overwritten. */
@@ -384,6 +399,18 @@ export interface CreativeKnowledgeGraph {
 /** Backwards-compatibility alias. */
 export type ProjectCanon = CreativeKnowledgeGraph
 
+export interface StoryDevelopmentContext {
+  idea: string
+  genre: string | null
+  format: string
+  notes: string
+}
+
+export interface StoryDevelopmentDraft extends StoryDevelopmentContext {
+  outline: string
+  script: string
+}
+
 export interface StoryboardProject {
   db_id: number | null
   project_title: string
@@ -394,6 +421,8 @@ export interface StoryboardProject {
   /** Creative Knowledge Graph — the single source of truth for all AI generation.
    *  Populated automatically by forge-pipeline. Null for legacy projects. */
   canon: CreativeKnowledgeGraph | null
+  /** Optional creator-developed story materials, saved with this project. */
+  story_development?: StoryDevelopmentDraft | null
   /** True when the LLM output was truncated mid-generation and only a partial
    *  storyboard was recovered. The UI should surface a warning to the user. */
   truncated?: boolean
@@ -415,6 +444,7 @@ export interface PipelineExecutionRequest {
   raw_character_notes: string
   raw_world_notes: string
   raw_script_text: string
+  story_development?: StoryDevelopmentDraft | null
 }
 
 // ---------------------------------------------------------------------------

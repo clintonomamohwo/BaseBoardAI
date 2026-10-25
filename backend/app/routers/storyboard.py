@@ -51,10 +51,14 @@ from app.schemas.storyboard import (
     RegenerateVisualActionRequest,
     RegenerateVisualActionResponse,
     ReforgeCompositionRequest,
+    RenderFrameRequest,
     SceneContinuityReport,
     SceneQARequest,
     SceneUpgradeRequest,
     SceneUpgradeResponse,
+    StoryDevelopmentDraft,
+    StoryOutlineRequest,
+    StoryScriptRequest,
     ScriptSceneBase,
     SingleCharacterRequest,
     SingleEnvironmentRequest,
@@ -63,6 +67,7 @@ from app.schemas.storyboard import (
     StoryboardFrameBase,
     StoryboardProjectCreate,
     StoryboardProjectResponse,
+    StoryboardProjectUpdate,
     UpgradeStyleRequest,
     UpgradeStyleResponse,
     WorldBibleImportRequest,
@@ -94,6 +99,31 @@ router = APIRouter(prefix="/storyboard", tags=["storyboard"])
 
 DEFAULT_RENDER_STYLE = 'bw_sketch'
 
+
+@router.post("/story-development/outline", summary="Develop an idea into an editable outline")
+def develop_story_outline(payload: StoryOutlineRequest) -> dict[str, str]:
+    from app.core.story_development import generate_outline
+
+    try:
+        outline = generate_outline(payload.idea, payload.format, payload.genre, payload.notes)
+        return {"outline": outline}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Story outline generation failed: {exc}")
+
+
+@router.post("/story-development/script", summary="Draft a script from an approved outline")
+def develop_story_script(payload: StoryScriptRequest) -> dict[str, str]:
+    from app.core.story_development import generate_script
+
+    try:
+        script = generate_script(
+            payload.idea, payload.format, payload.genre, payload.outline, payload.notes
+        )
+        return {"script": script}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Story script generation failed: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Image generation helper endpoint
 # ---------------------------------------------------------------------------
@@ -108,11 +138,15 @@ def generate_single_image(
     keyframe images without running the full pipeline.
     Returns { image_url: "data:image/png;base64,..." } or { image_url: null }.
     """
-    from app.core.image import _generate_pollinations
     from app.core.prompt_builder import STYLE_PREFIXES
     style_prefix = STYLE_PREFIXES.get(render_style, STYLE_PREFIXES["bw_sketch"])
     full_prompt = (style_prefix + prompt)[:450]
-    url = _generate_pollinations(full_prompt)
+    url = generate_image(full_prompt)
+    if url is None:
+        raise HTTPException(
+            status_code=502,
+            detail="Image provider returned no result. Check provider configuration and backend logs.",
+        )
     return {"image_url": url}
 
 
@@ -451,6 +485,13 @@ def generate_full_character_pack(
 
     Returns each section as a dict of cell_id → base64 data URL.
     """
+    from app.core.config import settings
+    if not settings.ENABLE_PREMIUM_IMAGE_GENERATION:
+        raise HTTPException(
+            status_code=403,
+            detail="Premium image generation is disabled by server configuration.",
+        )
+
     from app.core.image import generate_sheet_image
     from app.core.sheet_layouts import get_layout
     from app.core.sheet_slicer import slice_sheet
@@ -670,7 +711,10 @@ def _build_project_orm(
         project_title=payload.project_title,
         global_aesthetic=payload.global_aesthetic,
         render_style=payload.render_style,
-        canon=canon.model_dump() if canon else None,
+        canon=(canon or payload.canon).model_dump() if (canon or payload.canon) else None,
+        story_development=(
+            payload.story_development.model_dump() if payload.story_development else None
+        ),
     )
     for char in payload.characters:
         project.characters.append(
@@ -686,17 +730,23 @@ def _build_project_orm(
                 classification=char.classification,
                 story_role=char.story_role,
                 relationships=list(char.relationships) if char.relationships else [],
+                full_data={
+                    "abilities": char.abilities,
+                    "visual_rules": char.visual_rules,
+                    "active_variant_id": char.active_variant_id,
+                },
             )
         )
-    for scene_data in payload.scenes:
-        scene_orm = _build_scene_orm(scene_data)
+    for sort_order, scene_data in enumerate(payload.scenes):
+        scene_orm = _build_scene_orm(scene_data, sort_order)
         project.scenes.append(scene_orm)
     return project
 
 
-def _build_scene_orm(scene_data: ScriptSceneBase) -> ScriptSceneORM:
+def _build_scene_orm(scene_data: ScriptSceneBase, sort_order: int = 0) -> ScriptSceneORM:
     scene = ScriptSceneORM(
         scene_number=scene_data.scene_number,
+        sort_order=sort_order,
         location_heading=scene_data.location_heading,
         environmental_type=scene_data.environmental_type,
         time_of_day=scene_data.time_of_day,
@@ -711,6 +761,13 @@ def _build_scene_orm(scene_data: ScriptSceneBase) -> ScriptSceneORM:
                 narrative_action=frame.narrative_action,
                 visual_action=frame.visual_action,
                 animation_beats=frame.animation_beats or [],
+                action_pose=frame.action_pose,
+                props_present=frame.props_present or [],
+                screen_direction=frame.screen_direction,
+                continuity_reference_ids=frame.continuity_reference_ids or [],
+                continuity_notes=frame.continuity_notes,
+                continuity_dependency_ids=frame.continuity_dependency_ids or [],
+                continuity_review_required=frame.continuity_review_required,
                 action_breakdown=frame.action_breakdown,
                 # Shot & camera
                 shot_type=frame.shot_type,
@@ -730,10 +787,13 @@ def _build_scene_orm(scene_data: ScriptSceneBase) -> ScriptSceneORM:
                 # Audio
                 sound_cue=frame.sound_cue,
                 generated_image_url=frame.generated_image_url,
+                approval_status=frame.approval_status,
+                is_manual_override=frame.is_manual_override,
                 # Director Engine metadata
                 lens=frame.lens,
                 focal_length=frame.focal_length,
                 depth_style=frame.depth_style,
+                lens_prompt_suffix=frame.lens_prompt_suffix,
                 locked_fields=frame.locked_fields or [],
                 # Cinematic Brain decisions (Fix 3)
                 auto_selected=frame.auto_selected or {},
@@ -757,6 +817,10 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
         global_aesthetic=project.global_aesthetic,
         render_style=project.render_style,
         canon=canon,
+        story_development=(
+            StoryDevelopmentDraft.model_validate(project.story_development)
+            if isinstance(project.story_development, dict) else None
+        ),
         truncated=False,
         characters=[
             CharacterProfileBase(
@@ -784,7 +848,9 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
                     else PhysicalForm(form="humanoid", custom_description=None, limb_count=None, has_wings=False, has_tail=False)
                 ),
                 classification=getattr(c, "classification", None),
-                active_variant_id=getattr(c, "active_variant_id", None),
+                active_variant_id=(c.full_data or {}).get("active_variant_id"),
+                abilities=(c.full_data or {}).get("abilities", []),
+                visual_rules=(c.full_data or {}).get("visual_rules", []),
                 story_role=getattr(c, "story_role", None),
                 relationships=getattr(c, "relationships", None) or [],
             )
@@ -805,6 +871,13 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
                         narrative_action=f.narrative_action,
                         visual_action=f.visual_action,
                         animation_beats=f.animation_beats or [],
+                        action_pose=f.action_pose,
+                        props_present=f.props_present or [],
+                        screen_direction=f.screen_direction or "unspecified",
+                        continuity_reference_ids=f.continuity_reference_ids or [],
+                        continuity_notes=f.continuity_notes,
+                        continuity_dependency_ids=f.continuity_dependency_ids or [],
+                        continuity_review_required=bool(f.continuity_review_required),
                         action_breakdown=f.action_breakdown,
                         # Shot & camera
                         shot_type=f.shot_type,
@@ -824,6 +897,8 @@ def _orm_to_response(project: StoryboardProjectORM) -> StoryboardProjectResponse
                         # Audio
                         sound_cue=f.sound_cue,
                         generated_image_url=f.generated_image_url,
+                        approval_status=f.approval_status or "pending",
+                        is_manual_override=bool(f.is_manual_override),
                         # Director Engine metadata
                         lens=f.lens,
                         focal_length=f.focal_length,
@@ -871,6 +946,31 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _storyboard_story_context(draft: StoryDevelopmentDraft | None) -> str:
+    if draft is None:
+        return ""
+    genre = (
+        f"Creator-specified genre: {draft.genre}. Honor it."
+        if draft.genre else
+        "No genre was specified. Do not assign or assume one."
+    )
+    return f"Creator-selected format: {draft.format}.\n{genre}"
+
+
+def _enforce_frame_generation_limit(scenes: list[ScriptSceneBase]) -> int:
+    """Bound image-provider work before any frame render is submitted."""
+    from app.core.config import settings
+
+    total = sum(len(scene.frames) for scene in scenes)
+    maximum = max(0, settings.MAX_GENERATION_FRAMES_PER_REQUEST)
+    if total > maximum:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Storyboard contains {total} frames; the per-request render limit is {maximum}.",
+        )
+    return total
+
+
 @router.post(
     "/forge-pipeline-stream",
     summary="Execute full 3-stage AI pipeline with SSE progress stream",
@@ -904,8 +1004,9 @@ def forge_storyboard_pipeline_stream(
             scenes, storyboard_truncated = invoke_storyboard_stage(
                 characters, environments, payload.raw_script_text,
                 payload.global_aesthetic, payload.render_style, director_style,
+                story_context=_storyboard_story_context(payload.story_development),
             )
-            total_frames = sum(len(s.frames) for s in scenes)
+            total_frames = _enforce_frame_generation_limit(scenes)
             yield _sse("stage_done", {
                 "stage": "storyboard",
                 "scenes": len(scenes),
@@ -952,6 +1053,7 @@ def forge_storyboard_pipeline_stream(
                 render_style=payload.render_style,
                 characters=characters,
                 scenes=scenes,
+                story_development=payload.story_development,
             )
             project = _build_project_orm(project_data, canon=canon)
             db.add(project)
@@ -991,7 +1093,9 @@ def forge_storyboard_pipeline(
     scenes, storyboard_truncated = invoke_storyboard_stage(
         characters, environments, payload.raw_script_text, payload.global_aesthetic,
         payload.render_style, director_style,
+        story_context=_storyboard_story_context(payload.story_development),
     )
+    _enforce_frame_generation_limit(scenes)
 
     from app.core.identity_system import get_director_hints
     character_hints: dict[str, dict] = {
@@ -1026,6 +1130,7 @@ def forge_storyboard_pipeline(
         render_style=payload.render_style,
         characters=characters,
         scenes=scenes,
+        story_development=payload.story_development,
     )
     project = _build_project_orm(project_data, canon=canon)
     db.add(project)
@@ -1076,6 +1181,7 @@ def forge_standalone_storyboard(payload: StandaloneStoryboardRequest) -> Storybo
         payload.characters, [], payload.raw_script_text, payload.global_aesthetic,
         DEFAULT_RENDER_STYLE,
     )
+    _enforce_frame_generation_limit(scenes)
     # ── Director Engine ───────────────────────────────────────────────────────
     scenes = direct_storyboard(scenes)
     for scene in scenes:
@@ -1164,6 +1270,40 @@ def reforge_composition(payload: ReforgeCompositionRequest) -> dict:
         "depth_style": frame.depth_style,
         "generated_image_url": new_image_url,
     }
+
+
+@router.post(
+    "/frame/render",
+    summary="Render one frame image with the draft tier or explicit premium tier",
+)
+def render_frame(payload: RenderFrameRequest) -> dict:
+    """Render a single frame without changing shot metadata or regenerating other frames."""
+    from app.core.config import settings
+
+    if payload.quality_tier == "premium" and not settings.ENABLE_PREMIUM_IMAGE_GENERATION:
+        raise HTTPException(
+            status_code=403,
+            detail="Premium image generation is disabled by server configuration.",
+        )
+    if payload.quality_tier == "premium" and not settings.GEMINI_API_KEY.strip():
+        raise HTTPException(
+            status_code=503,
+            detail="Nano Banana 2.1 requires a server-side GEMINI_API_KEY.",
+        )
+
+    image_url = generate_frame_image(
+        payload.frame,
+        payload.scene,
+        reference_style_image=payload.reference_style_image,
+        render_style=payload.render_style,
+        quality_tier=payload.quality_tier,
+    )
+    if image_url is None:
+        raise HTTPException(
+            status_code=502,
+            detail="Frame image generation failed. Check provider configuration and backend logs.",
+        )
+    return {"frame_number": payload.frame.frame_number, "generated_image_url": image_url}
 
 
 # ---------------------------------------------------------------------------
@@ -1320,7 +1460,9 @@ def save_frame_image(payload: _FrameImageSave, db: DbSession) -> Response:
             status_code=404,
             detail=f"Frame not found: project={payload.project_id} scene={payload.scene_number} frame={payload.frame_number}",
         )
-    frame_row.generated_image_url = payload.generated_image_url
+    if frame_row.generated_image_url != payload.generated_image_url:
+        frame_row.generated_image_url = payload.generated_image_url
+        frame_row.approval_status = "pending"
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -2063,6 +2205,60 @@ def list_storyboard_projects(db: DbSession) -> list[StoryboardProjectResponse]:
 
 @router.get("/{db_id}", response_model=StoryboardProjectResponse)
 def get_storyboard_project(db_id: int, db: DbSession) -> StoryboardProjectResponse:
+    return _orm_to_response(_load_project_or_404(db_id, db))
+
+
+@router.put("/{db_id}", response_model=StoryboardProjectResponse)
+def update_storyboard_project(
+    db_id: int, payload: StoryboardProjectUpdate, db: DbSession
+) -> StoryboardProjectResponse:
+    """Persist Studio edits by replacing the project's scene/frame snapshot."""
+    project = _load_project_or_404(db_id, db)
+    project.project_title = payload.project_title
+    project.global_aesthetic = payload.global_aesthetic
+    project.render_style = payload.render_style
+    if "canon" in payload.model_fields_set:
+        project.canon = payload.canon.model_dump() if payload.canon else None
+    if "characters" in payload.model_fields_set and payload.characters is not None:
+        existing_characters = {character.char_id: character for character in project.characters}
+        updated_characters: list[CharacterProfileORM] = []
+        for char in payload.characters:
+            character = existing_characters.get(char.id)
+            if character is None:
+                character = CharacterProfileORM(
+                    char_id=char.id,
+                    name=char.name,
+                    wardrobe_defaults=char.wardrobe_defaults,
+                    facial_blueprint=char.facial_blueprint.model_dump(),
+                    project=project,
+                )
+            character.name = char.name
+            character.wardrobe_defaults = char.wardrobe_defaults
+            character.facial_blueprint = char.facial_blueprint.model_dump()
+            character.identity = char.identity.model_dump(mode="json") if char.identity else None
+            character.species = char.species.model_dump(mode="json") if char.species else None
+            character.variants = [variant.model_dump(mode="json") for variant in char.variants]
+            character.physical_form = char.physical_form.model_dump(mode="json") if char.physical_form else None
+            character.classification = char.classification
+            character.story_role = char.story_role
+            character.relationships = list(char.relationships)
+            character.full_data = {
+                "abilities": char.abilities,
+                "visual_rules": char.visual_rules,
+                "active_variant_id": char.active_variant_id,
+            }
+            updated_characters.append(character)
+        project.characters[:] = updated_characters
+    if "story_development" in payload.model_fields_set:
+        project.story_development = (
+            payload.story_development.model_dump() if payload.story_development else None
+        )
+    project.scenes.clear()
+    project.scenes.extend(
+        _build_scene_orm(scene, sort_order)
+        for sort_order, scene in enumerate(payload.scenes)
+    )
+    db.commit()
     return _orm_to_response(_load_project_or_404(db_id, db))
 
 @router.delete("/{db_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)

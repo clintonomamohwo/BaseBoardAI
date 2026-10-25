@@ -22,7 +22,7 @@ import base64
 import logging
 import time
 import urllib.parse
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 
@@ -50,8 +50,8 @@ _BW_DETAILED_NEGATIVE_CONSTRAINTS = (
 # Shared byte → data URL encoder
 # ---------------------------------------------------------------------------
 
-def _detect_mime(content: bytes) -> str:
-    """Detect image MIME type from magic bytes. Defaults to image/png."""
+def _detect_mime(content: bytes, content_type: str | None = None) -> str | None:
+    """Detect supported image MIME types without labeling error pages as images."""
     if content[:3] == b'\xff\xd8\xff':
         return "image/jpeg"
     if content[:4] == b'\x89PNG':
@@ -60,18 +60,34 @@ def _detect_mime(content: bytes) -> str:
         return "image/gif"
     if content[:4] == b'RIFF' and content[8:12] == b'WEBP':
         return "image/webp"
-    return "image/png"
+    declared_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if declared_type in {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}:
+        return declared_type
+    return None
 
 
-def _convert_bytes_to_data_url(content: bytes) -> str:
+def _convert_bytes_to_data_url(content: bytes, content_type: str | None = None) -> str | None:
     """Encode raw image bytes to a self-contained base64 data URL with correct MIME type."""
-    mime = _detect_mime(content)
+    mime = _detect_mime(content, content_type)
+    if not content or mime is None:
+        return None
     return f"data:{mime};base64," + base64.b64encode(content).decode("utf-8")
 
 
 def _strip_data_url_header(data_url: str) -> str:
     """Strip the `data:...;base64,` header from a data URL, returning the raw base64 string."""
     return data_url.split(',', 1)[1]
+
+
+def _split_image_data_url(image_data: str) -> tuple[str, str]:
+    """Return the MIME type and base64 payload from a data URL or raw base64 string."""
+    if image_data.startswith("data:"):
+        header, separator, encoded = image_data.partition(",")
+        mime_type = header[5:].split(";", 1)[0].lower()
+        if not separator or "base64" not in header.lower() or not mime_type.startswith("image/"):
+            raise ValueError("Reference image must be a base64-encoded image data URL")
+        return mime_type, encoded
+    return "image/png", image_data
 
 
 def _inject_sketch_constraints(prompt: str) -> str:
@@ -103,24 +119,155 @@ def _build_image_prompt(
 # Provider-agnostic single image generator
 # ---------------------------------------------------------------------------
 
+_GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+
+
+def _gemini_output_image(response_data: dict[str, Any]) -> dict[str, Any] | None:
+    """Find the final image part in the Interactions API response."""
+    output_image = response_data.get("output_image")
+    if isinstance(output_image, dict) and isinstance(output_image.get("data"), str):
+        return output_image
+
+    image_parts: list[dict[str, Any]] = []
+    steps = response_data.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict) or step.get("type") != "model_output":
+                continue
+            content = step.get("content")
+            if isinstance(content, list):
+                image_parts.extend(
+                    part for part in content
+                    if isinstance(part, dict)
+                    and part.get("type") == "image"
+                    and isinstance(part.get("data"), str)
+                )
+    if not image_parts:
+        output = response_data.get("output")
+        if isinstance(output, list):
+            image_parts.extend(
+                part for part in output
+                if isinstance(part, dict)
+                and part.get("type") == "image"
+                and isinstance(part.get("data"), str)
+            )
+    return image_parts[-1] if image_parts else None
+
+
+def _generate_gemini_nano_banana(prompt: str, reference_image: str | None = None) -> str | None:
+    """Generate one premium frame directly through Google's Gemini API."""
+    api_key = settings.GEMINI_API_KEY.strip()
+    model = settings.GEMINI_NANO_BANANA_MODEL.strip()
+    if not api_key:
+        logger.warning("Nano Banana 2.1 generation requires GEMINI_API_KEY.")
+        return None
+    if not model:
+        logger.error("GEMINI_NANO_BANANA_MODEL is empty; refusing premium generation.")
+        return None
+
+    request_data: dict[str, Any] = {
+        "model": model,
+        "input": [{"type": "text", "text": prompt}],
+        "response_format": {
+            "type": "image",
+            "mime_type": "image/jpeg",
+            "aspect_ratio": "16:9",
+            "image_size": "1K",
+        },
+        "store": False,
+    }
+    if reference_image:
+        try:
+            mime_type, image_base64 = _split_image_data_url(reference_image)
+        except ValueError as exc:
+            logger.warning("Nano Banana 2.1 reference image is invalid: %s", exc)
+            return None
+        request_data["input"].append({
+            "type": "image",
+            "data": image_base64,
+            "mime_type": mime_type,
+        })
+
+    try:
+        response = httpx.post(
+            _GEMINI_INTERACTIONS_URL,
+            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+            json=request_data,
+            timeout=180,
+        )
+    except httpx.RequestError as exc:
+        logger.warning("Nano Banana 2.1 request failed: %s", exc)
+        return None
+    if response.status_code != 200:
+        error_detail = ""
+        try:
+            response_payload = response.json()
+            provider_error = (
+                response_payload.get("error")
+                if isinstance(response_payload, dict)
+                else None
+            )
+            if isinstance(provider_error, dict):
+                safe_fields = [
+                    str(value)
+                    for value in (provider_error.get("status"), provider_error.get("message"))
+                    if isinstance(value, str) and value
+                ]
+                if safe_fields:
+                    error_detail = " (" + "; ".join(safe_fields)[:500] + ")"
+        except ValueError:
+            pass
+        logger.warning(
+            "Nano Banana 2.1 returned HTTP %s%s.", response.status_code, error_detail
+        )
+        return None
+
+    try:
+        response_data = response.json()
+    except ValueError:
+        logger.warning("Nano Banana 2.1 returned an invalid JSON response.")
+        return None
+    if not isinstance(response_data, dict):
+        logger.warning("Nano Banana 2.1 returned an invalid response payload.")
+        return None
+    image_part = _gemini_output_image(response_data)
+    if not image_part:
+        logger.warning("Nano Banana 2.1 response did not contain an output image.")
+        return None
+    try:
+        image_bytes = base64.b64decode(image_part["data"], validate=True)
+    except (TypeError, ValueError):
+        logger.warning("Nano Banana 2.1 returned invalid base64 image data.")
+        return None
+    return _convert_bytes_to_data_url(
+        image_bytes,
+        image_part.get("mime_type") or image_part.get("mimeType") or "image/png",
+    )
+
+
 def generate_image(
     prompt: str,
     reference_b64: str | None = None,
     width: int | None = None,
     height: int | None = None,
+    quality_tier: Literal["draft", "premium"] = "draft",
 ) -> str | None:
     """
     Generate one image using whichever IMAGE_PROVIDER is active in .env.
 
     Works for all three providers — gemini, pollinations, huggingface.
     If reference_b64 is provided the provider's img2img path is used.
-    Falls back to Pollinations text-to-image on any Gemini/HF failure.
+    Does not automatically retry or switch providers after a provider call: the
+    response may have been lost after generation completed and could be billable.
 
     width/height are only used by the Pollinations text-to-image path
     (img2img always uses the reference dimensions).
     """
     w = width  or settings.POLLINATIONS_WIDTH
     h = height or settings.POLLINATIONS_HEIGHT
+    if quality_tier == "premium":
+        return _generate_gemini_nano_banana(prompt, reference_b64)
+
     provider = settings.IMAGE_PROVIDER.lower()
 
     # ── Gemini ──────────────────────────────────────────────────────────────
@@ -136,56 +283,106 @@ def generate_image(
             if result:
                 return result
         except Exception as exc:
-            logger.warning("Gemini image generation failed (%s) — falling back to Pollinations.", exc)
-        provider = "pollinations"   # fall through
+            logger.warning("Gemini image generation failed; not retrying another provider (%s).", exc)
+        return None
 
     # ── Hugging Face ─────────────────────────────────────────────────────────
     if provider == "huggingface":
-        if reference_b64:
-            return _generate_huggingface_img2img(prompt, reference_b64)
-        return _generate_huggingface(prompt)
+        try:
+            result = (
+                _generate_huggingface_img2img(prompt, reference_b64)
+                if reference_b64 else _generate_huggingface(prompt)
+            )
+            if result:
+                return result
+        except Exception as exc:
+            logger.warning("Hugging Face image generation failed; not retrying another provider (%s).", exc)
+        logger.warning("Hugging Face returned no image; not retrying another provider.")
+        return None
 
     # ── Pollinations (default) ────────────────────────────────────────────────
     if reference_b64:
         return _generate_pollinations_img2img(prompt, reference_b64)
-    # Use custom dimensions if provided (e.g. sheet canvas sizes)
-    encoded = urllib.parse.quote(prompt)
-    url = (
-        f"https://image.pollinations.ai/prompt/{encoded}"
-        f"?width={w}&height={h}&model=flux&nologo=true"
-    )
-    for attempt, delay in enumerate(_RETRY_DELAYS, start=1):
-        if delay:
-            time.sleep(delay)
-        try:
-            response = httpx.get(url, timeout=90, follow_redirects=True)
-            if response.status_code == 200:
-                return _convert_bytes_to_data_url(response.content)
-            logger.warning("Pollinations attempt %d/%d returned %s", attempt, len(_RETRY_DELAYS), response.status_code)
-        except httpx.TimeoutException:
-            logger.warning("Pollinations attempt %d/%d timed out", attempt, len(_RETRY_DELAYS))
-    return None
+    return _generate_pollinations(prompt, width=w, height=h)
 
 
 # ---------------------------------------------------------------------------
 # Provider: Pollinations.ai (text-to-image)
 # ---------------------------------------------------------------------------
 
-_RETRY_DELAYS = (0, 5, 15)  # seconds before each attempt (0 = immediate first try)
+_RETRY_DELAYS = (0, 5, 15)  # seconds before each legacy API attempt
 
-def _generate_pollinations(prompt: str) -> str | None:
-    """
-    Download image bytes from Pollinations.ai and return as a base64 data URL.
-    Uses model=flux for better stylistic instruction-following.
-    Retries up to 3 times with exponential backoff on non-200 responses.
-    """
-    encoded = urllib.parse.quote(prompt)
+
+def _configured_models(setting_value: str, default_models: tuple[str, ...]) -> list[str]:
+    models = [item.strip() for item in setting_value.split(",") if item.strip()]
+    return models or list(default_models)
+
+
+def _generate_pollinations(
+    prompt: str,
+    width: int | None = None,
+    height: int | None = None,
+) -> str | None:
+    """Generate through the supported API when configured, otherwise use legacy compatibility."""
+    w = width or settings.POLLINATIONS_WIDTH
+    h = height or settings.POLLINATIONS_HEIGHT
+    if settings.POLLINATIONS_API_KEY.strip():
+        return _generate_pollinations_api(prompt, w, h)
+    return _generate_pollinations_legacy(prompt, w, h)
+
+
+def _generate_pollinations_api(
+    prompt: str,
+    width: int,
+    height: int,
+) -> str | None:
+    """Use only the configured low-cost draft-model fallback chain."""
+    models = _configured_models(
+        settings.POLLINATIONS_IMAGE_MODELS,
+        ("black-forest-labs/flux.1-schnell", "tongyi-mai/z-image-turbo"),
+    )
+    url = f"https://gen.pollinations.ai/image/{urllib.parse.quote(prompt, safe='')}"
+    headers = {"Authorization": f"Bearer {settings.POLLINATIONS_API_KEY.strip()}"}
+
+    for model_index, model in enumerate(models):
+        try:
+            response = httpx.get(
+                url,
+                params={"width": width, "height": height, "model": model},
+                headers=headers,
+                timeout=90,
+                follow_redirects=True,
+            )
+        except httpx.RequestError as exc:
+            logger.warning("Pollinations model %s request failed; outcome is uncertain, not retrying: %s", model, exc)
+            return None
+
+        if response.status_code == 200:
+            data_url = _convert_bytes_to_data_url(
+                response.content, response.headers.get("content-type")
+            )
+            if data_url:
+                return data_url
+            logger.warning("Pollinations model %s returned an invalid image; not retrying after a possibly billable response", model)
+            return None
+        logger.warning("Pollinations model %s returned %s", model, response.status_code)
+        if response.status_code in (401, 402, 403):
+            # Authentication, balance, and permission failures cannot be fixed by changing models.
+            return None
+        if response.status_code not in (400, 404, 422) or model_index == len(models) - 1:
+            # Only a definitive request/model rejection permits trying a
+            # different model. Timeouts, throttling, and 5xx errors can follow
+            # completed generation and must not be retried.
+            return None
+    return None
+
+
+def _generate_pollinations_legacy(prompt: str, width: int, height: int) -> str | None:
+    """Use the no-key Free API Classic endpoint as a compatibility fallback."""
+    encoded = urllib.parse.quote(prompt, safe="")
     url = (
         f"https://image.pollinations.ai/prompt/{encoded}"
-        f"?width={settings.POLLINATIONS_WIDTH}"
-        f"&height={settings.POLLINATIONS_HEIGHT}"
-        f"&model=flux"
-        f"&nologo=true"
+        f"?width={width}&height={height}&model=flux&nologo=true"
     )
     for attempt, delay in enumerate(_RETRY_DELAYS, start=1):
         if delay:
@@ -193,13 +390,22 @@ def _generate_pollinations(prompt: str) -> str | None:
         try:
             response = httpx.get(url, timeout=60, follow_redirects=True)
             if response.status_code == 200:
-                return _convert_bytes_to_data_url(response.content)
+                data_url = _convert_bytes_to_data_url(
+                    response.content, response.headers.get("content-type")
+                )
+                if data_url:
+                    return data_url
+                logger.warning("Pollinations legacy endpoint returned a non-image response")
+            else:
+                logger.warning(
+                    "Pollinations legacy attempt %d/%d returned %s for prompt: %s",
+                    attempt, len(_RETRY_DELAYS), response.status_code, prompt[:60],
+                )
+        except httpx.RequestError as exc:
             logger.warning(
-                "Pollinations attempt %d/%d returned %s for prompt: %s",
-                attempt, len(_RETRY_DELAYS), response.status_code, prompt[:60],
+                "Pollinations legacy attempt %d/%d failed for prompt %s: %s",
+                attempt, len(_RETRY_DELAYS), prompt[:60], exc,
             )
-        except httpx.TimeoutException:
-            logger.warning("Pollinations attempt %d/%d timed out for prompt: %s", attempt, len(_RETRY_DELAYS), prompt[:60])
     return None
 
 
@@ -207,12 +413,22 @@ def _generate_pollinations(prompt: str) -> str | None:
 # Provider: Pollinations.ai (img2img)
 # ---------------------------------------------------------------------------
 
-def _generate_pollinations_img2img(prompt: str, reference_base64: str) -> str | None:
+def _generate_pollinations_img2img(
+    prompt: str,
+    reference_base64: str,
+    reference_mime_type: str = "image/png",
+) -> str | None:
     """
     Img2img via Pollinations: include the reference image as a query parameter.
-    Falls back to text-only (with retries) on non-200.
+    The unauthenticated legacy path falls back to text-only on failure. When a
+    key is configured, do not issue a second request after an uncertain edit
+    result; it could duplicate a charge if the provider completed the edit but
+    the response was lost.
     """
-    encoded_prompt = urllib.parse.quote(prompt)
+    if settings.POLLINATIONS_API_KEY.strip():
+        return _generate_pollinations_edit_api(prompt, reference_base64, reference_mime_type)
+
+    encoded_prompt = urllib.parse.quote(prompt, safe="")
     encoded_ref = urllib.parse.quote(reference_base64)
     url = (
         f"https://image.pollinations.ai/prompt/{encoded_prompt}"
@@ -226,9 +442,61 @@ def _generate_pollinations_img2img(prompt: str, reference_base64: str) -> str | 
         if response.status_code == 200:
             return _convert_bytes_to_data_url(response.content)
         logger.warning("Pollinations img2img returned %s, falling back to text-only", response.status_code)
-    except httpx.TimeoutException:
-        logger.warning("Pollinations img2img timed out, falling back to text-only")
+    except httpx.RequestError as exc:
+        logger.warning("Pollinations img2img failed (%s), falling back to text-only", exc)
     return _generate_pollinations(prompt)
+
+
+def _generate_pollinations_edit_api(
+    prompt: str,
+    reference_base64: str,
+    reference_mime_type: str = "image/png",
+) -> str | None:
+    """Submit reference-guided generation to the unified API without putting image data in a URL."""
+    models = _configured_models(
+        settings.POLLINATIONS_EDIT_MODELS,
+        ("microsoft/mai-image-2.5-flash",),
+    )
+    url = "https://gen.pollinations.ai/v1/images/edits"
+    headers = {"Authorization": f"Bearer {settings.POLLINATIONS_API_KEY.strip()}"}
+    reference_data_url = f"data:{reference_mime_type};base64,{reference_base64}"
+
+    for model_index, model in enumerate(models):
+        try:
+            response = httpx.post(
+                url,
+                headers=headers,
+                json={
+                    "prompt": prompt,
+                    "image": [{"image_url": reference_data_url}],
+                    "model": model,
+                    "size": f"{settings.POLLINATIONS_WIDTH}x{settings.POLLINATIONS_HEIGHT}",
+                    "response_format": "b64_json",
+                },
+                timeout=120,
+            )
+        except httpx.RequestError as exc:
+            logger.warning("Pollinations edit model %s request failed; outcome is uncertain, not retrying: %s", model, exc)
+            return None
+
+        if response.status_code != 200:
+            logger.warning("Pollinations edit model %s returned %s", model, response.status_code)
+            if response.status_code in (401, 402, 403):
+                return None
+            if response.status_code not in (400, 404, 422) or model_index == len(models) - 1:
+                return None
+            continue
+
+        try:
+            image = response.json()["data"][0]
+            image_base64 = image.get("b64_json")
+            if image_base64:
+                mime = image.get("media_type") or "image/png"
+                return f"data:{mime};base64,{image_base64}"
+        except (KeyError, IndexError, TypeError, ValueError):
+            logger.warning("Pollinations edit model %s returned an invalid image payload; not retrying after a possibly billable response", model)
+            return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +528,7 @@ def _generate_huggingface(prompt: str) -> str | None:
 def _generate_huggingface_img2img(prompt: str, reference_base64: str, strength: float = 0.55) -> str | None:
     """
     Img2img via HF Inference API. `strength` controls how much the reference steers output.
-    Falls back to text-only on non-200.
+    Returns None on failure; never sends a second request after an uncertain outcome.
     """
     url = f"https://api-inference.huggingface.co/models/{settings.HF_IMG2IMG_MODEL}"
     headers = {"Authorization": f"Bearer {settings.HF_API_TOKEN}"}
@@ -269,11 +537,11 @@ def _generate_huggingface_img2img(prompt: str, reference_base64: str, strength: 
     if response.status_code == 200:
         return _convert_bytes_to_data_url(response.content)
     logger.warning(
-        "HuggingFace img2img returned %s, falling back to text-only: %s",
+        "HuggingFace img2img returned %s; not retrying with a second text-to-image request: %s",
         response.status_code,
         prompt[:60],
     )
-    return _generate_huggingface(prompt)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +554,7 @@ def generate_frame_image(
     reference_style_image: str | None = None,
     render_style: str = 'bw_sketch',
     canon_context: dict[str, Any] | None = None,
+    quality_tier: Literal["draft", "premium"] = "draft",
 ) -> str | None:
     """
     Generate a thumbnail image for a storyboard frame.
@@ -301,9 +570,13 @@ def generate_frame_image(
     try:
         prompt = _build_image_prompt(frame, scene, render_style, canon_context)
         ref_b64 = _strip_data_url_header(reference_style_image) if reference_style_image else None
+        ref_mime_type = _split_image_data_url(reference_style_image)[0] if reference_style_image else "image/png"
+        if quality_tier == "premium":
+            return _generate_gemini_nano_banana(prompt, reference_style_image)
+
         provider = settings.IMAGE_PROVIDER.lower()
 
-        # ── Gemini Imagen branch (falls back to Pollinations on failure) ──────
+        # ── Gemini Imagen branch — never retry a possibly billable request ────
         if provider == "gemini":
             try:
                 from app.core.ai_factory import AIFactory
@@ -315,30 +588,55 @@ def generate_frame_image(
                 )
                 if result:
                     return result
-                raise RuntimeError("Gemini Imagen returned None")
+                logger.warning("Gemini Imagen returned no image; not retrying another provider.")
+                return None
             except Exception as exc:
                 logger.warning(
-                    "Gemini Imagen failed for frame %s (%s) — falling back to Pollinations.",
+                    "Gemini Imagen failed for frame %s; outcome is uncertain, not retrying another provider (%s).",
                     frame.frame_number, exc,
                 )
-                provider = "pollinations"  # fall through to Pollinations branches below
+                return None
 
         # ── Branch 1: bw_sketch + reference → sketch-intersection path ───────
         if ref_b64 and render_style == 'bw_sketch':
             sketch_prompt = _inject_sketch_constraints(prompt)
             if provider == "huggingface":
-                return _generate_huggingface_img2img(sketch_prompt, ref_b64, strength=0.78)
-            return _generate_pollinations_img2img(sketch_prompt, ref_b64)
+                try:
+                    result = _generate_huggingface_img2img(sketch_prompt, ref_b64, strength=0.78)
+                    if result:
+                        return result
+                except Exception as exc:
+                    logger.warning("Hugging Face img2img failed; not retrying another provider (%s).", exc)
+                    return None
+                logger.warning("Hugging Face img2img returned no image; not retrying another provider.")
+                return None
+            return _generate_pollinations_img2img(sketch_prompt, ref_b64, ref_mime_type)
 
         # ── Branch 2: reference present, other render style → img2img ────────
         if ref_b64:
             if provider == "huggingface":
-                return _generate_huggingface_img2img(prompt, ref_b64, strength=0.55)
-            return _generate_pollinations_img2img(prompt, ref_b64)
+                try:
+                    result = _generate_huggingface_img2img(prompt, ref_b64, strength=0.55)
+                    if result:
+                        return result
+                except Exception as exc:
+                    logger.warning("Hugging Face img2img failed; not retrying another provider (%s).", exc)
+                    return None
+                logger.warning("Hugging Face img2img returned no image; not retrying another provider.")
+                return None
+            return _generate_pollinations_img2img(prompt, ref_b64, ref_mime_type)
 
         # ── Branch 3: no reference → text-to-image ────────────────────────────
         if provider == "huggingface":
-            return _generate_huggingface(prompt)
+            try:
+                result = _generate_huggingface(prompt)
+                if result:
+                    return result
+            except Exception as exc:
+                logger.warning("Hugging Face image generation failed; not retrying another provider (%s).", exc)
+                return None
+            logger.warning("Hugging Face returned no frame image; not retrying another provider.")
+            return None
         return _generate_pollinations(prompt)
     except Exception as e:
         logger.error("Image generation failed for frame %s: %s", frame.frame_number, e)

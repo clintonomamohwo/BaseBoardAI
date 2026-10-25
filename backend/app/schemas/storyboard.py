@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # Character DNA — Physical Form, Classification, and Abilities
@@ -347,6 +347,35 @@ class StoryboardFrameBase(BaseModel):
             "Empty list until explicitly requested."
         )
     )
+    # Explicit per-shot state needed for reliable shot-to-shot continuity and
+    # future video generation. These are editable production facts, not guesses.
+    action_pose: str | None = Field(
+        None,
+        description="Character action and pose at the end of this shot, including position and body orientation.",
+    )
+    props_present: list[str] = Field(
+        default_factory=list,
+        description="Story-relevant props visible or held in this shot.",
+    )
+    screen_direction: Literal[
+        "left_to_right", "right_to_left", "toward_camera", "away_from_camera", "static", "unspecified"
+    ] = Field("unspecified", description="Primary movement direction in screen space.")
+    continuity_reference_ids: list[str] = Field(
+        default_factory=list,
+        description="Stable IDs of earlier storyboard frames or canonical references this shot must match.",
+    )
+    continuity_notes: str | None = Field(
+        None,
+        description="Notes about what must carry over from adjacent shots (pose, prop hand, geography, or eyeline).",
+    )
+    continuity_dependency_ids: list[str] = Field(
+        default_factory=list,
+        description="Stable shot IDs whose approved ending state this shot depends on.",
+    )
+    continuity_review_required: bool = Field(
+        False,
+        description="True when an upstream dependency changed after this shot was approved.",
+    )
 
     # ── Legacy field: kept for backwards compat; visual_action is the primary ──
     action_breakdown: Annotated[str, _str_or_default("")] = Field(
@@ -371,6 +400,8 @@ class StoryboardFrameBase(BaseModel):
     # ── Timing ───────────────────────────────────────────────────────────────
     duration_seconds: Annotated[float, _float_or_default(3.0)] = Field(
         default=3.0,
+        gt=0,
+        allow_inf_nan=False,
         description="Calculated screen runtime for this semantic beat"
     )
 
@@ -419,6 +450,12 @@ class StoryboardFrameBase(BaseModel):
             "Rendered directly via <img src={...} /> on the canvas — no cross-origin fetching."
         ),
     )
+    approval_status: Literal["pending", "approved"] = Field(
+        "pending", description="Human review state for the current frame version"
+    )
+    is_manual_override: bool = Field(
+        False, description="True when the frame image was replaced by the user"
+    )
 
     # ── Director Engine metadata (populated by director_engine.py) ──────────
     lens: str | None = Field(
@@ -460,7 +497,7 @@ class StoryboardFrameBase(BaseModel):
     )
 
 class ScriptSceneBase(BaseModel):
-    scene_number: int
+    scene_number: int = Field(gt=0)
     location_heading: Annotated[str, _str_or_default("UNKNOWN LOCATION")] = Field(
         default="UNKNOWN LOCATION",
         description="Standard screenplay slugline, e.g., INT. GYM - NIGHT"
@@ -483,9 +520,68 @@ class ScriptSceneBase(BaseModel):
     )
     frames: Annotated[list[StoryboardFrameBase], _list_or_default(list)] = Field(default_factory=list)
 
+
+def _assert_unique_scene_numbers(scenes: list[ScriptSceneBase]) -> None:
+    scene_numbers = [scene.scene_number for scene in scenes]
+    if len(scene_numbers) != len(set(scene_numbers)):
+        raise ValueError("Scene numbers must be unique within a project.")
+
 # ---------------------------------------------------------------------------
 # Pipeline Request & Response Envelopes
 # ---------------------------------------------------------------------------
+
+class StoryDevelopmentContext(BaseModel):
+    """Creator-supplied inputs shared by the outline and script steps."""
+    idea: str = Field(min_length=1, max_length=12000)
+    genre: str | None = Field(None, max_length=120)
+    format: str = Field(min_length=1, max_length=160)
+    notes: str = Field(default="", max_length=6000)
+
+    @field_validator("idea", "format")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("This field cannot be blank.")
+        return value
+
+    @field_validator("genre", mode="before")
+    @classmethod
+    def normalize_optional_genre(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value.strip() if isinstance(value, str) else value
+
+
+class StoryOutlineRequest(StoryDevelopmentContext):
+    """Generate an editable outline from an idea."""
+
+
+class StoryScriptRequest(StoryDevelopmentContext):
+    """Generate a script from the creator-reviewed outline."""
+    outline: str = Field(min_length=1, max_length=40000)
+
+    @field_validator("outline")
+    @classmethod
+    def strip_outline(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("The outline cannot be blank.")
+        return value
+
+
+class StoryDevelopmentDraft(StoryDevelopmentContext):
+    """Completed development material attached to a project for persistence."""
+    outline: str = Field(min_length=1, max_length=40000)
+    script: str = Field(min_length=1, max_length=80000)
+
+    @field_validator("outline", "script")
+    @classmethod
+    def strip_development_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Development text cannot be blank.")
+        return value
 
 class PipelineExecutionRequest(BaseModel):
     """
@@ -506,7 +602,13 @@ class PipelineExecutionRequest(BaseModel):
     )
     raw_character_notes: str = Field(description="Raw text entered in Step 1 Character Builder")
     raw_world_notes: str = Field(description="Raw text entered in Step 2 World Builder")
-    raw_script_text: str = Field(description="The complete raw screenplay pasted in Step 3")
+    raw_script_text: str = Field(
+        max_length=50000,
+        description="The complete raw screenplay pasted in Step 3 (maximum 50,000 characters)",
+    )
+    story_development: StoryDevelopmentDraft | None = Field(
+        None, description="Optional creator-approved idea, format, outline, and script"
+    )
 
 class StoryboardProjectCreate(BaseModel):
     """
@@ -520,6 +622,29 @@ class StoryboardProjectCreate(BaseModel):
     )
     characters: list[CharacterProfileBase] = Field(default_factory=list)
     scenes: list[ScriptSceneBase] = Field(default_factory=list)
+    canon: "ProjectCanon | None" = None
+    story_development: StoryDevelopmentDraft | None = None
+
+    @model_validator(mode="after")
+    def validate_unique_scene_numbers(self) -> "StoryboardProjectCreate":
+        _assert_unique_scene_numbers(self.scenes)
+        return self
+
+
+class StoryboardProjectUpdate(BaseModel):
+    """Editable project fields accepted by PUT /storyboard/{db_id}."""
+    project_title: str
+    global_aesthetic: str
+    render_style: Literal['bw_sketch', 'flat_color', 'full_shaded']
+    scenes: list[ScriptSceneBase]
+    characters: list[CharacterProfileBase] | None = None
+    canon: "ProjectCanon | None" = None
+    story_development: StoryDevelopmentDraft | None = None
+
+    @model_validator(mode="after")
+    def validate_unique_scene_numbers(self) -> "StoryboardProjectUpdate":
+        _assert_unique_scene_numbers(self.scenes)
+        return self
 
 
 class StoryboardProjectResponse(BaseModel):
@@ -541,6 +666,9 @@ class StoryboardProjectResponse(BaseModel):
     # Project Canon — the single source of truth for all AI generation.
     # Null for projects created before the Canon was introduced (backwards compat).
     canon: "ProjectCanon | None" = Field(None, description="Approved visual facts consulted by every generation")
+    story_development: StoryDevelopmentDraft | None = Field(
+        None, description="Creator-approved idea, optional genre, format, outline, and script"
+    )
 
     # Set to True when the LLM output was truncated mid-generation and only a
     # partial storyboard was recovered. The frontend should warn the user.
@@ -579,7 +707,7 @@ class StandaloneStoryboardRequest(BaseModel):
     global_aesthetic: str
     # Pass pre-structured bibles from previous client state if they already exist
     characters: list[CharacterProfileBase]
-    raw_script_text: str
+    raw_script_text: str = Field(max_length=50000)
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +729,15 @@ class ReforgeCompositionRequest(BaseModel):
     frame: StoryboardFrameBase
     scene: ScriptSceneBase
     render_style: Literal['bw_sketch', 'bw_detailed', 'flat_color', 'full_shaded'] = 'bw_sketch'
+    reference_style_image: str | None = None
+
+
+class RenderFrameRequest(BaseModel):
+    """Render a frame image only; premium is opt-in and never the default."""
+    frame: StoryboardFrameBase
+    scene: ScriptSceneBase
+    render_style: Literal['bw_sketch', 'bw_detailed', 'flat_color', 'full_shaded'] = 'bw_sketch'
+    quality_tier: Literal['draft', 'premium'] = 'draft'
     reference_style_image: str | None = None
 
 
@@ -643,7 +780,7 @@ class SceneUpgradeRequest(BaseModel):
     Upgrades every frame in a scene to a new render style concurrently.
     Returns a list of UpgradeStyleResponse, one per frame.
     """
-    frames: list[StoryboardFrameBase]
+    frames: list[StoryboardFrameBase] = Field(max_length=12)
     scene: ScriptSceneBase
     target_style: str
     source_images: dict[int, str] = Field(

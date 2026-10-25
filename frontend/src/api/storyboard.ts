@@ -12,6 +12,7 @@ import type {
   StoryboardFrame,
   StoryboardProject,
   StoryboardScene,
+  StoryDevelopmentContext,
 } from '../types/storyboard'
 import type { SceneUpgradeResult, FrameUpgradeResult } from '../types/renderUpgrade'
 
@@ -58,6 +59,28 @@ export async function forgePipeline(
     body: JSON.stringify(req),
   })
   return handleResponse<StoryboardProject>(res)
+}
+
+export async function generateStoryOutline(context: StoryDevelopmentContext): Promise<string> {
+  const res = await fetch(`${BASE_URL}/storyboard/story-development/outline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(context),
+  })
+  const data = await handleResponse<{ outline: string }>(res)
+  return data.outline
+}
+
+export async function generateStoryScript(
+  context: StoryDevelopmentContext & { outline: string },
+): Promise<string> {
+  const res = await fetch(`${BASE_URL}/storyboard/story-development/script`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(context),
+  })
+  const data = await handleResponse<{ script: string }>(res)
+  return data.script
 }
 
 export type PipelineProgressEvent =
@@ -139,6 +162,41 @@ export async function getProject(dbId: number): Promise<StoryboardProject> {
   return handleResponse<StoryboardProject>(res)
 }
 
+export async function createProject(project: StoryboardProject): Promise<StoryboardProject> {
+  const res = await fetch(`${BASE_URL}/storyboard/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_title: project.project_title,
+      global_aesthetic: project.global_aesthetic,
+      render_style: project.render_style,
+      characters: project.characters,
+      scenes: project.scenes,
+      canon: project.canon ?? null,
+      story_development: project.story_development ?? null,
+    }),
+  })
+  return handleResponse<StoryboardProject>(res)
+}
+
+export async function updateProject(project: StoryboardProject): Promise<StoryboardProject> {
+  if (project.db_id == null) throw new Error('Cannot save a project without a database ID.')
+  const res = await fetch(`${BASE_URL}/storyboard/${project.db_id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_title: project.project_title,
+      global_aesthetic: project.global_aesthetic,
+      render_style: project.render_style,
+      characters: project.characters,
+      canon: project.canon ?? null,
+      scenes: project.scenes,
+      story_development: project.story_development ?? null,
+    }),
+  })
+  return handleResponse<StoryboardProject>(res)
+}
+
 export async function deleteProject(dbId: number): Promise<void> {
   const res = await fetch(`${BASE_URL}/storyboard/${dbId}`, {
     method: 'DELETE',
@@ -157,6 +215,29 @@ export async function generateImage(
   })
   const data = await handleResponse<{ image_url: string | null }>(res)
   return data.image_url
+}
+
+export type ImageQualityTier = 'draft' | 'premium'
+
+export async function renderFrameImage(
+  frame: StoryboardFrame,
+  scene: StoryboardScene,
+  renderStyle: string = 'bw_sketch',
+  qualityTier: ImageQualityTier = 'draft',
+  referenceStyleImage?: string | null,
+): Promise<{ frame_number: number; generated_image_url: string }> {
+  const res = await fetch(`${BASE_URL}/storyboard/frame/render`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      frame,
+      scene,
+      render_style: renderStyle,
+      quality_tier: qualityTier,
+      reference_style_image: referenceStyleImage ?? null,
+    }),
+  })
+  return handleResponse<{ frame_number: number; generated_image_url: string }>(res)
 }
 
 export async function generateCharacterOverview(
@@ -284,7 +365,7 @@ export async function reforgeAffectedFrames(
 export async function propagateLocationImage(
   scenes: StoryboardScene[],
   locationSlug: string,
-  imageDataUrl: string,
+  _imageDataUrl: string,
   renderStyle: string,
 ): Promise<Map<string, string | null>> {
   // Find all scenes whose location_heading contains the slug
